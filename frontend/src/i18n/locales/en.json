@@ -1,0 +1,385 @@
+{
+  "app": {
+    "title": "Online Parchis"
+  },
+
+  "menu": {
+    "lobby": "Lobby",
+    "profile": "Profile",
+    "friends": "Friends",
+    "requests": "Requests",
+    "logout": "Logout"
+  },
+
+  "accessibility": {
+    "toggleMenu": "Toggle menu"
+  },
+
+  "login": {
+    "welcome": "Welcome back",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "noAccount": "Don't have an account?",
+    "signUp": "Sign up"
+  },
+
+  "register": {
+    "title": "Create account",
+    "username": "Username",
+    "signUp": "Sign up",
+    "haveAccount": "Already have an account?",
+    "signIn": "Sign in"
+  },
+
+  "validation": {
+    "requiredFields": "All fields are required",
+    "invalidEmail": "Invalid email",
+    "usernameLength": "Username must be between 3 and 20 characters",
+    "passwordLength": "Password must be at least 8 characters"
+  },
+
+  "footer": {
+    "copyright": "Online Parchis · Academic project developed at 42 Madrid.",
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service"
+  },
+
+  "lobby": {
+    "welcome": "Welcome to Online Parchis",
+    "createGame": "Create game",
+    "creating": "Creating...",
+    "join": "Join",
+    "joining": "Joining...",
+    "gameId": "Game ID",
+    "enterGameId": "Enter a game ID",
+    "createError": "Error creating game",
+    "joinError": "Error joining game",
+    "activeGame": "You still have an active game. Reconnect to it or wait until it expires."
+  },
+
+  "chat": {
+    "title": "Chat",
+    "message": "Message",
+    "profile": "Profile",
+    "invite": "Invite",
+    "block": "Block",
+    "someoneTyping": "Someone is typing...",
+    "gameInvitation": "Game invitation",
+    "wantsToPlay": "wants to play with you.",
+    "accept": "Accept",
+    "reject": "Reject",
+    "writeMessage": "Write a message...",
+    "send": "Send",
+    "invitationExpired": "Invitation expired.",
+    "invitationRejected": "Your invitation was rejected."
+  },
+
+  "friends": {
+    "title": "Friends",
+    "search": "Search",
+    "searchTitle": "Find new friends",
+    "searchPlaceholder": "Search user...",
+    "searchButton": "Search",
+
+    "online": "Online",
+    "offline": "Offline",
+
+    "friend": "Friend",
+    "sent": "Sent",
+    "reply": "Reply",
+    "add": "Add",
+
+    "myFriends": "My Friends",
+    "remove": "Remove",
+    "avatar": "Avatar of",
+
+    "requestSent": "Friend request sent",
+
+    "errors": {
+      "load": "Couldn't load friends",
+      "search": "Error searching users",
+      "sendRequest": "Couldn't send friend request",
+      "remove": "Couldn't remove friend"
+    }
+  },
+
+  "friendRequests": {
+    "title": "Friend Requests",
+    "empty": "You don't have any pending friend requests.",
+    "sentYou": "Sent you a friend request",
+    "pending": "Pending request",
+    "accept": "Accept",
+
+    "errors": {
+      "accept": "Couldn't accept the request"
+    }
+  },
+
+  "privacy": {
+    "title": "Privacy Policy",
+    "lastUpdated": "Last updated: July 2026",
+
+    "sections": {
+      "introduction": {
+        "title": "1. Introduction",
+        "text": "Welcome to Parchís Online. This Privacy Policy explains how personal information is collected, stored and used while using this application. The project has been developed as an academic project at 42 Madrid and is intended for educational purposes."
+      },
+
+      "information": {
+        "title": "2. Information We Collect",
+        "text": "Depending on how you use the application, the following information may be stored:",
+        "items": [
+          "Username.",
+          "Email address.",
+          "Encrypted password.",
+          "Profile avatar.",
+          "Friend relationships.",
+          "Match history.",
+          "Game statistics.",
+          "Messages sent through the lobby chat."
+        ]
+      },
+
+      "usage": {
+        "title": "3. How We Use Your Information",
+        "text": "The collected information is only used to provide the services offered by the application, including:",
+        "items": [
+          "User authentication.",
+          "Creating multiplayer matches.",
+          "Displaying player profiles.",
+          "Managing friends.",
+          "Showing online status.",
+          "Saving match history and statistics.",
+          "Displaying chat messages."
+        ]
+      },
+
+      "security": {
+        "title": "4. Data Security",
+        "text": "Reasonable technical measures are implemented to protect user information. Passwords are never stored in plain text and authenticated users can only access resources permitted by the application. HTTPS is used to protect communications between the browser and the server."
+      },
+
+      "sharing": {
+        "title": "5. Information Sharing",
+        "text": "Personal information is never sold or shared with third parties. Other players may only see the information that is necessary for the application to function correctly, such as usernames, avatars, public game statistics and online presence."
+      },
+
+      "cookies": {
+        "title": "6. Cookies and Local Storage",
+        "text": "The application may use browser storage or authentication tokens to keep users signed in and improve the user experience. No advertising or tracking cookies are used."
+      },
+
+      "rights": {
+        "title": "7. User Rights",
+        "text": "Users can:",
+        "items": [
+          "Update their profile information.",
+          "Change their avatar.",
+          "Review their match history.",
+          "Manage their friends list."
+        ]
+      },
+
+      "retention": {
+        "title": "8. Data Retention",
+        "text": "User information remains stored while the account exists and is only retained for the normal operation of the application. Data may be removed if the project database is reset as part of academic development or testing."
+      },
+
+      "changes": {
+        "title": "9. Changes to this Policy",
+        "text": "This Privacy Policy may be updated whenever the project evolves or new features are implemented. Users are encouraged to review this page periodically."
+      },
+
+      "contact": {
+        "title": "10. Contact",
+        "text": "Questions regarding this Privacy Policy may be directed to the development team responsible for this academic project at 42 Madrid."
+      }
+    }
+  },
+
+  "terms": {
+    "title": "Terms of Service",
+    "lastUpdated": "Last updated: July 2026",
+
+    "acceptance": {
+      "title": "1. Acceptance of Terms",
+      "text": "By creating an account or using Parchís Online, you agree to comply with these Terms of Service. If you do not agree with these terms, you should stop using the application."
+    },
+
+    "project": {
+      "title": "2. About the Project",
+      "text": "Parchís Online is a multiplayer web application developed as an academic project at 42 Madrid. The application is intended for educational purposes and may change, temporarily become unavailable or be reset during development."
+    },
+
+    "accounts": {
+      "title": "3. User Accounts",
+      "intro": "Users are responsible for the information associated with their accounts. Each user agrees to:",
+      "items": [
+        "Provide accurate registration information.",
+        "Keep login credentials confidential.",
+        "Be responsible for all activity performed using their account.",
+        "Respect other users while using the platform."
+      ]
+    },
+
+    "fairPlay": {
+      "title": "4. Fair Play",
+      "intro": "Players are expected to participate fairly in every match. The following behaviour is prohibited:",
+      "items": [
+        "Cheating or exploiting software bugs.",
+        "Modifying the client to gain an unfair advantage.",
+        "Attempting to manipulate game results.",
+        "Using automated tools or bots."
+      ]
+    },
+
+    "community": {
+      "title": "5. Community Rules",
+      "intro": "Users must behave respectfully while interacting with others through the application.",
+      "items": [
+        "No harassment or abusive language.",
+        "No spam or advertising.",
+        "No impersonation of other users.",
+        "No offensive or illegal content."
+      ]
+    },
+
+    "property": {
+      "title": "6. Intellectual Property",
+      "text": "The source code, interface design and original assets of this project are the work of its development team. Any third-party libraries, icons or resources remain the property of their respective owners."
+    },
+
+    "availability": {
+      "title": "7. Availability",
+      "text": "Since this application is an academic project, continuous availability is not guaranteed. Maintenance, updates or database resets may occur without prior notice."
+    },
+
+    "liability": {
+      "title": "8. Limitation of Liability",
+      "text": "The application is provided for educational purposes. Although reasonable efforts are made to ensure stability and security, the development team cannot guarantee that the service will always operate without interruptions or errors."
+    },
+
+    "termination": {
+      "title": "9. Termination",
+      "text": "Access to the application may be restricted or suspended if a user violates these Terms of Service or intentionally disrupts the normal operation of the platform."
+    },
+
+    "changes": {
+      "title": "10. Changes to These Terms",
+      "text": "These Terms of Service may be updated whenever new functionality is added or project requirements change. Continued use of the application constitutes acceptance of the latest version."
+    },
+
+    "contact": {
+      "title": "11. Contact",
+      "text": "Questions regarding these Terms of Service may be directed to the development team responsible for this academic project at 42 Madrid."
+    }
+  },
+
+  "game": {
+    "loading": "Loading game...",
+    "leave": "Leave Game",
+    "spectatorMode": "👁 Spectator Mode",
+    "you": "You",
+    "playing": "Playing",
+
+    "hud": {
+      "panel": "Game Panel",
+      "close": "Close"
+    },
+
+    "abandoned": {
+      "title": "Game abandoned",
+      "message": "All other players have abandoned the game.",
+      "confirm": "OK"
+    },
+
+    "header": {
+      "title": "Game {{id}}",
+      "turn": "Turn",
+      "spectators": "Spectators: {{count}}"
+    },
+
+    "dice": {
+      "roll": "Roll Dice",
+      "spectating": "Waiting..."
+    },
+
+    "errors": {
+      "rollDiceFirst": "Roll dice first",
+      "notYourTurn": "Not your turn",
+      "invalidMove": "Invalid move",
+      "needFive": "Need 5 to leave base",
+      "ownBlockade": "Own blockade on exit",
+      "exactRoll": "Exact roll required",
+      "blockadePath": "Blockade in path",
+      "destinationBlocked": "Destination blocked by blockade"
+    }
+  },
+
+  "players": {
+    "title": "Players",
+    "abandoned": "Abandoned",
+    "connected": "Connected",
+    "disconnected": "Disconnected"
+  },
+
+  "profile": {
+    "loading": "Loading...",
+    "loadError": "Could not load profile",
+
+    "title": {
+      "mine": "My Profile",
+      "user": "{{username}}'s Profile"
+    },
+
+    "edit": {
+      "title": "Select your avatar:",
+      "username": "Username",
+      "save": "Save Changes",
+      "button": "Edit Profile"
+    },
+
+    "validation": {
+      "required": "Username is required",
+      "length": "Username must be between 3 and 20 characters",
+      "invalidAvatar": "Invalid avatar",
+      "updateError": "Could not update profile"
+    },
+
+    "info": {
+      "username": "Username:",
+      "email": "Email:",
+      "createdAt": "Member since:"
+    },
+
+    "avatarAlt": {
+      "option": "avatar option",
+      "current": "avatar"
+    }
+  },
+
+  "victory": {
+    "titleVictory": "VICTORY",
+    "titleGameOver": "GAME OVER",
+    "congratulations": "Congratulations!",
+    "winnerIs": "The winner is",
+    "returnLobby": "Return to Lobby",
+    "titleWinner": "Winner"
+  },
+
+  "chatPanel": {
+    "title": "Chat",
+    "placeholder": "Write a message...",
+    "send": "Send"
+  },
+
+  "spectators": {
+    "title": "Spectators",
+    "empty": "No spectators"
+  },
+
+  "errors": {
+    "connection": "Connection error"
+  }
+}

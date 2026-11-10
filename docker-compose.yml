@@ -1,0 +1,109 @@
+services:
+  db:
+    image: postgres:15
+    container_name: transcendence_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_PASSWORD_FILE: /vault/creds/db-password
+      POSTGRES_DB: transcendence
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - vault_creds:/vault/creds:ro
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+    networks:
+      - transcendence_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d transcendence"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: transcendence_vault
+    restart: always
+    volumes:
+      - vault_data:/vault/data
+      - ./vault/config:/vault/config
+    entrypoint: ["vault"]
+    command: ["server", "-config=/vault/config/vault.hcl"]
+    networks:
+      - transcendence_network
+    healthcheck:
+      test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200 > /dev/null 2>&1; status=$$?; [ \"$$status\" -eq 0 ] || [ \"$$status\" -eq 2 ]"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  vault-init:
+    image: hashicorp/vault:1.17
+    container_name: transcendence_vault_init
+    depends_on:
+      vault:
+        condition: service_healthy
+    volumes:
+      - vault_data:/vault/data
+      - vault_creds:/vault/creds
+      - ./vault/init-vault.sh:/init-vault.sh:ro
+    entrypoint: ["/bin/sh", "/init-vault.sh"]
+    networks:
+      - transcendence_network
+  backend:
+    build: ./backend
+    container_name: transcendence_backend
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - VAULT_ADDR=http://vault:8200
+    volumes:
+      - vault_creds:/vault/creds:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    networks:
+      - transcendence_network
+
+  frontend:
+    build: ./frontend
+    container_name: transcendence_frontend
+    restart: always
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    networks:
+      - transcendence_network
+
+  nginx:
+    environment:
+      - SSL_PORT=443
+    build: ./nginx
+    container_name: transcendence_nginx
+    restart: always
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "8443:443"
+    volumes:
+      - modsec_logs:/var/log/modsecurity
+    networks:
+      - transcendence_network
+
+volumes:
+  db_data:
+  vault_data:
+  vault_creds:
+  modsec_logs:
+
+networks:
+  transcendence_network:

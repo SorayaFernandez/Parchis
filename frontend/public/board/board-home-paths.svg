@@ -1,0 +1,220 @@
+<svg width="1000" height="1000" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+<defs>
+
+  <linearGradient id="cellFill" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#182033"/>
+    <stop offset="100%" stop-color="#0d1320"/>
+  </linearGradient>
+
+  <filter id="softGlow">
+    <feGaussianBlur stdDeviation="4" result="blur"/>
+    <feMerge>
+      <feMergeNode in="blur"/>
+      <feMergeNode in="SourceGraphic"/>
+    </feMerge>
+  </filter>
+
+</defs>
+
+<!-- MAIN TRACK -->
+
+<g filter="url(#softGlow)">
+
+  <!-- LEFT SIDE -->
+  <rect x="6" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff55" stroke="#00d9ff" stroke-width="3"/>
+
+  <rect x="55" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff55" stroke="#00d9ff" stroke-width="3"/>
+
+  <rect x="104" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00d9ff" stroke-width="2"/>
+
+  <rect x="153" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00d9ff" stroke-width="2"/>
+
+  <rect x="202" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00d9ff" stroke-width="2"/>
+
+  <rect x="251" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00d9ff" stroke-width="2"/>
+
+  <rect x="300" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff55" stroke="#00d9ff" stroke-width="3"/>
+
+  <rect x="349" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff55" stroke="#00d9ff" stroke-width="2"/>
+
+  <!-- RIGHT SIDE -->
+  <rect x="606" y="467" width="46" height="65" rx="12"
+  fill="#00ff9d55" stroke="#00ff9d" stroke-width="2"/>
+
+  <rect x="655" y="467" width="46" height="65" rx="12"
+  fill="#00ff9d55" stroke="#00ff9d" stroke-width="2"/>
+
+  <rect x="704" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00ff9d" stroke-width="2"/>
+
+  <rect x="753" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00ff9d" stroke-width="2"/>
+
+  <rect x="802" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00ff9d" stroke-width="2"/>
+
+  <rect x="851" y="467" width="46" height="65" rx="12"
+  fill="url(#cellFill)" stroke="#00ff9d" stroke-width="2"/>
+
+  <rect x="900" y="467" width="46" height="65" rx="12"
+  fill="#00ff9d55" stroke="#00ff9d" stroke-width="3"/>
+
+  <rect x="949" y="467" width="46" height="65" rx="12"
+  fill="#00ff9d55" stroke="#00ff9d" stroke-width="3"/>
+
+  <!-- TOP -->
+  <rect x="467" y="6" width="65" height="46" rx="12"
+  fill="#ff3bd422" stroke="#ff3bd4" stroke-width="3"/>
+
+  <rect x="467" y="55" width="65" height="46" rx="12"
+  fill="#ff3bd422" stroke="#ff3bd4" stroke-width="3"/>
+
+  <rect x="467" y="104" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#ff3bd4" stroke-width="2"/>
+
+  <rect x="467" y="153" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#ff3bd4" stroke-width="2"/>
+
+  <rect x="467" y="202" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#ff3bd4" stroke-width="2"/>
+
+  <rect x="467" y="251" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#ff3bd4" stroke-width="2"/>
+
+  <rect x="467" y="300" width="65" height="46" rx="12"
+  fill="#ff3bd422" stroke="#ff3bd4" stroke-width="2"/>
+
+  <rect x="467" y="349" width="65" height="46" rx="12"
+  fill="#ff3bd422" stroke="#ff3bd4" stroke-width="2"/>
+
+  <!-- BOTTOM -->
+  <rect x="467" y="606" width="65" height="46" rx="12"
+  fill="#c86cff55" stroke="#c86cff" stroke-width="2"/>
+
+  <rect x="467" y="655" width="65" height="46" rx="12"
+  fill="#c86cff55" stroke="#c86cff" stroke-width="2"/>
+
+  <rect x="467" y="704" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#c86cff" stroke-width="2"/>
+
+  <rect x="467" y="753" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#c86cff" stroke-width="2"/>
+
+  <rect x="467" y="802" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#c86cff" stroke-width="2"/>
+
+  <rect x="467" y="851" width="65" height="46" rx="12"
+  fill="url(#cellFill)" stroke="#c86cff" stroke-width="2"/>
+
+  <rect x="467" y="900" width="65" height="46" rx="12"
+  fill="#c86cff55" stroke="#c86cff" stroke-width="3"/>
+
+  <rect x="467" y="949" width="65" height="46" rx="12"
+  fill="#c86cff55" stroke="#c86cff" stroke-width="3"/>
+
+</g>
+
+<!-- HOME LANES -->
+
+<g opacity="0.9">
+
+  <!-- GREEN -->
+  <rect x="606" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <rect x="655" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <rect x="704" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <rect x="753" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <rect x="802" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <rect x="851" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <rect x="900" y="467" width="46" height="65" rx="12"
+  fill="#00ff9cff"/>
+
+  <!-- PINK -->
+  <rect x="467" y="55" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <rect x="467" y="104" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <rect x="467" y="153" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <rect x="467" y="202" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <rect x="467" y="251" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <rect x="467" y="300" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <rect x="467" y="349" width="65" height="46" rx="12"
+  fill="#ff21cfff"/>
+
+  <!-- PURPLE -->
+  <rect x="467" y="606" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <rect x="467" y="655" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <rect x="467" y="704" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <rect x="467" y="753" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <rect x="467" y="802" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <rect x="467" y="851" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <rect x="467" y="900" width="65" height="46" rx="12"
+  fill="#c86cff"/>
+
+  <!-- BLUE -->
+  <rect x="55" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+  <rect x="104" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+  <rect x="153" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+  <rect x="202" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+  <rect x="251" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+  <rect x="300" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+  <rect x="349" y="467" width="46" height="65" rx="12"
+  fill="#00d9ff"/>
+
+</g>
+
+</svg>

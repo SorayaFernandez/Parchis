@@ -1,0 +1,386 @@
+{
+  "app": {
+    "title": "Parchís Online"
+  },
+
+  "menu": {
+    "lobby": "Lobby",
+    "profile": "Perfil",
+    "friends": "Amigos",
+    "requests": "Solicitudes",
+    "logout": "Salir"
+  },
+
+  "accessibility": {
+    "toggleMenu": "Abrir menú"
+  },
+
+  "login": {
+    "welcome": "Bienvenido de nuevo",
+    "email": "Email",
+    "password": "Contraseña",
+    "signIn": "Iniciar sesión",
+    "noAccount": "¿No tienes cuenta?",
+    "signUp": "Regístrate"
+  },
+
+  "register": {
+    "title": "Crear cuenta",
+    "username": "Nombre de usuario",
+    "signUp": "Registrarse",
+    "haveAccount": "¿Ya tienes cuenta?",
+    "signIn": "Inicia sesión"
+  },
+
+  "validation": {
+    "requiredFields": "Todos los campos son obligatorios",
+    "invalidEmail": "Email inválido",
+    "usernameLength": "El nombre de usuario debe tener entre 3 y 20 caracteres",
+    "passwordLength": "La contraseña debe tener al menos 8 caracteres"
+  },
+
+  "footer": {
+    "copyright": "Parchís Online · Proyecto académico desarrollado en 42 Madrid.",
+    "privacy": "Política de Privacidad",
+    "terms": "Términos del Servicio"
+  },
+
+  "lobby": {
+    "welcome": "Bienvenido al Parchís Online",
+    "createGame": "Crear partida",
+    "creating": "Creando...",
+    "join": "Unirse",
+    "joining": "Uniéndose...",
+    "gameId": "ID de partida",
+    "enterGameId": "Introduce un ID de partida",
+    "createError": "Error creando partida",
+    "joinError": "Error uniéndose a la partida",
+    "activeGame": "Todavía tienes una partida activa. Reconéctate a ella o espera a que expire."
+  },
+
+  "chat": {
+    "title": "Chat",
+    "message": "Mensaje",
+    "profile": "Perfil",
+    "invite": "Invitar",
+    "block": "Bloquear",
+    "someoneTyping": "Alguien está escribiendo...",
+    "gameInvitation": "Invitación de partida",
+    "wantsToPlay": "quiere jugar contigo.",
+    "accept": "Aceptar",
+    "reject": "Rechazar",
+    "writeMessage": "Escribe un mensaje...",
+    "send": "Enviar",
+    "invitationExpired": "La invitación ha expirado.",
+    "invitationRejected": "Tu invitación fue rechazada."
+  },
+
+  "friends": {
+    "title": "Amigos",
+    "search": "Buscar",
+    "searchTitle": "Buscar nuevos amigos",
+    "searchPlaceholder": "Buscar usuario...",
+    "searchButton": "Buscar",
+
+    "online": "En línea",
+    "offline": "Desconectado",
+
+    "friend": "Amigo",
+    "sent": "Enviada",
+    "reply": "Responder",
+    "add": "Añadir",
+
+    "myFriends": "Mis Amigos",
+    "remove": "Eliminar",
+    "avatar": "Avatar de",
+
+    "requestSent": "Solicitud enviada",
+
+    "errors": {
+      "load": "No se pudieron cargar los amigos",
+      "search": "Error al buscar usuarios",
+      "sendRequest": "No se pudo enviar la solicitud",
+      "remove": "No se pudo eliminar el amigo"
+    }
+  },
+
+  "friendRequests": {
+    "title": "Solicitudes de amistad",
+    "empty": "No tienes solicitudes pendientes por el momento.",
+    "sentYou": "Te envió una solicitud",
+    "pending": "Solicitud pendiente",
+    "accept": "Aceptar",
+
+    "errors": {
+      "accept": "No se pudo aceptar la solicitud"
+    }
+  },
+
+  "privacy": {
+    "title": "Política de Privacidad",
+    "lastUpdated": "Última actualización: julio de 2026",
+
+    "sections": {
+      "introduction": {
+        "title": "1. Introducción",
+        "text": "Bienvenido a Parchís Online. Esta Política de Privacidad explica cómo se recopila, almacena y utiliza la información personal durante el uso de esta aplicación. El proyecto ha sido desarrollado como un proyecto académico en 42 Madrid y está destinado exclusivamente a fines educativos."
+      },
+
+      "information": {
+        "title": "2. Información que recopilamos",
+        "text": "Dependiendo de cómo utilices la aplicación, puede almacenarse la siguiente información:",
+        "items": [
+          "Nombre de usuario.",
+          "Dirección de correo electrónico.",
+          "Contraseña cifrada.",
+          "Avatar del perfil.",
+          "Relaciones de amistad.",
+          "Historial de partidas.",
+          "Estadísticas de juego.",
+          "Mensajes enviados a través del chat del lobby."
+        ]
+      },
+
+      "usage": {
+        "title": "3. Cómo utilizamos tu información",
+        "text": "La información recopilada únicamente se utiliza para proporcionar los servicios ofrecidos por la aplicación, entre ellos:",
+        "items": [
+          "Autenticación de usuarios.",
+          "Creación de partidas multijugador.",
+          "Mostrar perfiles de los jugadores.",
+          "Gestionar la lista de amigos.",
+          "Mostrar el estado en línea.",
+          "Guardar el historial y las estadísticas de las partidas.",
+          "Mostrar los mensajes del chat."
+        ]
+      },
+
+      "security": {
+        "title": "4. Seguridad de los datos",
+        "text": "Se aplican medidas técnicas razonables para proteger la información de los usuarios. Las contraseñas nunca se almacenan en texto plano y los usuarios autenticados únicamente pueden acceder a los recursos permitidos por la aplicación. Se utiliza HTTPS para proteger las comunicaciones entre el navegador y el servidor."
+      },
+
+      "sharing": {
+        "title": "5. Compartición de la información",
+        "text": "La información personal nunca se vende ni se comparte con terceros. Otros jugadores únicamente podrán ver la información necesaria para el correcto funcionamiento de la aplicación, como el nombre de usuario, el avatar, las estadísticas públicas y el estado de conexión."
+      },
+
+      "cookies": {
+        "title": "6. Cookies y almacenamiento local",
+        "text": "La aplicación puede utilizar el almacenamiento del navegador o tokens de autenticación para mantener la sesión iniciada y mejorar la experiencia del usuario. No se utilizan cookies publicitarias ni de seguimiento."
+      },
+
+      "rights": {
+        "title": "7. Derechos del usuario",
+        "text": "Los usuarios pueden:",
+        "items": [
+          "Actualizar la información de su perfil.",
+          "Cambiar su avatar.",
+          "Consultar su historial de partidas.",
+          "Gestionar su lista de amigos."
+        ]
+      },
+
+      "retention": {
+        "title": "8. Conservación de los datos",
+        "text": "La información del usuario permanecerá almacenada mientras la cuenta exista y únicamente será conservada para el funcionamiento normal de la aplicación. Los datos podrán eliminarse si la base de datos del proyecto se reinicia como parte del desarrollo académico o de las pruebas."
+      },
+
+      "changes": {
+        "title": "9. Cambios en esta política",
+        "text": "Esta Política de Privacidad podrá actualizarse cuando el proyecto evolucione o se implementen nuevas funcionalidades. Se recomienda a los usuarios revisar esta página periódicamente."
+      },
+
+      "contact": {
+        "title": "10. Contacto",
+        "text": "Las preguntas relacionadas con esta Política de Privacidad pueden dirigirse al equipo de desarrollo responsable de este proyecto académico realizado en 42 Madrid."
+      }
+    }
+  },
+
+  "terms": {
+    "title": "Términos del Servicio",
+    "lastUpdated": "Última actualización: Julio de 2026",
+
+    "acceptance": {
+      "title": "1. Aceptación de los términos",
+      "text": "Al crear una cuenta o utilizar Parchís Online, aceptas cumplir estos Términos del Servicio. Si no estás de acuerdo con ellos, debes dejar de utilizar la aplicación."
+    },
+
+    "project": {
+      "title": "2. Sobre el proyecto",
+      "text": "Parchís Online es una aplicación web multijugador desarrollada como proyecto académico en 42 Madrid. La aplicación tiene fines educativos y puede modificarse, dejar de estar disponible temporalmente o reiniciarse durante su desarrollo."
+    },
+
+    "accounts": {
+      "title": "3. Cuentas de usuario",
+      "intro": "Los usuarios son responsables de la información asociada a sus cuentas. Cada usuario se compromete a:",
+      "items": [
+        "Proporcionar información de registro veraz.",
+        "Mantener la confidencialidad de sus credenciales de acceso.",
+        "Ser responsable de toda la actividad realizada con su cuenta.",
+        "Respetar a los demás usuarios mientras utiliza la plataforma."
+      ]
+    },
+
+    "fairPlay": {
+      "title": "4. Juego limpio",
+      "intro": "Se espera que todos los jugadores participen de forma justa en cada partida. Está prohibido:",
+      "items": [
+        "Hacer trampas o aprovechar errores del software.",
+        "Modificar el cliente para obtener ventajas injustas.",
+        "Intentar manipular los resultados de las partidas.",
+        "Utilizar herramientas automatizadas o bots."
+      ]
+    },
+
+    "community": {
+      "title": "5. Normas de la comunidad",
+      "intro": "Los usuarios deben comportarse con respeto al interactuar con otros a través de la aplicación.",
+      "items": [
+        "No acosar ni utilizar lenguaje ofensivo.",
+        "No enviar spam ni publicidad.",
+        "No suplantar la identidad de otros usuarios.",
+        "No publicar contenido ofensivo o ilegal."
+      ]
+    },
+
+    "property": {
+      "title": "6. Propiedad intelectual",
+      "text": "El código fuente, el diseño de la interfaz y los recursos originales de este proyecto son obra de su equipo de desarrollo. Las bibliotecas, iconos o recursos de terceros siguen siendo propiedad de sus respectivos autores."
+    },
+
+    "availability": {
+      "title": "7. Disponibilidad",
+      "text": "Al tratarse de un proyecto académico, no se garantiza la disponibilidad continua del servicio. Pueden producirse tareas de mantenimiento, actualizaciones o reinicios de la base de datos sin previo aviso."
+    },
+
+    "liability": {
+      "title": "8. Limitación de responsabilidad",
+      "text": "La aplicación se proporciona con fines educativos. Aunque se realizan esfuerzos razonables para garantizar su estabilidad y seguridad, el equipo de desarrollo no puede garantizar que el servicio funcione siempre sin interrupciones o errores."
+    },
+
+    "termination": {
+      "title": "9. Terminación",
+      "text": "El acceso a la aplicación podrá restringirse o suspenderse si un usuario incumple estos Términos del Servicio o interfiere deliberadamente en el funcionamiento normal de la plataforma."
+    },
+
+    "changes": {
+      "title": "10. Cambios en estos términos",
+      "text": "Estos Términos del Servicio podrán actualizarse cuando se añadan nuevas funcionalidades o cambien los requisitos del proyecto. El uso continuado de la aplicación implica la aceptación de la versión más reciente."
+    },
+
+    "contact": {
+      "title": "11. Contacto",
+      "text": "Las consultas relacionadas con estos Términos del Servicio pueden dirigirse al equipo de desarrollo responsable de este proyecto académico en 42 Madrid."
+    }
+  },
+
+  "game": {
+    "loading": "Cargando partida...",
+    "leave": "Salir de la partida",
+    "spectatorMode": "👁 Modo espectador",
+    "you": "Tú",
+    "playing": "En partida",
+
+    "hud": {
+      "panel": "Panel de Juego",
+      "close": "Cerrar"
+    },
+
+    "abandoned": {
+      "title": "Partida abandonada",
+      "message": "Todos los demás jugadores han abandonado la partida.",
+      "confirm": "Aceptar"
+    },
+
+    "header": {
+      "title": "Partida {{id}}",
+      "turn": "Turno",
+      "spectators": "Espectadores: {{count}}"
+    },
+
+    "dice": {
+      "roll": "Lanzar dado",
+      "spectating": "Esperando..."
+    },
+
+    "errors": {
+      "rollDiceFirst": "Primero debes lanzar el dado",
+      "notYourTurn": "No es tu turno",
+      "invalidMove": "Movimiento no válido",
+      "needFive": "Necesitas un 5 para salir de la base",
+      "ownBlockade": "Hay un bloqueo propio en la salida",
+      "exactRoll": "Se requiere una tirada exacta",
+      "blockadePath": "Hay un bloqueo en el camino",
+      "destinationBlocked": "El destino está bloqueado por una barrera"
+    }
+  },
+
+  "players": {
+    "title": "Jugadores",
+    "abandoned": "Abandonado",
+    "connected": "Conectado",
+    "disconnected": "Desconectado"
+  },
+
+  "profile": {
+    "loading": "Cargando...",
+    "loadError": "No se pudo cargar el perfil",
+
+    "title": {
+      "mine": "Mi Perfil",
+      "user": "Perfil de {{username}}"
+    },
+
+    "edit": {
+      "title": "Selecciona tu avatar:",
+      "username": "Nombre de usuario",
+      "save": "Guardar Cambios",
+      "button": "Editar Perfil"
+    },
+
+    "validation": {
+      "required": "El nombre de usuario es obligatorio",
+      "length": "El nombre de usuario debe tener entre 3 y 20 caracteres",
+      "invalidAvatar": "Avatar inválido",
+      "updateError": "No se pudo actualizar el perfil"
+    },
+
+    "info": {
+      "username": "Usuario:",
+      "email": "Email:",
+      "createdAt": "Fecha alta:"
+    },
+
+    "avatarAlt": {
+      "option": "opción de avatar",
+      "current": "avatar"
+    }
+  },
+
+  "victory": {
+    "titleVictory": "¡VICTORIA!",
+    "titleGameOver": "FIN DE LA PARTIDA",
+    "congratulations": "¡Enhorabuena!",
+    "winnerIs": "El ganador es",
+    "returnLobby": "Volver al Lobby",
+    "titleWinner": "Ganador"
+  },
+
+  "chatPanel": {
+    "title": "Chat",
+    "placeholder": "Escribe un mensaje...",
+    "send": "Enviar"
+  },
+
+  "spectators": {
+    "title": "Espectadores",
+    "empty": "Sin espectadores"
+  },
+
+  "errors": {
+    "connection": "Error de conexión"
+  }
+
+}

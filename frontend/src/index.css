@@ -1,0 +1,247 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: "Poppins", sans-serif;
+
+  --bg-primary: #f8fafc;
+  --bg-secondary: #eef2ff;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+
+  --pink-primary: #f9a8d4;
+  --purple-primary: #c4b5fd;
+  --blue-primary: #93c5fd;
+  --green-primary: #86efac;
+
+  --glass-bg: rgba(255, 255, 255, 0.35);
+  --glass-border: rgba(255, 255, 255, 0.18);
+}
+
+.dark {
+  --bg-primary: #020617;
+  --bg-secondary: #0f172a;
+
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+
+  --pink-primary: #f472b6;
+  --purple-primary: #a78bfa;
+  --blue-primary: #60a5fa;
+  --green-primary: #4ade80;
+
+  --glass-bg: rgba(15, 23, 42, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+
+  background:
+    linear-gradient(
+      135deg,
+      var(--bg-primary),
+      var(--bg-secondary)
+    );
+
+  color: var(--text-primary);
+
+  transition:
+    background 0.3s ease,
+    color 0.3s ease;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+
+  border: 1px solid var(--glass-border);
+
+  backdrop-filter: blur(20px);
+
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.neon-glow {
+  box-shadow:
+    0 0 24px rgba(168, 85, 247, 0.2);
+}
+
+html {
+  color-scheme: light dark;
+}
+
+/* ===========================================================
+   AUTH BACKGROUND ANIMATIONS
+   =========================================================== */
+
+@keyframes floatSlow {
+	0% {
+		transform: translateY(0px) rotate(0deg);
+	}
+	50% {
+		transform: translateY(-18px) rotate(3deg);
+	}
+	100% {
+		transform: translateY(0px) rotate(0deg);
+	}
+}
+
+@keyframes floatReverse {
+	0% {
+		transform: translateY(0px) rotate(0deg);
+	}
+	50% {
+		transform: translateY(16px) rotate(-3deg);
+	}
+	100% {
+		transform: translateY(0px) rotate(0deg);
+	}
+}
+
+@keyframes spinVerySlow {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes pulseGlow {
+	0% {
+		opacity: .35;
+		transform: scale(1);
+	}
+	50% {
+		opacity: .65;
+		transform: scale(1.08);
+	}
+	100% {
+		opacity: .35;
+		transform: scale(1);
+	}
+}
+
+@keyframes twinkle {
+	0%,
+	100% {
+		opacity: .25;
+		transform: scale(.8);
+	}
+
+	50% {
+		opacity: 1;
+		transform: scale(1.2);
+	}
+}
+
+@keyframes driftLeft {
+	0% {
+		transform: translateX(0);
+	}
+	50% {
+		transform: translateX(-18px);
+	}
+	100% {
+		transform: translateX(0);
+	}
+}
+
+@keyframes driftRight {
+	0% {
+		transform: translateX(0);
+	}
+	50% {
+		transform: translateX(18px);
+	}
+	100% {
+		transform: translateX(0);
+	}
+}
+
+/* ===========================================================
+   Utility classes
+   =========================================================== */
+
+.animate-float {
+	animation: floatSlow 8s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+	animation: floatReverse 9s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+	animation: spinVerySlow 90s linear infinite;
+}
+
+.animate-pulse-glow {
+	animation: pulseGlow 5s ease-in-out infinite;
+}
+
+.animate-twinkle {
+	animation: twinkle 3s ease-in-out infinite;
+}
+
+.animate-drift-left {
+	animation: driftLeft 12s ease-in-out infinite;
+}
+
+.animate-drift-right {
+	animation: driftRight 12s ease-in-out infinite;
+}
+
+/* ===========================================================
+   Decorative elements
+   =========================================================== */
+
+.auth-decoration {
+	user-select: none;
+	pointer-events: none;
+	position: absolute;
+}
+
+.auth-glow {
+	position: absolute;
+	border-radius: 9999px;
+	filter: blur(120px);
+	pointer-events: none;
+}
+
+.auth-shadow {
+	filter:
+		drop-shadow(0 0 20px rgba(255,255,255,.08))
+		drop-shadow(0 0 35px rgba(168,85,247,.18));
+}

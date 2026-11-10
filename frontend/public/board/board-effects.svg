@@ -1,0 +1,32 @@
+<svg width="1000" height="1000" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+<defs>
+
+<radialGradient id="pinkGlow">
+  <stop offset="0%" stop-color="#ff3bd4"/>
+  <stop offset="100%" stop-color="#ff3bd400"/>
+</radialGradient>
+
+<radialGradient id="greenGlow">
+  <stop offset="0%" stop-color="#00ff9d"/>
+  <stop offset="100%" stop-color="#00ff9d00"/>
+</radialGradient>
+
+<radialGradient id="blueGlow">
+  <stop offset="0%" stop-color="#00d9ff"/>
+  <stop offset="100%" stop-color="#00d9ff00"/>
+</radialGradient>
+
+<radialGradient id="purpleGlow">
+  <stop offset="0%" stop-color="#c86cff"/>
+  <stop offset="100%" stop-color="#c86cff00"/>
+</radialGradient>
+
+</defs>
+
+<circle cx="210" cy="210" r="190" fill="url(#pinkGlow)" opacity="0.25"/>
+<circle cx="790" cy="210" r="190" fill="url(#greenGlow)" opacity="0.25"/>
+<circle cx="210" cy="790" r="190" fill="url(#blueGlow)" opacity="0.25"/>
+<circle cx="790" cy="790" r="190" fill="url(#purpleGlow)" opacity="0.25"/>
+
+</svg>
