@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+
+<defs>
+<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#fde68a"/>
+<stop offset="100%" stop-color="#eab308"/>
+</linearGradient>
+</defs>
+
+<path
+d="
+M36 18
+H84
+V42
+C84 60 73 72 60 72
+C47 72 36 60 36 42
+Z"
+fill="url(#gold)"
+/>
+
+<path
+d="
+M36 26
+H22
+C22 42 30 50 42 50
+"
+fill="none"
+stroke="#eab308"
+stroke-width="6"
+/>
+
+<path
+d="
+M84 26
+H98
+C98 42 90 50 78 50
+"
+fill="none"
+stroke="#eab308"
+stroke-width="6"
+/>
+
+<rect
+x="54"
+y="72"
+width="12"
+height="20"
+rx="3"
+fill="#eab308"
+/>
+
+<rect
+x="40"
+y="92"
+width="40"
+height="10"
+rx="5"
+fill="#ca8a04"
+/>
+
+</svg>

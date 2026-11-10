@@ -1,0 +1,160 @@
+<svg width="1000" height="1000" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+<defs>
+
+<!-- CIRCUITO PINK -->
+<pattern id="circuit-pink" width="130" height="140" patternUnits="userSpaceOnUse">
+  
+  <path d="M10 30 H60 V20 H110 V70 H80 V110"
+        stroke="#ff3bd4"
+        stroke-width="2"
+        fill="none"
+        opacity="0.35"/>
+
+  <path d="M20 120 V80 H50 V40 H90 V10"
+        stroke="#ff69e7"
+        stroke-width="1.5"
+        fill="none"
+        opacity="0.25"/>
+
+  <circle cx="60" cy="30" r="3.5" fill="#ff3bd4"/>
+  <circle cx="110" cy="70" r="3.5" fill="#ff69e7"/>
+  <circle cx="80" cy="110" r="3" fill="#ff3bd4"/>
+
+</pattern>
+
+<!-- CIRCUITO GREEN -->
+<pattern id="circuit-green" width="120" height="120" patternUnits="userSpaceOnUse">
+  <path d="M10 10 H50 V40 H90 V70" stroke="#00ff9d" stroke-width="2" fill="none" opacity="0.3"/>
+  <path d="M30 100 H70 V60 H110" stroke="#52ffb8" stroke-width="1.5" fill="none" opacity="0.25"/>
+  <path d="M50 60 l-15 -10 M70 100 l10 15 M90 40 l15 -10" stroke="#00ff9d" stroke-width="1" opacity="0.2"/>
+  <circle cx="50" cy="40" r="3" fill="#00ff9d"/>
+  <circle cx="90" cy="70" r="3" fill="#52ffb8"/>
+</pattern>
+
+<!-- CIRCUITO BLUE -->
+<pattern id="circuit-blue" width="125" height="125" patternUnits="userSpaceOnUse">
+
+  <path d="M10 110 H40 V70 H80 V30 H120"
+        stroke="#00d9ff"
+        stroke-width="2"
+        opacity="0.3"
+        fill="none"/>
+
+  <path d="M20 20 V60 H60 V100 H110 V40"
+        stroke="#37b8ff"
+        stroke-width="1.5"
+        opacity="0.25"
+        fill="none"/>
+
+  <circle cx="40" cy="110" r="3.5" fill="#00d9ff"/>
+  <circle cx="80" cy="70" r="3.5" fill="#37b8ff"/>
+  <circle cx="110" cy="40" r="3" fill="#00d9ff"/>
+
+</pattern>
+
+<!-- CIRCUITO PURPLE -->
+<pattern id="circuit-purple" width="140" height="140" patternUnits="userSpaceOnUse">
+
+  <path d="M20 20 H70 V60 H110 V100 H60 V130"
+        stroke="#c86cff"
+        stroke-width="2"
+        opacity="0.3"
+        fill="none"/>
+
+  <path d="M10 90 H40 V50 H90 V10"
+        stroke="#bb6cff"
+        stroke-width="1.5"
+        opacity="0.25"
+        fill="none"/>
+
+  <path d="M70 60 l10 -15 M110 100 l-10 10 M40 50 l-15 -10"
+        stroke="#c86cff"
+        stroke-width="1"
+        opacity="0.2"/>
+
+  <circle cx="70" cy="60" r="3.5" fill="#c86cff"/>
+  <circle cx="110" cy="100" r="3.5" fill="#bb6cff"/>
+  <circle cx="60" cy="130" r="3" fill="#c86cff"/>
+
+</pattern>
+
+</defs>
+
+<rect width="1000" height="1000" rx="60" fill="#050816"/>
+
+<!-- PLAYER ZONES -->
+
+<rect x="30" y="30" width="340" height="340" rx="40"
+fill="url(#circuit-pink)"
+opacity="0.9"
+stroke="#ff3bd4"
+stroke-width="10"/>
+
+<rect x="630" y="30" width="340" height="340" rx="40"
+fill="url(#circuit-green)"
+opacity="0.9"
+stroke="#00ff9d"
+stroke-width="10"/>
+
+<rect x="30" y="630" width="340" height="340" rx="40"
+fill="url(#circuit-blue)"
+opacity="0.9"
+stroke="#00d9ff"
+stroke-width="10"/>
+
+<rect x="630" y="630" width="340" height="340" rx="40"
+fill="url(#circuit-purple)"
+opacity="0.9"
+stroke="#c86cff"
+stroke-width="10"/>
+
+<!-- INNER HOMES -->
+
+<rect x="105" y="105" width="190" height="190" rx="30"
+fill="#050816"
+stroke="#ff69e7"
+stroke-width="6"/>
+
+<rect x="705" y="105" width="190" height="190" rx="30"
+fill="#050816"
+stroke="#52ffb8"
+stroke-width="6"/>
+
+<rect x="105" y="705" width="190" height="190" rx="30"
+fill="#050816"
+stroke="#52dfff"
+stroke-width="6"/>
+
+<rect x="705" y="705" width="190" height="190" rx="30"
+fill="#050816"
+stroke="#d88cff"
+stroke-width="6"/>
+
+<!-- BASE CIRCLES -->
+
+<!-- pink -->
+<circle cx="155" cy="155" r="22" fill="#2d1026" stroke="#ff4fd8" stroke-width="3"/>
+<circle cx="245" cy="155" r="22" fill="#2d1026" stroke="#ff4fd8" stroke-width="3"/>
+<circle cx="155" cy="245" r="22" fill="#2d1026" stroke="#ff4fd8" stroke-width="3"/>
+<circle cx="245" cy="245" r="22" fill="#2d1026" stroke="#ff4fd8" stroke-width="3"/>
+
+<!-- green -->
+<circle cx="755" cy="155" r="22" fill="#10261c" stroke="#37ff99" stroke-width="3"/>
+<circle cx="845" cy="155" r="22" fill="#10261c" stroke="#37ff99" stroke-width="3"/>
+<circle cx="755" cy="245" r="22" fill="#10261c" stroke="#37ff99" stroke-width="3"/>
+<circle cx="845" cy="245" r="22" fill="#10261c" stroke="#37ff99" stroke-width="3"/>
+
+<!-- blue -->
+<circle cx="155" cy="755" r="22" fill="#102030" stroke="#37b8ff" stroke-width="3"/>
+<circle cx="245" cy="755" r="22" fill="#102030" stroke="#37b8ff" stroke-width="3"/>
+<circle cx="155" cy="845" r="22" fill="#102030" stroke="#37b8ff" stroke-width="3"/>
+<circle cx="245" cy="845" r="22" fill="#102030" stroke="#37b8ff" stroke-width="3"/>
+
+ <!-- purple -->
+<circle cx="755" cy="755" r="22" fill="#24122d" stroke="#bb6cff" stroke-width="3"/>
+<circle cx="845" cy="755" r="22" fill="#24122d" stroke="#bb6cff" stroke-width="3"/>
+<circle cx="755" cy="845" r="22" fill="#24122d" stroke="#bb6cff" stroke-width="3"/>
+<circle cx="845" cy="845" r="22" fill="#24122d" stroke="#bb6cff" stroke-width="3"/>
+
+</svg>
