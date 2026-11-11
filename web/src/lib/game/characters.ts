@@ -213,14 +213,14 @@ export const CHARACTERS: readonly Character[] = [
           "Meta completa. Que conste que he dado guerra.",
         ],
         ambient_ahead: [
-          "Voy delante. ¡Que se note!",
-          "{rival}, ¿necesitas un mapa? Vas muy atrás.",
+          "Voy ganando. ¡Que se note!",
+          "{rival}, ¿necesitas un mapa? Vas muy mal.",
           "¿Esto es todo lo que tenéis?",
-          "Delante y con hambre. Mala combinación para vosotros.",
+          "Ganando y con hambre. Mala combinación para vosotros.",
         ],
         ambient_behind: [
           "Calma, {rival}. Ya te alcanzo.",
-          "Voy atrás, sí. Por ahora.",
+          "Voy perdiendo, sí. Por ahora.",
           "{rival}, mira por el retrovisor. Ya llego.",
           "Esto se remonta. Seguro.",
         ],
@@ -424,7 +424,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_behind: [
           "No corras tanto, {rival}, que te vas a cansar.",
-          "Voy atrasada, pero quien ríe el último…",
+          "Voy perdiendo, pero quien ríe el último…",
           "Sin prisa, {rival}. La tortuga también llegó.",
           "Mucho correr, mucho correr… ya veremos al final, {rival}.",
         ],
@@ -461,7 +461,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         victory_reply: [
           "¡Ovación para {rival}! Pero que no se acostumbre.",
-          "¡Bravo, {rival}! Primer puesto; luego me firmas un autógrafo.",
+          "¡Bravo, {rival}! Primer puesto...luego me firmas un autógrafo.",
           "¡Felicidades, {rival}! Exijo revancha y palomitas.",
           "Y {rival} se lleva la gloria. ¡Qué carrera, señores!",
         ],
@@ -525,12 +525,12 @@ export const CHARACTERS: readonly Character[] = [
         ambient_ahead: [
           "¡Voy en cabeza! Que no pare la música.",
           "{rival}, ¿te has quedado a merendar? Vas muy atrás.",
-          "Liderato provisional, señores. Que siga la fiesta.",
+          "Voy ganando, señores. Que siga la fiesta.",
           "¡Hoy es mi día! O eso dice mi amuleto.",
         ],
         ambient_behind: [
           "{rival} va lanzado. Pero aquí hay partido.",
-          "Voy atrás, pero en las remontadas soy un experto.",
+          "Voy perdiendo, pero en las remontadas soy un experto.",
           "¡Que no decaiga! {rival}, te estoy vigilando.",
           "Esto se arregla con un par de seises. Ni uno más.",
         ],
