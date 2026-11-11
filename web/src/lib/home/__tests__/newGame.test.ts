@@ -125,3 +125,62 @@ describe("NewGameController (botón «Nueva partida»)", () => {
     expect(controller.getSnapshot().kind).toBe("error");
   });
 });
+
+describe("volver a la portada (Next.js conserva el estado con <Activity>)", () => {
+  it("sin reset, tras navegar a la partida el botón se queda en carga y no crea otra (el fallo)", async () => {
+    const f = deferredFetch();
+    const controller = new NewGameController({ fetch: f.fetch, navigate: vi.fn() });
+    const first = controller.create();
+    f.pending[0].resolve(created());
+    await first;
+    // La portada vuelve a verse con el mismo estado: el clic no hace nada.
+    await controller.create();
+    expect(controller.getSnapshot()).toEqual({ kind: "creating" });
+    expect(f.spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("con reset al ocultarse la portada, al volver el botón está en reposo y crea otra partida", async () => {
+    const f = deferredFetch();
+    const navigate = vi.fn();
+    const controller = new NewGameController({ fetch: f.fetch, navigate });
+    const first = controller.create();
+    f.pending[0].resolve(created());
+    await first;
+    controller.reset(); // limpieza del efecto al ocultarse la ruta
+    expect(controller.getSnapshot()).toEqual({ kind: "idle" });
+
+    const second = controller.create();
+    expect(controller.getSnapshot()).toEqual({ kind: "creating" });
+    await controller.create(); // doble clic en la segunda creación: sigue sin duplicar
+    expect(f.spy).toHaveBeenCalledTimes(2);
+    f.pending[1].resolve(Response.json({ id: "2a6c4c1e-1111-4a2b-8c3d-9e8f7a6b5c4d", version: 1 }, { status: 201 }));
+    await second;
+    expect(navigate.mock.calls).toEqual([[`/partida/${ID}`], ["/partida/2a6c4c1e-1111-4a2b-8c3d-9e8f7a6b5c4d"]]);
+  });
+
+  it("si se sale de la portada mientras se crea, el resultado tardío se ignora (no navega por sorpresa)", async () => {
+    const f = deferredFetch();
+    const navigate = vi.fn();
+    const controller = new NewGameController({ fetch: f.fetch, navigate });
+    const pending = controller.create();
+    controller.reset();
+    f.pending[0].resolve(created());
+    await pending;
+    expect(navigate).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toEqual({ kind: "idle" });
+
+    const failing = controller.create();
+    controller.reset();
+    f.pending[1].resolve(Response.json({}, { status: 503 }));
+    await failing;
+    expect(controller.getSnapshot()).toEqual({ kind: "idle" }); // tampoco muestra un error antiguo
+  });
+
+  it("reset en reposo no notifica a nadie", () => {
+    const controller = new NewGameController({ fetch: vi.fn() as unknown as typeof fetch, navigate: vi.fn() });
+    const listener = vi.fn();
+    controller.subscribe(listener);
+    controller.reset();
+    expect(listener).not.toHaveBeenCalled();
+  });
+});

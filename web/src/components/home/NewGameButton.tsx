@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { NewGameController, type NewGameState } from "@/lib/home/newGame";
 
@@ -12,6 +12,9 @@ export function NewGameButton() {
     () => new NewGameController({ fetch: (...args) => fetch(...args), navigate: (href) => router.push(href) }),
   );
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  // Al salir de la portada (navegación del App Router: la ruta se oculta con <Activity> y conserva su
+  // estado) se limpian los efectos: el botón vuelve a reposo para cuando se regrese.
+  useEffect(() => () => controller.reset(), [controller]);
   return <NewGameButtonView state={state} onCreate={() => void controller.create()} />;
 }
 
