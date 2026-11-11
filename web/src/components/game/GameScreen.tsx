@@ -1,9 +1,19 @@
+import type { ChatMessage } from "@/lib/chat/schemas";
 import type { LoadGameResult } from "@/lib/game/api";
 import { GameError } from "./GameStatus";
 import { LiveGame } from "./LiveGame";
 
 /** Lo que se muestra para cada resultado de `loadGame` (sin hooks: se renderiza en el servidor). */
-export function GameScreen({ result }: { result: LoadGameResult }) {
+export function GameScreen({
+  result,
+  messages = [],
+  chatPending = false,
+}: {
+  result: LoadGameResult;
+  messages?: readonly ChatMessage[];
+  /** Quedan versiones del chat por procesar (en una partida terminada, el navegador las espera). */
+  chatPending?: boolean;
+}) {
   switch (result.kind) {
     case "not_found":
       return (
@@ -16,6 +26,6 @@ export function GameScreen({ result }: { result: LoadGameResult }) {
       return <GameError title="No se ha podido cargar la partida" message={result.message} retryable />;
     case "ok":
       // En directo (avance + Realtime). Si ya terminó, LiveGame no conecta nada.
-      return <LiveGame initial={result.game} />;
+      return <LiveGame initial={result.game} initialMessages={messages} chatPending={chatPending} />;
   }
 }

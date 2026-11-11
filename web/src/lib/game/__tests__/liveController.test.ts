@@ -356,4 +356,25 @@ describe("LiveGameController", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(world.fetch.mock.calls.length).toBe(calls);
   });
+
+  it("boardVersion (para el chat) solo avanza cuando el tablero termina de animar la versión", async () => {
+    const world = await createWorld();
+    const controller = new LiveGameController(toGameResponse(world.memory.rows.get(world.id)!.game), {
+      fetch: world.fetch as unknown as typeof fetch,
+      subscribe: world.subscribe,
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    }, { pauseMs: 10 });
+    controller.start();
+    await runUntil(() => controller.getSnapshot().animation !== null);
+    const { animation, boardVersion, display } = controller.getSnapshot();
+    expect(display.version).toBe(2);
+    expect(boardVersion).toBe(1); // aún animando: los mensajes de la v2 no se muestran
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(controller.getSnapshot().boardVersion).toBe(1); // sin animationDone no avanza nada
+    controller.animationDone(animation!.seq);
+    expect(controller.getSnapshot().boardVersion).toBe(2);
+    controller.stop();
+  });
 });
+

@@ -61,6 +61,11 @@ export interface LiveView {
   display: GameResponse;
   /** Versión más alta conocida. */
   latest: GameResponse;
+  /**
+   * Versión que el tablero ya ha terminado de dibujar (animación acabada). El chat solo muestra
+   * mensajes de versiones ≤ esta, para no adelantar acontecimientos que aún no se han visto.
+   */
+  boardVersion: number;
   /** Paso pendiente de animar (cambia `seq` en cada uno); null si no hay nada que animar. */
   animation: { seq: number; step: DisplayStep } | null;
   connection: Connection;
@@ -104,6 +109,7 @@ export class LiveGameController {
     this.view = {
       display: initial,
       latest: initial,
+      boardVersion: initial.version,
       animation: null,
       connection: initial.status === "finished" ? { kind: "finished" } : { kind: "connecting" },
       lastRollVersion: initial.lastAction?.type === "roll" ? initial.version : 0,
@@ -166,7 +172,7 @@ export class LiveGameController {
   /** La vista ha terminado de animar el paso actual. */
   animationDone(seq: number) {
     if (this.view.animation?.seq !== seq) return;
-    this.setView({ animation: null });
+    this.setView({ animation: null, boardVersion: this.view.display.version });
     this.advanceDisplay();
     this.schedule();
   }

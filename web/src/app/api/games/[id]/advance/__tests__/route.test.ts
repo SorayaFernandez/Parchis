@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createGame } from "@/lib/engine";
+import { createGame, type GameEvent } from "@/lib/engine";
 import { CHARACTER_IDS } from "@/lib/game/characters";
 import type { AdvanceDeps, AdvanceResult } from "@/lib/game/advance";
 
@@ -16,6 +16,10 @@ vi.mock("@/lib/game/repository", async (importOriginal) => {
   return { ...original, getGamesRepository: () => ({}) };
 });
 
+// El procesador del chat se programa para después de la respuesta: aquí solo se comprueba que se programa.
+const scheduleDrain = vi.fn();
+vi.mock("@/lib/chat/schedule", () => ({ scheduleDrain: (...args: unknown[]) => scheduleDrain(...args) }));
+
 const { POST } = await import("../route");
 const { EngineRejectedActionError } = await import("@/lib/game/advance");
 const { GameRepositoryError } = await import("@/lib/game/repository");
@@ -27,6 +31,7 @@ const post = (body: string | undefined, id = ID) =>
 describe("POST /api/games/[id]/advance", () => {
   beforeEach(() => {
     advanceGame.mockReset();
+    scheduleDrain.mockReset();
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -99,5 +104,29 @@ describe("POST /api/games/[id]/advance", () => {
     response = await post('{"expectedVersion":2}');
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain("40001");
+  });
+
+  it("chat: el procesador se programa (sin esperarlo) solo si la partida avanza con algo que comentar", async () => {
+    const state = createGame([...CHARACTER_IDS]);
+    const advanced = (version: number, events: GameEvent[]) => ({
+      kind: "advanced" as const,
+      action: { type: "roll" as const, playerId: "ai-pink", value: 5 },
+      events,
+      game: { id: ID, version, status: "playing", winner: null, state } as never,
+    });
+    const capture: GameEvent = { type: "piece_captured", playerId: "ai-pink", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 };
+
+    advanceGame.mockResolvedValueOnce(advanced(5, [capture]));
+    expect((await post('{"expectedVersion":4}')).status).toBe(200);
+    expect(scheduleDrain).toHaveBeenCalledExactlyOnceWith(ID);
+
+    // Tirada normal: la versión queda en la cola (la encola PostgreSQL) y se procesa en el siguiente lote.
+    advanceGame.mockResolvedValueOnce(advanced(7, [{ type: "dice_rolled", playerId: "ai-pink", value: 5 }]));
+    expect((await post('{"expectedVersion":6}')).status).toBe(200);
+    expect(scheduleDrain).toHaveBeenCalledTimes(1);
+
+    advanceGame.mockResolvedValueOnce({ kind: "version_conflict", currentVersion: 8 });
+    expect((await post('{"expectedVersion":6}')).status).toBe(409);
+    expect(scheduleDrain).toHaveBeenCalledTimes(1);
   });
 });
