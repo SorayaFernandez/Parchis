@@ -13,7 +13,7 @@ vi.mock("../store", async (importOriginal) => {
   return { ...original, getChatStore: () => ({ claim, commit: vi.fn(), release: vi.fn() }) };
 });
 
-const { scheduleDrain, runDrainInBackground } = await import("../schedule");
+const { scheduleDrain, runDrainInBackground, chatWriters } = await import("../schedule");
 const { logChatError } = await import("../log");
 const { ChatStoreError } = await import("../store");
 
@@ -58,5 +58,47 @@ describe("scheduleDrain / runDrainInBackground", () => {
     logChatError("prueba", error, 1_030_000);
     logChatError("prueba", error, 1_061_000);
     expect(log).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("chatWriters (escritor LLM o local según las variables)", () => {
+  const KEY = "clave-secreta-de-prueba-123";
+  const enabled = { CHAT_LLM_ENABLED: "true", AI_GATEWAY_API_KEY: KEY, CHAT_LLM_MODEL: "nvidia/nemotron-3.5-lightning-free" };
+  const request = (important: boolean) => ({
+    utterance: { speaker: "ai-pink", kind: "goal" as const, rival: null, trigger: "goal" as const, replyTo: null, important },
+    recent: [],
+    replyToText: null,
+  });
+
+  beforeEach(() => vi.unstubAllGlobals());
+
+  it("sin activar (lo normal hoy): todo con el escritor local y sin registrar nada", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { writer, fallbackWriter } = chatWriters({});
+    expect(writer).toBe(fallbackWriter);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("activo y bien configurado: lo importante llama a AI Gateway; lo demás, no", async () => {
+    const fetch = vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Meta para Brava, sin despeinarse!" } }] }));
+    vi.stubGlobal("fetch", fetch);
+    const { writer, fallbackWriter } = chatWriters(enabled);
+    expect(writer).not.toBe(fallbackWriter);
+    expect(await writer.write(request(false))).toMatchObject({ source: "local" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await writer.write(request(true))).toMatchObject({ source: "llm" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("mal configurado (p. ej. modelo no permitido o clave pública): local y un registro sin la clave", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const env of [{ ...enabled, CHAT_LLM_MODEL: "openai/gpt-5" }, { ...enabled, NEXT_PUBLIC_AI_GATEWAY_API_KEY: KEY }]) {
+      const { writer, fallbackWriter } = chatWriters(env);
+      expect(writer).toBe(fallbackWriter);
+    }
+    const output = log.mock.calls.flat().join(" ");
+    expect(output).toMatch(/model_not_allowed/);
+    expect(output).toMatch(/public_secret/);
+    expect(output).not.toContain(KEY);
   });
 });

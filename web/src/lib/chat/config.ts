@@ -102,3 +102,34 @@ export const TRIGGER_CHANCE = {
 
 /** Probabilidad base de una réplica (se multiplica por las ganas de hablar de quien replica). */
 export const REPLY_CHANCE = 0.5;
+
+/**
+ * Escritor LLM (fase 8.2b) vía Vercel AI Gateway. Solo escribe el texto de las intervenciones
+ * importantes (`utterance.important`: victoria, capturas y rachas); nunca decide nada del juego.
+ * Desactivado salvo `CHAT_LLM_ENABLED=true` con clave y modelo válidos (ver `llm/env.ts`).
+ */
+export const CHAT_LLM = {
+  /** API compatible con OpenAI de AI Gateway (Chat Completions). */
+  endpoint: "https://ai-gateway.vercel.sh/v1/chat/completions",
+  /**
+   * Modelos permitidos (lista explícita). `CHAT_LLM_MODEL` debe ser uno de ellos; si no, el LLM queda
+   * desactivado. No se envía `models` (sin cambio automático a otro modelo).
+   */
+  allowedModels: ["nvidia/nemotron-3.5-lightning-free"],
+  /** Tokens de salida como máximo. */
+  maxTokens: 60,
+  temperature: 0.8,
+  /** Caracteres como máximo de una respuesta del LLM (se rechaza si es más larga, no se corta). */
+  maxChars: 140,
+  /** Textos recientes de la partida que se envían para no repetirlos (cada uno recortado). */
+  recentTexts: 3,
+  recentTextMaxChars: 100,
+  /** Corte temporal ante errores de configuración, autenticación, cuota o modelo (401, 402, 403, 404). */
+  configErrorCooldownMs: 10 * 60_000,
+  /** Corte ante 429 sin `Retry-After` válido. */
+  rateLimitCooldownMs: 60_000,
+  /** `Retry-After` máximo que se acepta (más largo: se usa este). */
+  maxRetryAfterMs: 60 * 60_000,
+  /** Corte ante errores del servidor (5xx), para no insistir durante una caída. */
+  serverErrorCooldownMs: 30_000,
+} as const;

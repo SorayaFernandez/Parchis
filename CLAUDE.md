@@ -185,7 +185,8 @@ Ninguno usa hooks; reciben los datos ya calculados.
 
 - Sin registro, login ni jugadores humanos en la partida.
 - El servidor tira el dado y valida todo con el motor; la IA **solo elige** entre los movimientos legales que calcula el motor.
-- Supabase (BD + Realtime): tabla `public.games` creada y conexión configurada (ver "Supabase"). Desplegado en Vercel. Pendiente: Vercel AI Gateway (LLM, fase 8.2b).
+- Supabase (BD + Realtime): tabla `public.games` creada y conexión configurada (ver "Supabase"). Desplegado en Vercel.
+- El LLM del chat (Vercel AI Gateway, fase 8.2b) solo escribe texto de algunas intervenciones; nunca decide nada del juego. Está desactivado por defecto.
 - Las claves privadas solo existen en el servidor (nunca con el prefijo `NEXT_PUBLIC_`).
 
 ## Supabase
@@ -250,11 +251,10 @@ Ninguno usa hooks; reciben los datos ya calculados.
     - Un reintento con versión antigua da 409.
     - Hubo un 503 por red cuya confirmación sí se guardó, y no se duplicó nada.
 - **Si `next dev` lleva en marcha desde antes de añadir métodos al repositorio, hay que reiniciarlo:** se vio `repository.claim is not a function` porque no recargó el módulo.
-- Pendiente: textos del chat con LLM (fase 8.2b).
 
 ## Personajes (fase 8.1)
 
-Cada personaje juega con su propio perfil (`strategy` en `characters.ts`): multiplicadores (≥ 0) sobre `AI_WEIGHTS` y un azar acotado. También tiene un perfil de chat (`chat`: registro, `talkativeness` y frases locales; ver "Chat entre personajes"). La personalidad solo cambia la puntuación: la IA elige siempre entre `getAvailableMoves`, así que nunca hace jugadas ilegales. `personality`, `catchphrases` y `chat.register` son la referencia para el futuro prompt (fase 8.2b).
+Cada personaje juega con su propio perfil (`strategy` en `characters.ts`): multiplicadores (≥ 0) sobre `AI_WEIGHTS` y un azar acotado. También tiene un perfil de chat (`chat`: registro, `talkativeness` y frases locales; ver "Chat entre personajes"). La personalidad solo cambia la puntuación: la IA elige siempre entre `getAvailableMoves`, así que nunca hace jugadas ilegales. `personality`, `catchphrases` y `chat.register` se usan en el prompt del LLM (fase 8.2b).
 
 | | Brava (`ai-pink`) | Don Ernesto (`ai-purple`) | Abuela Pilar (`ai-green`) | Chispa (`ai-blue`) |
 |---|---|---|---|---|
@@ -310,7 +310,7 @@ La carga inicial sigue en el servidor. `LiveGame` (cliente) recibe esa partida y
 
 ## Chat entre personajes (fase 8.2a)
 
-Los personajes comentan los acontecimientos **reales** de la partida con frases locales (sin LLM ni coste). El espectador solo lee. Diseñado para que la fase 8.2b sustituya el texto por un LLM sin tocar el director ni la persistencia.
+Los personajes comentan los acontecimientos **reales** de la partida. El espectador solo lee. Por defecto, con frases locales (sin LLM ni coste). Con el LLM de la fase 8.2b activado, solo cambia quién escribe el texto de las intervenciones importantes; el director y la persistencia son los mismos.
 
 ### Flujo (cola persistente)
 
@@ -344,9 +344,9 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
   - Pausas: 8 versiones por personaje (también para replicar) y 3 entre intervenciones. La **victoria** y el último comentario de la partida (`game_finished`) se las saltan.
   - Probabilidad = `TRIGGER_CHANCE` × `talkativeness`: Brava y Chispa 1, Don Ernesto y Pilar 0,6.
   - `recordPublished` actualiza tiempos, textos recientes y frases usadas por cada personaje (`usedLines`, de su `lineId`), solo con lo publicado de verdad. `trackCaptures` "observa" una versión sin hablar.
-  - `Utterance.important` (victoria y capturas) queda disponible para el escritor de 8.2b (por ejemplo, para callar en lo que no es importante en vez de usar la frase local).
+  - `Utterance.important` (victoria, capturas y rachas, con sus réplicas) decide qué intervenciones escribe el LLM cuando está activo (ver "Fase 8.2b").
 - `writer.ts`:
-  - `ChatWriter` es **el punto de extensión de 8.2b**. Recibe `usedLines` del personaje, `signal` y `timeoutMs` (ver `service.ts`) y devuelve `{ text, source, lineId? }`.
+  - `ChatWriter`: recibe `usedLines` del personaje, `signal` y `timeoutMs` (ver `service.ts`) y devuelve `{ text, source, lineId? }`. Lo implementan el escritor local (`createLocalWriter`) y el escritor LLM (`createGatewayWriter`, ver "Fase 8.2b").
   - `renderLine` rellena `{rival}`, `{count}`/`{Count}` (número real en palabras) y `{ritmo}` ("seguidas" o "en poco tiempo"). Devuelve `null` si a la frase le falta un dato.
   - `createLocalWriter`, entre las frases válidas (con sus datos y sin parecerse a los 12 textos recientes de la partida), elige al azar una que el personaje **aún no haya usado**; si ya las usó todas, la usada hace más tiempo. Así cada personaje agota las frases de un tipo antes de repetir. Si no queda ninguna válida, calla.
   - `similarity` (Jaccard de trigramas, sin tildes, signos ni **nombres de personajes**: la misma frase a otro rival cuenta como repetida).
@@ -373,7 +373,7 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
     - Si todas sus frases "se repiten", se ignora la antirrepetición, también con el local.
   - Una réplica cuyo mensaje se descartó también se descarta.
 - `store.ts` (`server-only`): `ChatStore` sobre las funciones SQL (`claim` → `ClaimedBatch` con `items`, `through` y `latest`; `commit(through)` → `{ inserted, hasMore }`; `release`) y lecturas (`pending`, `latest`, `after`). Valida con Zod antes de escribir y al leer. `ChatStoreError` (`database` con código solo para el registro, `invalid_data`).
-- `schedule.ts` (`server-only`): `scheduleDrain(gameId)` (`after`, nunca lanza) y `runDrainInBackground` (escritor local, que también es el de reserva; azar con `crypto`).
+- `schedule.ts` (`server-only`): `scheduleDrain(gameId)` (`after`, nunca lanza) y `runDrainInBackground` (azar con `crypto`). `chatWriters(env)` elige los escritores (ver "Fase 8.2b").
 - `log.ts`: `logChatError`, que registra solo etapa, tipo y código, como mucho una vez por minuto por tipo (por ejemplo, si aún no existen las tablas).
 - `load.ts` (`server-only`): `loadChatMessages(id)` → `{ messages, pending }` (los últimos 20 y si quedan pendientes). Nunca lanza: si falla, `[]` y `pending: true` (el navegador lo comprobará).
   - Lee **primero** `pending` y **después** los mensajes, no en paralelo (B2). Como `chat_commit` inserta los mensajes y vacía la cola en la misma transacción, nunca devuelve "sin el último mensaje y sin pendientes", que dejaría sin chat una partida recién terminada.
@@ -473,15 +473,67 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
   - Tres seises sin ficha devuelta: ninguno de sus mensajes menciona la casa.
 - **Auditoría:** todos los puntos resueltos. M3: el SQL se ha ejecutado en Supabase y el chat se ha comprobado en producción (Vercel).
 
-## Fase 8.2b: textos con LLM gratuito (pendiente de integrar el LLM)
+## Fase 8.2b: textos con LLM (Vercel AI Gateway) — implementado, desactivado
 
-Ampliación, no reestructuración:
+El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimientos, dados, turnos ni resultados (eso sigue en el motor y la IA heurística). El director, la cola, las reservas, el SQL y el navegador no cambian.
 
-- Un `ChatWriter` nuevo que llame a Vercel AI Gateway **solo con una lista explícita de modelos gratuitos autorizados**, sin reserva automática a modelos de pago.
-- Si se agota la cuota, falla el proveedor o se agota el tiempo: la frase local (`fallbackWriter`), ya implementado. Si se quiere silencio en vez de la frase local para lo que no es `utterance.important`, el escritor LLM puede devolver `null` en esos casos.
-- Usará `chat.register`, `personality`, `catchphrases`, `ChatWriteRequest.recent` y `replyToText` para el prompt. Su salida pasa por `validateChatText` y se guarda con `source = 'llm'`.
-- Sin cambios en el director, la cola, el SQL ni el navegador. Todavía no hay variables, dependencias ni código de AI Gateway.
-- **Preparación implementada en local** (sin integrar con AI Gateway): reserva, plazo de trabajo, tiempo máximo y cancelación por llamada, y escritor local obligatorio, también para la victoria (ver `service.ts`). El escritor LLM solo tiene que implementar `ChatWriter`, pasar `signal` a su petición HTTP y devolver `source: "llm"`.
+- **Modelo configurado:** `nvidia/nemotron-3.5-lightning-free`, el único en `CHAT_LLM.allowedModels` (`config.ts`).
+- **Variables** (solo servidor, nunca con `NEXT_PUBLIC_`; plantilla en `web/.env.example`; en Vercel, Project Settings → Environment Variables):
+  - `CHAT_LLM_ENABLED`: solo `true` lo activa; sin ella el LLM está desactivado.
+  - `AI_GATEWAY_API_KEY`: clave de AI Gateway.
+  - `CHAT_LLM_MODEL`: debe estar en la lista permitida.
+  - `CHAT_LLM_PROVIDER` (opcional): fija el proveedor.
+- **Qué escribe:** solo las intervenciones con `utterance.important`, es decir, victoria (mensaje y réplica), capturas, rachas y malas rachas, también sus réplicas (`createImportantOnlyWriter`). Tercer 6, meta, puesto final y ambiente siguen con las frases locales, sin llamar al modelo.
+- **Elección de escritores** (`chatWriters(env)` en `schedule.ts`):
+  - El escritor local es siempre la reserva (`fallbackWriter`).
+  - Con la configuración válida, el principal envía lo importante al LLM y el resto al local.
+  - Si no es válida, el principal es el propio escritor local. Un error de configuración se registra solo con su motivo, sin valores.
+- **Sin dependencias:** `fetch` nativo contra la API compatible con OpenAI (`POST https://ai-gateway.vercel.sh/v1/chat/completions`, `Authorization: Bearer <AI_GATEWAY_API_KEY>`). Sin SDK ni streaming.
+- `src/lib/chat/llm/env.ts` (puro, nunca lanza ni muestra valores): `readChatLlmConfig(env)`.
+  - **Activo solo con `CHAT_LLM_ENABLED=true`**, `AI_GATEWAY_API_KEY` no vacía y `CHAT_LLM_MODEL` permitido; `CHAT_LLM_PROVIDER`, si se indica, debe ser un nombre de proveedor válido.
+  - Si no, queda desactivado con un motivo: `off`, `missing_key`, `missing_model`, `model_not_allowed`, `invalid_provider` o `public_secret`. Este último salta si existe `NEXT_PUBLIC_AI_GATEWAY_API_KEY` o `NEXT_PUBLIC_CHAT_LLM_API_KEY`, aunque el LLM no esté activado.
+- `src/lib/chat/llm/prompt.ts` (puro): `buildChatPrompt(request)`.
+  - **Sistema:** quién es el personaje (nombre, arquetipo, personalidad, registro y expresiones) y las reglas: español, una o dos frases, 140 caracteres como máximo, solo los hechos dados, sin insultos y sin mencionar que es una IA.
+  - **Usuario:** la situación del tipo de intervención (con el rival y la racha reales), el mensaje al que responde y los 3 últimos textos de la partida (recortados a 100 caracteres) para no repetirlos.
+  - Nunca el estado de la partida ni identificadores internos (menos de 1500 caracteres en total).
+- `src/lib/chat/llm/gatewayWriter.ts`: `createGatewayWriter({ config, fetch, breaker, now?, onFailure? })`.
+  - **Petición:** una por intervención, sin reintentos. Cuerpo: `model`, `messages`, `max_tokens: 60`, `temperature: 0.8` y `stream: false`.
+    - Sin `models`: AI Gateway no cambia a otro modelo.
+    - Con `CHAT_LLM_PROVIDER`, `providerOptions.gateway.only`: tampoco cambia de proveedor.
+    - La clave va solo en la cabecera.
+  - **Cancelación:** `AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)])`, con `timeoutMs` acotado a 8 s. Respeta la cancelación del servicio y su propio plazo.
+  - **Respuesta:** `cleanLlmText` toma la primera línea, quita comillas y un prefijo con el nombre de quien habla, y exige:
+    - Como mucho 140 caracteres (si es más larga, se rechaza; no se corta).
+    - Sin URL ni formato.
+    - Solo los nombres de quien habla y su rival.
+    - Que pase `validateChatText` (repeticiones).
+  - **Cualquier problema lanza `ChatLlmError`** (`cooldown`, `http` con `status`, `network`, `aborted` o `invalid_response`), y el servicio usa la frase local.
+  - **Corte temporal**, en memoria del proceso y compartido (`createLlmBreaker`); mientras dura, falla al instante sin llamar:
+    - 401, 402, 403 y 404: 10 min.
+    - 429: `Retry-After` en segundos si es válido (máximo 1 h); si no, 60 s.
+    - 5xx: 30 s.
+    - 400, red y abortos: sin corte.
+  - **Registro:** `onFailure` → `logChatError("escritor LLM")`: solo el tipo y el código HTTP, como mucho una vez por minuto, nunca la clave, el prompt ni la respuesta.
+- **Reserva local garantizada** (sin cambios en el servicio ni en las reservas):
+  - El servicio aplica su tiempo máximo (≤ 8 s y respetando el margen de 3 s) y su `AbortSignal`.
+  - Si el escritor LLM lanza un error o agota el tiempo, se usa el escritor local una sola vez.
+  - La victoria en modo mínimo, y cuando todas sus frases "se repiten", va directamente al local.
+- **Comprobado** (pruebas, sin llamar a la API real):
+  - Con un LLM simulado que falla (402, 500, red o respuesta inválida), que se cuelga o que está caído, cada mensaje se publica con la frase local.
+  - La cola se vacía y la reserva se libera; si se cuelga, el aborto llega dentro del margen.
+  - En partidas completas con un LLM inestable: victoria siempre, sin duplicados, LLM solo en lo importante y exactamente una petición HTTP por texto pedido.
+  - El navegador no recibe la URL, la clave ni el modelo (comprobado en `.next/static` tras el build).
+- **Antes de activarlo en producción (manual):**
+  1. Verificar que Upstash funciona en producción (ver "Seguridad"). Sin límite de creación de partidas, cualquiera podría crear y hacer avanzar partidas y consumir llamadas.
+  2. En AI Gateway: un presupuesto (Budget) para el proyecto o la clave (al superarlo, 402 → frase local) y la recarga automática desactivada.
+  3. Comprobar en el panel que `nvidia/nemotron-3.5-lightning-free` está en el plan gratuito y anotar su proveedor si se quiere fijar con `CHAT_LLM_PROVIDER`.
+  4. Configurar las variables en Vercel y, cuando se decida activarlo, `CHAT_LLM_ENABLED=true`.
+  5. Probar primero en un despliegue de prueba: mensajes con `source = 'llm'` en `game_messages`, registros `[chat] escritor LLM` y el consumo en el panel de AI Gateway.
+- **Límites conocidos:**
+  - La comprobación de nombres puede rechazar frases válidas que usen "brava" o "chispa" como palabra común (entonces se usa la frase local).
+  - No se puede validar que el modelo no invente algún dato; lo limitan el prompt y la comprobación.
+  - Cada proceso de Vercel tiene su propio corte temporal.
+  - La documentación de AI Gateway no aclara si cancelar una petición evita su cobro (con `max_tokens: 60`, el coste es mínimo).
 
 ## Seguridad: límites de peticiones (fase 7)
 
@@ -513,7 +565,7 @@ Ampliación, no reestructuración:
   - 180/min por partida permite 3 pestañas tras la misma IP (NAT o varias pestañas) sin 429. Está probado durante 5 minutos simulados.
   - Los 409 cuentan, pero el margen los absorbe: no se devuelve cupo, para no añadir otra ida y vuelta a Redis.
   - Espectadores con IP distinta y partidas distintas tienen cupos independientes.
-- **Por qué abierto en avance y lectura:** un fallo de Upstash no debe congelar todas las partidas. El servidor sigue limitando a un avance por versión (reserva, versión y trigger). Si se añade una IA con coste por llamada, **reconsiderar** `advanceGame`/`advanceIp` como cerrados.
+- **Por qué abierto en avance y lectura:** un fallo de Upstash no debe congelar todas las partidas. El servidor sigue limitando a un avance por versión (reserva, versión y trigger). Antes de activar el LLM de la fase 8.2b (coste por llamada), **reconsiderar** `advanceGame`/`advanceIp` como cerrados.
 - **Cambiar los límites:** `RATE_LIMIT_CREATE`, `RATE_LIMIT_ADVANCE_GAME`, `RATE_LIMIT_ADVANCE_IP` y `RATE_LIMIT_READ` con `"<n>/<segundos>"`. Los valores inválidos se ignoran con un aviso.
 - **Navegador:** `interpretAdvance` trata el 429 como `retry` con el `Retry-After` (5 s si falta o no es válido). El controlador no reintenta antes de ese plazo y la resincronización `GET` también lo respeta.
 - **Configuración y verificación en producción** (manual; no se ha verificado que Upstash esté configurado y funcionando en el despliegue de Vercel):
@@ -542,13 +594,13 @@ Ampliación, no reestructuración:
 8. Personajes:
    - ✅ 8.1 Personalidades y estrategias diferenciadas (`characters.ts`, `ai.ts`).
    - ✅ 8.2a Chat entre personajes con frases locales (director, cola persistente con trigger tolerante, Realtime y `ChatPanel`). SQL ejecutado en Supabase y chat comprobado en producción.
-   - ⏳ 8.2b Textos del chat con LLM gratuito vía Vercel AI Gateway (ver "Fase 8.2b"). Preparación del escritor implementada en local; falta integrar el LLM.
+   - 🟡 8.2b Textos del chat con LLM vía Vercel AI Gateway (`nvidia/nemotron-3.5-lightning-free`), solo para las intervenciones importantes. Implementado y probado en local con un LLM simulado; **desactivado** (`CHAT_LLM_ENABLED`). Pendiente: los pasos manuales de "Fase 8.2b" antes de activarlo en producción.
 9. ✅ Despliegue en Vercel y portada con «Nueva partida».
 10. ⏳ Pendiente: animación de victoria.
 
 ## Pruebas y validación (desde `web/`)
 
-351 pruebas en 33 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
+392 pruebas en 36 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
 
 - `src/lib/engine/__tests__/rules.test.ts` (57): reglas, correcciones del motor original y tramo final (entrada + 7 + meta) en los cuatro colores.
 - `src/lib/engine/__tests__/simulation.test.ts` (3): 60 partidas completas con semilla (2, 3 y 4 jugadores); comprueba que terminan y que el estado es coherente en cada acción.
@@ -588,7 +640,11 @@ Ampliación, no reestructuración:
   - `service.test.ts` (31): cola en orden; fuera de orden; reserva ocupada sin descartar; 10 procesadores simultáneos → 1, sin duplicados ni pérdidas; varios lotes; proceso interrumpido tras reservar (recuperado al caducar); respuesta perdida al reservar y al confirmar; fallo durante la confirmación; reserva caducada; versión defectuosa (sola o en medio del lote, sin penalizar a las demás); versiones desfasadas; victoria pendiente (antigua, con intentos agotados y datos dañados en modo mínimo, junto a una defectuosa, con todas sus frases "repetidas"); y 6 partidas completas con caos (procesadores sin esperar, concurrentes, `after()` perdidos, fallos, respuestas perdidas e interrupciones), donde no se pierde la victoria, no hay duplicados, la cola acaba vacía y se cumplen pausas, réplicas y límites. En esas partidas, cada texto es una frase del propio personaje, y la coherencia se comprueba contra los eventos reales, calculados aparte: el número y "seguidas" de cada racha, y ninguna mención a la casa en tres seises sin ficha devuelta. Además, en 8 partidas, las capturas son menos del 56 % del chat, pero se siguen comentando, y la victoria siempre (B4). Y con un escritor principal lento o que falla: reparto en varias reservas sin caducar ni repetir llamadas, tiempo máximo dentro del margen de su reserva, aborto y escritor local si no responde, local si falla o ya no queda tiempo, y victoria con el local. Temporizador del principal: se limpia y no vence si responde a tiempo, si falla o si lanza de forma síncrona (el local se usa una vez por intervención); si vence, aborta y usa el local una vez; si también falla el local, el error se propaga, lo anterior se confirma y esa versión queda pendiente sin reintentar en la misma ejecución; y en el peor caso (dos plazos agotados en la última versión) se confirma justo al empezar el margen (27 s).
   - `store.test.ts` (5): parámetros de las RPC (lote, confirmación, `pending`), validación antes de escribir, lecturas y errores sin detalles.
   - `chatController.test.ts` (9): feed (duplicados, orden, límite, visibilidad por versión) y controlador (carga inicial + recuperación + Realtime sin duplicados, reconexión con páginas, sin red, 429, filas ajenas y `stop()`). Además, **partida terminada con el procesador interrumpido: consulta hasta recuperar la victoria**; en curso no consulta por pendientes.
-  - `schedule.test.ts` (4): `after()` con el procesador de esa partida, fallo al programar, BD caída sin lanzar y registro limitado.
+  - `schedule.test.ts` (7): `after()` con el procesador de esa partida, fallo al programar, BD caída sin lanzar y registro limitado; `chatWriters`: sin activar, todo local y sin registros; activo, solo lo importante llama a AI Gateway; mal configurado (modelo no permitido o clave pública), local y un registro sin la clave.
+- `src/lib/chat/llm/__tests__/`:
+  - `env.test.ts` (7): solo el modelo permitido; configuración válida; desactivado salvo `CHAT_LLM_ENABLED=true`; falta la clave o el modelo; proveedor no válido; modelo no permitido; clave con `NEXT_PUBLIC_`; ningún resultado contiene la clave.
+  - `prompt.test.ts` (5): estilo de cada personaje y reglas; situación de los 12 tipos con el rival y la racha reales; réplica y solo los 3 últimos textos recortados; sin datos de la partida ni identificadores internos; personaje desconocido.
+  - `gatewayWriter.test.ts` (26): petición (URL, `Authorization`, cuerpo mínimo sin `models`, clave solo en la cabecera, `providerOptions.gateway.only` con proveedor fijado, sin reintentos); cancelación por la señal del servicio y por su propio `timeoutMs`; 401, 402, 403, 404 y 500 con su corte temporal (sin llamar durante el corte), 429 con `Retry-After` válido, inválido o excesivo, y 400 y red sin corte; registro sin clave ni prompt; respuestas ilegibles, vacías o sin texto; limpieza de comillas, prefijo propio y líneas; demasiado largas, con formato o repetidas; habla como otro personaje o nombra a ajenos; solo lo importante usa el LLM; integración con `drainChat` (captura con el LLM y meta con el local; fallos → local con la cola vacía y la reserva libre; LLM colgado → aborto y local dentro del margen; victoria con el LLM caído; partidas completas con un LLM inestable).
 - `src/app/api/games/__tests__/route.test.ts` (5): 201 con los 4 personajes, cuerpo `{}`, 400 y errores 503 o 500 sin detalles (con el repositorio simulado).
 - `src/app/api/games/[id]/__tests__/route.test.ts` (5): 200 validable con `GameResponseSchema` y sin datos internos (con `lastAction`/`lastEvents`); partida terminada con ganador; 404 si no existe o el id no es válido; 503 y 500 sin detalles.
 - `src/lib/game/__tests__/load.test.ts` (4): `loadGame` con un repositorio falso: `ok` con el contrato validado; `not_found`; cada error → mensaje seguro sin lanzar; contrato incoherente → error.
