@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { FINAL_POSITION, MAIN_TRACK_SIZE, START_POSITIONS } from "../constants";
+import { FINAL_POSITION, HOME_ENTRY_STEPS, MAIN_TRACK_SIZE, START_POSITIONS } from "../constants";
 import { applyAction, createGame } from "../engine";
 import type { ActionResult, Color, GameAction, GameState, PieceState } from "../types";
 
@@ -16,7 +16,7 @@ export function stateForSteps(steps: number): PieceState {
 /** `steps` relativos que corresponden a una casilla global para un color. */
 export function stepsForCell(color: Color, cell: number): number {
   const steps = (cell - START_POSITIONS[color] + MAIN_TRACK_SIZE) % MAIN_TRACK_SIZE;
-  if (steps > 63) throw new Error(`${color} no puede estar en la casilla ${cell}`);
+  if (steps > HOME_ENTRY_STEPS) throw new Error(`${color} no puede estar en la casilla ${cell}`);
   return steps;
 }
 

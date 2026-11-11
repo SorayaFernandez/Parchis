@@ -6,9 +6,10 @@ export type PlayerId = string;
 
 /**
  * - `base`: en casa (`steps = -1`).
- * - `track`: en el recorrido común (`steps` 0..63, relativo a su salida).
- * - `final`: en el pasillo final (`steps` 68..74).
- * - `finished`: en la meta (`steps = 75`).
+ * - `track`: en el recorrido común (`steps` 0..63, relativo a su salida). 63 es la
+ *   casilla de entrada, la 1ª de las 8 del tramo final.
+ * - `final`: en las 7 casillas de color del tramo final (`steps` 68..74).
+ * - `finished`: en la meta, posición independiente (`steps = 75`).
  */
 export type PieceState = "base" | "track" | "final" | "finished";
 

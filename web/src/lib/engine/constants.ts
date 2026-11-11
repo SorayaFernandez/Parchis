@@ -15,13 +15,23 @@ export const PIECES_PER_PLAYER = 4;
 /** Casillas del recorrido común (posiciones globales 0..67). */
 export const MAIN_TRACK_SIZE = 68;
 
-/** Casillas del pasillo final de cada color. */
-export const FINAL_STRETCH_SIZE = 7;
-
 /**
- * `steps` de una ficha en la meta.
- * En el pasillo `steps` va de 68 a 74, y 75 es la meta.
+ * Tramo final de cada color: 8 casillas y después la meta.
+ * - 1ª: la casilla de entrada (17, 34, 51 o 68/0). Es del recorrido común (otros
+ *   colores pasan por ella), así que la ficha la ocupa con `steps = HOME_ENTRY_STEPS` (63).
+ * - 2ª a 8ª: las 7 casillas de color (`steps` 68..74), exclusivas del color.
+ * - Meta: posición independiente (`steps = FINAL_POSITION` = 75).
+ * Desde la entrada hasta la meta hay 8 casillas de avance.
  */
+export const FINAL_SECTION_SIZE = 8;
+
+/** Casillas de color del pasillo final, sin contar la entrada. */
+export const FINAL_STRETCH_SIZE = FINAL_SECTION_SIZE - 1;
+
+/** `steps` de una ficha en su casilla de entrada (igual para los cuatro colores). */
+export const HOME_ENTRY_STEPS = 63;
+
+/** `steps` de una ficha en la meta. */
 export const FINAL_POSITION = MAIN_TRACK_SIZE + FINAL_STRETCH_SIZE;
 
 /** `steps` de una ficha que está en casa. */
