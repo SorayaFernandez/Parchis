@@ -8,6 +8,10 @@
 // - CHAT_LLM_MODEL: id del modelo; debe estar en CHAT_LLM.allowedModels.
 // - CHAT_LLM_PROVIDER (opcional): fija el proveedor (providerOptions.gateway.only) para que
 //   AI Gateway no cambie a otro proveedor del mismo modelo.
+//
+// En Vercel (`VERCEL=1`) solo se activa en Preview (`VERCEL_ENV=preview`): en Production, Development
+// u otro valor, o si falta `VERCEL_ENV`, queda desactivado (falla cerrado). Fuera de Vercel
+// (desarrollo local, pruebas) no se aplica esta restricción.
 
 import { z } from "zod";
 import { CHAT_LLM } from "../config";
@@ -20,9 +24,10 @@ export type ChatLlmConfig =
       enabled: false;
       /**
        * `off`: no se ha activado (lo normal). Los demás son errores de configuración que conviene
-       * registrar (sin valores): faltan datos, modelo no permitido o clave expuesta al navegador.
+       * registrar (sin valores): activado en Vercel fuera de Preview, faltan datos, modelo no permitido
+       * o clave expuesta al navegador.
        */
-      reason: "off" | "missing_key" | "missing_model" | "model_not_allowed" | "invalid_provider" | "public_secret";
+      reason: "off" | "not_preview" | "missing_key" | "missing_model" | "model_not_allowed" | "invalid_provider" | "public_secret";
     };
 
 /** Variables que jamás deben existir con el prefijo público (llegarían al navegador). */
@@ -34,6 +39,8 @@ export function readChatLlmConfig(env: EnvSource): ChatLlmConfig {
   // Una clave con prefijo público es un error grave aunque el LLM esté desactivado.
   if (FORBIDDEN_PUBLIC.some((name) => (env[name] ?? "").trim() !== "")) return { enabled: false, reason: "public_secret" };
   if ((env.CHAT_LLM_ENABLED ?? "").trim().toLowerCase() !== "true") return { enabled: false, reason: "off" };
+  // En Vercel, solo en Preview. Sin VERCEL_ENV (o con cualquier otro valor) no se activa.
+  if (env.VERCEL === "1" && env.VERCEL_ENV !== "preview") return { enabled: false, reason: "not_preview" };
 
   const apiKey = (env.AI_GATEWAY_API_KEY ?? "").trim();
   if (apiKey === "") return { enabled: false, reason: "missing_key" };
