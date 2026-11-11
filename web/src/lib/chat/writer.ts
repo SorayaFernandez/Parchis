@@ -24,6 +24,13 @@ export interface ChatWriteRequest {
    * reciente). El escritor local agota las de un tipo antes de repetir ninguna.
    */
   usedLines?: readonly string[];
+  /**
+   * Se aborta cuando vence el tiempo de la llamada: un escritor con red (LLM) debe pasarlo a su
+   * petición HTTP para cancelarla. Su resultado tardío se ignora.
+   */
+  signal?: AbortSignal;
+  /** Tiempo máximo de esta llamada (ms), ya ajustado a lo que queda de reserva. */
+  timeoutMs?: number;
 }
 
 export interface WrittenText {

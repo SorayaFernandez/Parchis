@@ -12,19 +12,40 @@ import { CHAT_LIMITS, CHAT_STORAGE } from "./config";
 import { initialDirectorState, planChat, recordPublished, trackCaptures, type Random, type Utterance } from "./director";
 import { DirectorStateSchema, type DirectorState } from "./schemas";
 import type { ChatStore, ClaimedBatch, QueueItem, QueuedMessage } from "./store";
-import { validateChatText, type ChatWriter, type RecentText } from "./writer";
+import { validateChatText, type ChatWriteRequest, type ChatWriter, type RecentText, type WrittenText } from "./writer";
 import { z } from "zod";
 
 export interface ChatDeps {
   store: ChatStore;
   writer: ChatWriter;
   /**
-   * Escritor de reserva que no falla (las frases locales). Se usa para la victoria en modo mínimo y,
-   * en 8.2b, cuando el escritor principal (LLM) falle. Por defecto, el mismo `writer`.
+   * Escritor de reserva, local y sin red (las frases del catálogo). Obligatorio: se usa si el
+   * escritor principal falla o agota su tiempo, para la victoria en modo mínimo y cuando ya no queda
+   * tiempo de reserva para el principal. Con las frases locales como principal, es el mismo.
+   * CONTRATO: debe responder al instante (sin red ni esperas) y no tiene tiempo máximo. Puede
+   * ejecutarse justo al empezar el margen de confirmación (`commitMarginMs`): si tardara más que ese
+   * margen, la reserva caducaría antes de confirmar.
    */
-  fallbackWriter?: ChatWriter;
+  fallbackWriter: ChatWriter;
   random: Random;
   newToken: () => string;
+  /** Reloj (ms) para medir la reserva. Por defecto, `Date.now`. */
+  now?: () => number;
+  /** Temporizadores para el tiempo máximo de cada llamada. Por defecto, los globales. */
+  setTimeout?: (fn: () => void, ms: number) => unknown;
+  clearTimeout?: (handle: unknown) => void;
+}
+
+/** Tiempo de la reserva vista por el procesador (empieza al recibir la respuesta de la reserva). */
+interface LeaseClock {
+  startedAt: number;
+  endsAt: number;
+  now: () => number;
+}
+
+/** El escritor principal superó su tiempo máximo (su llamada se ha abortado). */
+export class ChatWriterTimeoutError extends Error {
+  override name = "ChatWriterTimeoutError";
 }
 
 export type DrainResult =
@@ -55,8 +76,14 @@ export async function drainChat(gameId: string, deps: ChatDeps): Promise<DrainRe
     }
     if (!batch) return { kind: batches === 0 ? "idle" : "done", batches, published };
 
+    // El reloj local empieza tras recibir la reserva, así que va algo por detrás del de la BD: el
+    // margen de confirmación (`commitMarginMs`) cubre esa diferencia.
+    const now = deps.now ?? Date.now;
+    const startedAt = now();
+    const lease: LeaseClock = { startedAt, endsAt: startedAt + CHAT_LIMITS.leaseSeconds * 1000, now };
+
     try {
-      const processed = await processBatch(batch, deps);
+      const processed = await processBatch(batch, deps, lease);
       if (processed.through === null) {
         // Falló la primera versión del lote: nada que confirmar. Sigue pendiente (con un intento más).
         await deps.store.release(gameId, token).catch(() => {});
@@ -69,7 +96,8 @@ export async function drainChat(gameId: string, deps: ChatDeps): Promise<DrainRe
       published += result.inserted;
       // Se confirmó hasta la versión anterior a la que falló: la siguiente ejecución empieza en ella.
       if (processed.error !== undefined) return { kind: "error", batches, published, error: processed.error };
-      // Lo que se encoló mientras se procesaba este lote se recoge en la vuelta siguiente.
+      // Lo que se encoló mientras se procesaba este lote (o lo que quedó por el plazo de trabajo) se
+      // recoge en la vuelta siguiente, con una reserva nueva.
       if (!result.hasMore) return { kind: "done", batches, published };
     } catch (error) {
       await deps.store.release(gameId, token).catch(() => {});
@@ -86,6 +114,8 @@ export interface ProcessedBatch {
   through: number | null;
   /** Error de la versión en la que se detuvo (que queda pendiente), si lo hubo. */
   error?: unknown;
+  /** Se detuvo por el plazo de trabajo de la reserva (lo que falta sigue pendiente, en orden). */
+  stoppedByBudget?: boolean;
 }
 
 /**
@@ -93,15 +123,21 @@ export interface ProcessedBatch {
  * escritor), se detiene ahí y devuelve lo procesado hasta la anterior: así solo la versión que
  * falla acumula intentos y las siguientes no se ven afectadas.
  */
-export async function processBatch(batch: ClaimedBatch, deps: ChatDeps): Promise<ProcessedBatch> {
+export async function processBatch(batch: ClaimedBatch, deps: ChatDeps, lease: LeaseClock = unlimitedLease()): Promise<ProcessedBatch> {
   const parsedState = DirectorStateSchema.safeParse(batch.directorState);
   let director = parsedState.success ? parsedState.data : initialDirectorState();
   const messages: QueuedMessage[] = [];
   let through: number | null = null;
 
+  const budget = (lease.endsAt - lease.startedAt) * CHAT_LIMITS.workBudgetFraction;
   for (const item of batch.items) {
+    // Plazo de trabajo: pasada la mitad de la reserva no se empieza otra versión (la primera siempre
+    // se procesa, así que cada ejecución avanza). Se confirma lo hecho y el resto sigue pendiente.
+    if (through !== null && lease.now() - lease.startedAt >= budget) {
+      return { director, messages, through, stoppedByBudget: true };
+    }
     try {
-      const result = await processItem(item, batch, director, batch.messageCount + messages.length, deps);
+      const result = await processItem(item, batch, director, batch.messageCount + messages.length, deps, lease);
       director = result.director;
       messages.push(...result.messages);
       through = item.version;
@@ -120,6 +156,7 @@ async function processItem(
   director: DirectorState,
   messageCount: number,
   deps: ChatDeps,
+  lease: LeaseClock,
 ): Promise<{ director: DirectorState; messages: QueuedMessage[] }> {
   const events = EventsSchema.safeParse(item.events);
   const state = GameStateSchema.safeParse(item.state);
@@ -150,7 +187,7 @@ async function processItem(
     utterances = plan.utterances;
   }
 
-  const written = await writeUtterances(item.version, utterances, next, deps, item.isVictory && defective);
+  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective);
   next = recordPublished(
     next,
     item.version,
@@ -168,6 +205,7 @@ async function writeUtterances(
   utterances: readonly Utterance[],
   director: DirectorState,
   deps: ChatDeps,
+  lease: LeaseClock,
   minimal: boolean,
 ): Promise<{ message: QueuedMessage; lineId?: string }[]> {
   const recent: RecentText[] = [...director.recent];
@@ -183,12 +221,12 @@ async function writeUtterances(
       replyToText: replyToSeq === null ? null : messages[replyToSeq].text,
       usedLines: director.usedLines[utterance.speaker] ?? [],
     };
-    const writer = minimal ? (deps.fallbackWriter ?? deps.writer) : deps.writer;
-    let written = await writer.write(request);
+    let written = minimal ? await deps.fallbackWriter.write(request) : await writeWithFallback(request, deps, lease);
     let text = written ? validateChatText(written.text, recent) : null;
-    // La victoria siempre tiene mensaje: si todas sus frases "se repiten", se ignora la antirrepetición.
+    // La victoria siempre tiene mensaje: si todas sus frases "se repiten", se ignora la antirrepetición
+    // y se escribe con el escritor local (nunca depende del principal).
     if (!text && utterance.trigger === "victory" && utterance.replyTo === null) {
-      written = await (deps.fallbackWriter ?? deps.writer).write({ ...request, recent: [] });
+      written = await deps.fallbackWriter.write({ ...request, recent: [] });
       text = written ? validateChatText(written.text, []) : null;
     }
     if (!written || !text) continue;
@@ -207,6 +245,57 @@ async function writeUtterances(
     recent.push({ speaker: utterance.speaker, text });
   }
   return results;
+}
+
+/** Reserva sin límite (para llamar a `processBatch` fuera de `drainChat`, p. ej. en pruebas). */
+const unlimitedLease = (): LeaseClock => ({ startedAt: 0, endsAt: Number.POSITIVE_INFINITY, now: () => 0 });
+
+/**
+ * Escribe con el escritor principal con un tiempo máximo ajustado a lo que queda de reserva (menos el
+ * margen para confirmar). Si falla o agota el tiempo, o ya no queda tiempo, usa el escritor local.
+ * Una llamada que agota el tiempo se aborta (`signal`) y su resultado tardío se ignora: no se repite.
+ * Si el local también falla, el error se propaga (la versión queda pendiente, como antes).
+ */
+async function writeWithFallback(request: ChatWriteRequest, deps: ChatDeps, lease: LeaseClock): Promise<WrittenText | null> {
+  if (deps.writer === deps.fallbackWriter) return deps.writer.write(request);
+  const timeoutMs = Math.min(CHAT_LIMITS.writerTimeoutMs, lease.endsAt - CHAT_LIMITS.commitMarginMs - lease.now());
+  if (timeoutMs < CHAT_LIMITS.minWriterMs) return deps.fallbackWriter.write(request);
+  try {
+    return await withTimeout((signal) => deps.writer.write({ ...request, signal, timeoutMs }), timeoutMs, deps);
+  } catch {
+    return deps.fallbackWriter.write(request);
+  }
+}
+
+function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>, ms: number, deps: ChatDeps): Promise<T> {
+  const set = deps.setTimeout ?? ((fn: () => void, t: number) => setTimeout(fn, t));
+  const clear = deps.clearTimeout ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const controller = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    const timer = set(() => {
+      controller.abort();
+      reject(new ChatWriterTimeoutError(`El escritor superó ${Math.round(ms)} ms`));
+    }, ms);
+    let pending: Promise<T>;
+    try {
+      // Un escritor que lanza de forma síncrona (o no devuelve una promesa) también limpia el temporizador.
+      pending = Promise.resolve(run(controller.signal));
+    } catch (error) {
+      clear(timer);
+      reject(error);
+      return;
+    }
+    pending.then(
+      (value) => {
+        clear(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clear(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 /** Ganador de una versión de victoria, leyendo los eventos sin validarlos del todo (modo mínimo). */

@@ -47,8 +47,20 @@ export const CHAT_LIMITS = {
   maxSimilarity: 0.6,
   /** Longitud máxima de un mensaje publicado. */
   maxTextLength: 160,
-  /** Duración de la reserva de un lote (la fija PostgreSQL). Debe cubrir el procesado de un lote. */
-  leaseSeconds: 10,
+  /**
+   * Duración de la reserva de un lote (la fija PostgreSQL; `chat_claim` admite 1–60 s). No se renueva:
+   * el procesador deja de empezar versiones a mitad de reserva y cada llamada al escritor tiene un
+   * tiempo máximo, así que siempre confirma antes de que caduque.
+   */
+  leaseSeconds: 30,
+  /** Fracción de la reserva a partir de la cual no se empiezan versiones nuevas (se confirma lo hecho). */
+  workBudgetFraction: 0.5,
+  /** Tiempo máximo de una llamada al escritor principal (un LLM en 8.2b). */
+  writerTimeoutMs: 8_000,
+  /** Tiempo que se deja siempre libre al final de la reserva para confirmar el lote. */
+  commitMarginMs: 3_000,
+  /** Si queda menos que esto para el escritor principal, se usa directamente el local. */
+  minWriterMs: 500,
   /** Versiones pendientes que se reservan y confirman juntas (un lote). */
   batchSize: 25,
   /** Lotes como mucho por ejecución del procesador (el resto, en la siguiente). */

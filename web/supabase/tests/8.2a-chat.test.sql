@@ -224,6 +224,22 @@ begin
 end;
 $$;
 
+-- ─── 8b. Reserva de 30 s (valor actual de CHAT_LIMITS.leaseSeconds) ─────────────────────────
+do $$
+declare until timestamptz;
+begin
+  set local role service_role;
+  perform count(*) from public.chat_claim('751bb3b5-52dc-4e00-86eb-3085d4357dad', 'bbbbbbbb-0000-4000-8000-000000000004', 30, 25);
+  reset role;
+  select locked_until into until from public.game_chat;
+  perform pg_temp.check(until between clock_timestamp() + interval '29 seconds' and clock_timestamp() + interval '31 seconds',
+    '8e. chat_claim acepta una reserva de 30 s y caduca a los 30 s');
+  set local role service_role;
+  perform public.chat_release('751bb3b5-52dc-4e00-86eb-3085d4357dad', 'bbbbbbbb-0000-4000-8000-000000000004');
+  reset role;
+end;
+$$;
+
 -- ─── 9. B5: qué puede hacer la clave publicable (anon/authenticated) ─────────────────────
 -- Otra partida con un mensaje, para comprobar que la lectura no está limitada a una partida.
 insert into public.games (id, state) values ('00000000-0000-4000-8000-000000000002', '{}');

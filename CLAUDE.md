@@ -145,6 +145,28 @@ Ninguno usa hooks; reciben los datos ya calculados.
 - `ChatPanel.tsx`: el chat de los personajes (ver "Chat entre personajes"). Sin hooks.
 - Componentes shadcn usados: `ui/progress.tsx` (Base UI, sin dependencias nuevas) y `ui/button.tsx`.
 
+## Portada (`src/app/page.tsx`)
+
+- Server Component (estático) con el botón **«Nueva partida»** y el enlace «Ver el tablero (demo)» a `/tablero`. Sin registro, login ni participación humana: la partida la juegan los cuatro personajes.
+- `src/lib/home/newGame.ts` (sin React; `fetch` y navegación inyectados):
+  - `interpretCreateResponse(status, body, retryAfter)`:
+    - 201 con `id` UUID válido → partida creada. Cualquier otra respuesta, incluido un 201 sin id válido, nunca navega a una ruta rota.
+    - Errores con mensajes comprensibles y sin detalles técnicos: 429 con la espera de `Retry-After` en segundos o minutos, 503 servicio no disponible, sin red y genérico.
+  - `NewGameController`: `create()` hace `POST /api/games` con `{}` y `no-store`, y navega a `/partida/[id]`.
+    - Estados `idle`, `creating` y `error`.
+    - **Una sola petición a la vez:** los clics se ignoran mientras se crea y mientras se navega (sigue en `creating`).
+    - Tras un error, `create()` es el reintento.
+- `src/components/home/NewGameButton.tsx` (`"use client"`):
+  - `NewGameButton` conecta el controlador con `router.push` (`useRouter` de `next/navigation`).
+  - `NewGameButtonView` (sin hooks) muestra:
+    - El botón («Nueva partida» / «Creando partida…» desactivado con `aria-busy` / «Reintentar»).
+    - Una región `role="status"` con el progreso.
+    - El error en `role="alert"`.
+- **Comprobado en Chrome** con `next start` y variables de Supabase falsas, interceptando `POST /api/games` (no llega al servidor ni a Supabase):
+  - Tres clics rápidos hacen una sola petición, con el botón desactivado y el texto de carga.
+  - Un 503 muestra el mensaje y «Reintentar».
+  - Al reintentar con un 201, navega a `/partida/[id]`.
+
 ## Página `/tablero` (`src/app/tablero/page.tsx`)
 
 - Server Component con tema oscuro (clase `dark`) que muestra `BoardDemo`. La portada (`/`) enlaza aquí.
@@ -163,7 +185,7 @@ Ninguno usa hooks; reciben los datos ya calculados.
 
 - Sin registro, login ni jugadores humanos en la partida.
 - El servidor tira el dado y valida todo con el motor; la IA **solo elige** entre los movimientos legales que calcula el motor.
-- Supabase (BD + Realtime): tabla `public.games` creada y conexión configurada (ver "Supabase"). Pendientes: Vercel AI Gateway (LLM) y despliegue en Vercel.
+- Supabase (BD + Realtime): tabla `public.games` creada y conexión configurada (ver "Supabase"). Desplegado en Vercel. Pendiente: Vercel AI Gateway (LLM, fase 8.2b).
 - Las claves privadas solo existen en el servidor (nunca con el prefijo `NEXT_PUBLIC_`).
 
 ## Supabase
@@ -177,7 +199,7 @@ Ninguno usa hooks; reciben los datos ya calculados.
 - Variables (`web/.env.local`, ignorado por Git; plantilla en `web/.env.example`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_…`) y `SUPABASE_SECRET_KEY` (`sb_secret_…`, solo servidor).
 - Dependencias exactas: `@supabase/supabase-js@2.118.0`, `zod@4.6.7`, `server-only@0.0.1`. Sin `@supabase/ssr` (no hay autenticación).
 - `src/lib/game/`:
-  - `characters.ts`: catálogo de los 4 personajes, con ids estables `ai-pink`, `ai-purple`, `ai-green` y `ai-blue` (en el orden de `COLORS`). Cada uno tiene nombre, arquetipo, personalidad, expresiones (para el futuro chat) y perfil de estrategia (ver "Personajes").
+  - `characters.ts`: catálogo de los 4 personajes, con ids estables `ai-pink`, `ai-purple`, `ai-green` y `ai-blue` (en el orden de `COLORS`). Cada uno tiene nombre, arquetipo, personalidad, expresiones, perfil de estrategia (ver "Personajes") y perfil de chat (ver "Chat entre personajes").
   - `schemas.ts`: esquemas Zod tipados contra el motor (`z.ZodType<GameState>`, `GameAction`, `GameEvent`) y `GameRowSchema`, que exige que `status` y `winner` coincidan con `state`. También `toStoredGame` (camelCase, sin `lock_token`) y `ENGINE_STATE_VERSION = 1`.
   - `repository.ts` (`server-only`): operaciones sobre el cliente de servidor. Valida antes de escribir y al leer. Errores `GameRepositoryError` (`not_found`, `invalid_data`, `unsupported_version` y `database`; código de PostgreSQL solo para el registro; sin código = fallo de red, con su mensaje técnico).
     - `create(state)` y `get(id)`.
@@ -294,7 +316,7 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
 
 1. **Registro en PostgreSQL (trigger tolerante):** el trigger `games_chat_enqueue` (AFTER UPDATE de `games`, solo cuando sube `version`) copia los eventos y el estado de cada versión confirmada a `game_chat_queue`, en la misma transacción que el avance (nunca se encola una versión que no se confirmó). No depende de `after()` ni de la aplicación. **Si el encolado falla, el avance sigue adelante y ese acontecimiento se pierde para el chat** (ver "SQL").
 2. **Procesador** (`drainChat`, `service.ts`), que se puede ejecutar desde cualquier sitio y cualquier número de veces:
-   1. Reserva el **siguiente lote** de versiones pendientes (hasta 25, en orden), con token y caducidad de 10 s (`chat_claim`).
+   1. Reserva el **siguiente lote** de versiones pendientes (hasta 25, en orden), con token y caducidad (`chat_claim`; plazos en `service.ts`).
    2. Para cada versión: director → escritor → validación.
    3. Confirma el lote en una transacción (`chat_commit`): mensajes, borrado de la cola, cursor y liberación.
    4. Repite (hasta 4 lotes) mientras queden pendientes.
@@ -310,7 +332,7 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
 ### `src/lib/chat/`
 
 - `config.ts`: **única fuente de verdad** de los límites; los esquemas, el director y el escritor leen de aquí.
-  - `CHAT_LIMITS`: 60 por partida y 2 reservados para la victoria, pausas de 8 y 3 versiones, silencio de 40, valoración de ambiente cada 10, rachas (ventana de 60, 3 capturas o 2 seguidas), 50 capturas recordadas, 12 textos recientes, 40 frases recordadas por personaje, similitud 0,6, 160 caracteres, reserva de 10 s, lotes de 25 y 4 lotes por ejecución, 15 versiones de desfase, 3 intentos, 20 iniciales, páginas de 100 y consulta de pendientes 2–15 s.
+  - `CHAT_LIMITS`: 60 por partida y 2 reservados para la victoria, pausas de 8 y 3 versiones, silencio de 40, valoración de ambiente cada 10, rachas (ventana de 60, 3 capturas o 2 seguidas), 50 capturas recordadas, 12 textos recientes, 40 frases recordadas por personaje, similitud 0,6, 160 caracteres, tiempos de la reserva y del escritor (`leaseSeconds`, `workBudgetFraction`, `writerTimeoutMs`, `commitMarginMs` y `minWriterMs`; ver `service.ts`), lotes de 25 y 4 lotes por ejecución, 15 versiones de desfase, 3 intentos, 20 iniciales, páginas de 100 y consulta de pendientes 2–15 s.
   - `CHAT_STORAGE`: copia de las restricciones de `game_messages` en el SQL (texto ≤ 200, `seq` ≤ 3, formato del personaje). `config.test.ts` comprueba que coinciden con el SQL.
   - También `TRIGGER_CHANCE` y `REPLY_CHANCE`. Capturas 0,5, racha 0,7, mala racha 0,65, meta 0,65 y ambiente 0,55; tercer 6 (0,85) y puesto final (0,9) sin cambios. Así, las capturas bajan de ≈63 % a ≈51 % del chat (B4).
 - `schemas.ts` (sin servidor): `ChatMessage` (contrato público), `ChatMessageRow` (fila o Realtime), `ChatPage` (con `pending`), `NewChatMessage` (con `version`), `DirectorState` (con `usedLines`; un estado guardado sin ese campo se lee como vacío), `CHAT_TRIGGERS` y `CHAT_SOURCES` (`local`/`llm`). Sin números repetidos: todos los límites vienen de `config.ts`.
@@ -322,19 +344,33 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
   - Pausas: 8 versiones por personaje (también para replicar) y 3 entre intervenciones. La **victoria** y el último comentario de la partida (`game_finished`) se las saltan.
   - Probabilidad = `TRIGGER_CHANCE` × `talkativeness`: Brava y Chispa 1, Don Ernesto y Pilar 0,6.
   - `recordPublished` actualiza tiempos, textos recientes y frases usadas por cada personaje (`usedLines`, de su `lineId`), solo con lo publicado de verdad. `trackCaptures` "observa" una versión sin hablar.
-  - `Utterance.important` (victoria y capturas) es para la política de reserva de 8.2b.
+  - `Utterance.important` (victoria y capturas) queda disponible para el escritor de 8.2b (por ejemplo, para callar en lo que no es importante en vez de usar la frase local).
 - `writer.ts`:
-  - `ChatWriter` es **el punto de extensión de 8.2b**. Recibe `usedLines` del personaje y devuelve `{ text, source, lineId? }`.
+  - `ChatWriter` es **el punto de extensión de 8.2b**. Recibe `usedLines` del personaje, `signal` y `timeoutMs` (ver `service.ts`) y devuelve `{ text, source, lineId? }`.
   - `renderLine` rellena `{rival}`, `{count}`/`{Count}` (número real en palabras) y `{ritmo}` ("seguidas" o "en poco tiempo"). Devuelve `null` si a la frase le falta un dato.
   - `createLocalWriter`, entre las frases válidas (con sus datos y sin parecerse a los 12 textos recientes de la partida), elige al azar una que el personaje **aún no haya usado**; si ya las usó todas, la usada hace más tiempo. Así cada personaje agota las frases de un tipo antes de repetir. Si no queda ninguna válida, calla.
   - `similarity` (Jaccard de trigramas, sin tildes, signos ni **nombres de personajes**: la misma frase a otro rival cuenta como repetida).
   - `validateChatText` (común a cualquier escritor: espacios, longitud, sin `{}`/`<>` y sin repetir).
-- `service.ts`: `drainChat(gameId, { store, writer, fallbackWriter, random, newToken })`, que nunca lanza y devuelve `idle`, `done`, `more`, `lease_expired` o `error`.
+- `service.ts`: `drainChat(gameId, { store, writer, fallbackWriter, random, newToken, now?, setTimeout?, clearTimeout? })`, que nunca lanza y devuelve `idle`, `done`, `more`, `lease_expired` o `error`. El reloj y los temporizadores se inyectan (por defecto, los globales).
   - `processBatch` recorre el lote en orden y valida eventos y estado con Zod.
+  - **Reserva de 30 s, sin renovación** (`leaseSeconds`). El reloj del procesador empieza al recibir la reserva.
+  - **Plazo de trabajo del 50 %** (`workBudgetFraction`): pasados 15 s no se empieza otra versión. Se confirma lo hecho y el resto sigue en orden con otra reserva, en la misma ejecución si quedan lotes. La primera versión de cada lote siempre se procesa, así que cada reserva avanza.
+  - **Escritor principal:**
+    - Cada llamada tiene como máximo `min(8 s, fin de la reserva − 3 s − ahora)` (`writerTimeoutMs`, `commitMarginMs`), así que nunca invade el margen de 3 s para confirmar. Si queda menos de 0,5 s (`minWriterMs`), no se le llama.
+    - Al vencer el plazo, la llamada se aborta con `AbortSignal` (`request.signal`, que un escritor con red debe pasar a su petición) y su resultado tardío se ignora: no se repite.
+    - El temporizador se limpia tanto si el escritor responde como si rechaza o lanza una excepción síncrona.
+    - Si el principal es el mismo que el local (como ahora, con las frases locales), se llama directamente, sin temporizador.
+  - **Escritor local** (`fallbackWriter`, obligatorio): se usa, una sola vez por intervención, si el principal falla, agota su tiempo o ya no queda tiempo para él. Si también falla el local, su error se propaga y la versión se trata como fallida (siguiente punto).
+  - **Contrato del escritor local:** inmediato, sin red ni esperas, y sin tiempo máximo propio. En el peor caso se ejecuta justo al empezar el margen de confirmación, así que uno que tardara más de 3 s haría caducar la reserva.
+  - **Peor caso probado:** con los dos plazos de la última versión agotados, se confirma a los 27 s de 30, con el margen intacto.
+  - Con la reserva anterior (10 s, sin plazo de trabajo ni tiempo máximo), un escritor de 4 s por mensaje no avanzaba (6 ejecuciones, 18 llamadas y 0 mensajes guardados). Ahora, 4 capturas (32 s de escritura) se reparten en 2 reservas, sin caducar y con una llamada por mensaje.
   - **Si una versión falla** (por ejemplo, el escritor), se detiene en ella y se confirma lo anterior. La siguiente reserva empieza en ella, así que solo ella acumula `attempts`.
   - **Versión defectuosa** (datos no válidos o más de 3 intentos): se salta sin hablar.
   - **Desfasada** (más de 15 versiones por detrás de la última pendiente): se observa (rachas) sin hablar.
-  - **Victoria** (`is_victory`): nunca se descarta ni por desfase ni por intentos. Si es defectuosa, **modo mínimo**: `victory_win` del ganador (leído de los eventos sin validar) con `fallbackWriter`, la frase local. Si todas sus frases "se repiten", se ignora la antirrepetición.
+  - **Victoria** (`is_victory`): nunca se descarta ni por desfase ni por intentos, y **siempre puede escribirse con el escritor local**, sin depender del principal:
+    - Si el principal falla o tarda, se usa el local.
+    - Si es defectuosa, **modo mínimo**: `victory_win` del ganador (leído de los eventos sin validar), directamente con el local.
+    - Si todas sus frases "se repiten", se ignora la antirrepetición, también con el local.
   - Una réplica cuyo mensaje se descartó también se descarta.
 - `store.ts` (`server-only`): `ChatStore` sobre las funciones SQL (`claim` → `ClaimedBatch` con `items`, `through` y `latest`; `commit(through)` → `{ inserted, hasMore }`; `release`) y lecturas (`pending`, `latest`, `after`). Valida con Zod antes de escribir y al leer. `ChatStoreError` (`database` con código solo para el registro, `invalid_data`).
 - `schedule.ts` (`server-only`): `scheduleDrain(gameId)` (`after`, nunca lanza) y `runDrainInBackground` (escritor local, que también es el de reserva; azar con `crypto`).
@@ -373,7 +409,7 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
   - Errores: 404 si el id no es UUID, 400 `invalid_query`, 503 `chat_unavailable` y 500 genérico.
   - Límite `read`, siempre `no-store`.
 
-### SQL (`web/supabase/8.2a-chat.sql`) — **pendiente de ejecutar a mano en Supabase**
+### SQL (`web/supabase/8.2a-chat.sql`) — **ejecutado y verificado en Supabase**
 
 - Idempotente. **`games`:** sin cambios en sus columnas, sus políticas ni `games_guard`. Se **añade** el trigger `games_chat_enqueue` (decisión: **tolerante**).
   - **Compromiso elegido: la partida antes que el chat.** El INSERT va en un bloque `begin … exception when others then raise warning … end` que cubre **solo** ese INSERT (una subtransacción por versión, coste despreciable). Si falla (cola inexistente, permisos, restricciones u otro error de PostgreSQL), se deshace solo el INSERT, se emite `WARNING: chat: versión N de la partida <id> no encolada (<SQLSTATE>: <mensaje>); el avance continúa` en el registro de PostgreSQL, y la confirmación del avance sigue.
@@ -398,13 +434,13 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
   - `chat_release(game, token)`: el lote sigue pendiente.
 - **Pruebas SQL:** `web/supabase/tests/` (`supabase-stub.sql`, `8.2a-chat.test.sql` y `run-chat-sql-tests.sh`; comando en "Comandos"). Usan un PostgreSQL 17 desechable en Docker y **no** tocan Supabase. Todas son automáticas (ya no quedan comprobaciones manuales, B7):
   - **Aplicación:** el SQL dos veces (inicial e idempotencia).
-  - **42 comprobaciones SQL**, que abortan si fallan:
+  - **43 comprobaciones SQL**, que abortan si fallan:
     - Encolado, victoria, rollback e idempotencia.
     - Fallos del INSERT sin revertir el avance y errores de la guarda no ocultados.
     - Lote con hueco, confirmación y ausencia de duplicados.
     - Límites de `chat_commit` (B1): token ajeno, `through` fuera del lote o ya procesado, mensaje fuera del tramo; sin cambios tras los rechazos.
     - Lote de 25 en orden con intentos solo en la primera.
-    - Proceso muerto: reserva caducada recuperada, el muerto ya no confirma y `release`.
+    - Proceso muerto: reserva caducada recuperada, el muerto ya no confirma y `release`. Reserva de 30 s aceptada y con su caducidad.
     - Permisos de anon/authenticated (B5), publicación de Realtime y cascada.
   - **3 `WARNING`** esperados: 23514, 42P01 y 42501.
   - **6 comprobaciones de concurrencia entre sesiones:**
@@ -430,37 +466,22 @@ Los personajes comentan los acontecimientos **reales** de la partida con frases 
 
 - La réplica se publica en la misma versión que su mensaje, así que la pausa global de 3 versiones separa intervenciones, no mensajes sueltos. **Decisión para aprobar.**
 - **Carga:** cada versión confirmada escribe una fila en la cola (con su estado, de unos pocos KB), que se borra al procesarse. El procesador hace unas 2 llamadas RPC por versión candidata (unas 150 por partida); las demás se procesan en el mismo lote.
-- Reserva de 10 s sin renovación: válida para las frases locales, **no para un LLM** (ver la sección siguiente).
 - **Medido en 30 partidas simuladas** (≈1000 versiones cada una), unos 37 mensajes por partida con las probabilidades actuales:
   - Capturas y rachas: ≈51 % del chat (antes 63 %), con más comentarios de meta y de ambiente.
   - Un personaje repite una frase 0,2 veces por partida de media (antes 4,6) y nunca más de 2 veces la misma.
   - Todos los números y "seguidas" de las rachas coinciden con las capturas reales.
   - Tres seises sin ficha devuelta: ninguno de sus mensajes menciona la casa.
-- **Pendiente de la auditoría:** M3 (verificación en Supabase y Vercel reales).
+- **Auditoría:** todos los puntos resueltos. M3: el SQL se ha ejecutado en Supabase y el chat se ha comprobado en producción (Vercel).
 
-### Pendiente antes de 8.2b: reservas con plazo de trabajo
-
-- **Problema:** la reserva dura 10 s por lote y no se renueva. Con las frases locales, un lote tarda milisegundos. **Con un escritor lento (LLM) no avanza** (simulado: 4 s por mensaje, 6 ejecuciones, 18 llamadas y 0 mensajes guardados):
-  - Si el lote no cabe en la reserva, nada se confirma y se repite indefinidamente.
-  - Saltar la versión de cabeza tras 3 intentos no basta, porque el resto del lote sigue sin caber.
-  - El token sí impide que un procesador caducado confirme, pero las llamadas al LLM se duplican.
-- **Solución propuesta:**
-  - El procesador deja de empezar versiones nuevas al consumir, por ejemplo, el 50 % de la reserva, y confirma lo hecho (la confirmación parcial ya existe).
-  - Cada llamada al LLM tiene un tiempo máximo menor que lo que queda de reserva.
-  - La reserva sube a unos 30 s.
-  - Con esto, cada ejecución avanza al menos una versión, y si una sola versión no cabe se salta a los 3 intentos (la victoria, en modo mínimo con la frase local, que es instantánea).
-  - Las llamadas duplicadas quedan limitadas a interrupciones reales (como mucho, una versión por interrupción).
-  - No hace falta renovar la reserva ni reducir el lote: las versiones sin nada que comentar no cuestan nada.
-
-## Fase 8.2b (pendiente, no implementada): textos con LLM gratuito
+## Fase 8.2b: textos con LLM gratuito (pendiente de integrar el LLM)
 
 Ampliación, no reestructuración:
 
 - Un `ChatWriter` nuevo que llame a Vercel AI Gateway **solo con una lista explícita de modelos gratuitos autorizados**, sin reserva automática a modelos de pago.
-- Si se agota la cuota o falla el proveedor: frase local (`createLocalWriter`) cuando `utterance.important` y silencio en el resto.
+- Si se agota la cuota, falla el proveedor o se agota el tiempo: la frase local (`fallbackWriter`), ya implementado. Si se quiere silencio en vez de la frase local para lo que no es `utterance.important`, el escritor LLM puede devolver `null` en esos casos.
 - Usará `chat.register`, `personality`, `catchphrases`, `ChatWriteRequest.recent` y `replyToText` para el prompt. Su salida pasa por `validateChatText` y se guarda con `source = 'llm'`.
-- Sin cambios en el director, el SQL ni el navegador. `fallbackWriter` ya existe para la reserva local. Todavía no hay variables, dependencias ni código de AI Gateway.
-- **Requisito previo:** "Pendiente antes de 8.2b: reservas con plazo de trabajo".
+- Sin cambios en el director, la cola, el SQL ni el navegador. Todavía no hay variables, dependencias ni código de AI Gateway.
+- **Preparación implementada en local** (sin integrar con AI Gateway): reserva, plazo de trabajo, tiempo máximo y cancelación por llamada, y escritor local obligatorio, también para la victoria (ver `service.ts`). El escritor LLM solo tiene que implementar `ChatWriter`, pasar `signal` a su petición HTTP y devolver `source: "llm"`.
 
 ## Seguridad: límites de peticiones (fase 7)
 
@@ -495,7 +516,7 @@ Ampliación, no reestructuración:
 - **Por qué abierto en avance y lectura:** un fallo de Upstash no debe congelar todas las partidas. El servidor sigue limitando a un avance por versión (reserva, versión y trigger). Si se añade una IA con coste por llamada, **reconsiderar** `advanceGame`/`advanceIp` como cerrados.
 - **Cambiar los límites:** `RATE_LIMIT_CREATE`, `RATE_LIMIT_ADVANCE_GAME`, `RATE_LIMIT_ADVANCE_IP` y `RATE_LIMIT_READ` con `"<n>/<segundos>"`. Los valores inválidos se ignoran con un aviso.
 - **Navegador:** `interpretAdvance` trata el 429 como `retry` con el `Retry-After` (5 s si falta o no es válido). El controlador no reintenta antes de ese plazo y la resincronización `GET` también lo respeta.
-- **Configuración pendiente (manual) para producción:**
+- **Configuración y verificación en producción** (manual; no se ha verificado que Upstash esté configurado y funcionando en el despliegue de Vercel):
   1. Crear una base de datos Upstash Redis (Vercel → Marketplace → Upstash for Redis, o console.upstash.com). Una región cercana a la de las funciones.
   2. Añadir en Vercel (Project Settings → Environment Variables), solo en el servidor y **sin** `NEXT_PUBLIC_`: `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`. También sirven `KV_REST_API_URL`/`KV_REST_API_TOKEN`, que puede crear la integración del Marketplace. Plantilla en `web/.env.example`.
   3. Volver a desplegar. Comprobar que el log no muestra `[rate-limit] DESACTIVADO` y que la 6.ª creación de partida desde la misma IP en 10 min responde 429.
@@ -517,21 +538,17 @@ Ampliación, no reestructuración:
    - ✅ 6.3 Recuperar y ver partidas guardadas: `GET /api/games/[id]` (con `lastAction`/`lastEvents`) y `/partida/[id]`, leída en el servidor, con un aviso de en curso o terminada y la última jugada.
    - ✅ 6.4 Avance automático en el servidor con IA heurística (`POST /api/games/[id]/advance`).
    - ✅ 6.5 Partida en directo en `/partida/[id]`: avance desde el navegador que observa, Realtime y animaciones.
-7. 🟡 Seguridad: límites de peticiones con Upstash. Implementado y probado; **pendiente de configurar Upstash en Vercel** (sin eso, producción no tiene límites).
+7. 🟡 Seguridad: límites de peticiones con Upstash. Implementado y probado en local; **no se ha verificado que Upstash funcione en producción** (sin él, producción no tiene límites).
 8. Personajes:
    - ✅ 8.1 Personalidades y estrategias diferenciadas (`characters.ts`, `ai.ts`).
-   - 🟡 8.2a Chat entre personajes con frases locales (director, cola persistente, Realtime y `ChatPanel`). Implementado y probado (A1 de la auditoría corregido: cola persistente y recuperable, con trigger tolerante). Pendiente:
-     - Ejecutar `web/supabase/8.2a-chat.sql` en Supabase.
-     - Verificar en Supabase y Vercel reales (M3).
-     - Antes de 8.2b, las reservas con plazo de trabajo.
-   - ⏳ 8.2b Textos del chat con LLM gratuito vía Vercel AI Gateway (ver "Fase 8.2b"). No empezar sin revisar 8.2a.
-9. ⏳ Pendiente:
-   - Animación de victoria.
-   - Despliegue en Vercel.
+   - ✅ 8.2a Chat entre personajes con frases locales (director, cola persistente con trigger tolerante, Realtime y `ChatPanel`). SQL ejecutado en Supabase y chat comprobado en producción.
+   - ⏳ 8.2b Textos del chat con LLM gratuito vía Vercel AI Gateway (ver "Fase 8.2b"). Preparación del escritor implementada en local; falta integrar el LLM.
+9. ✅ Despliegue en Vercel y portada con «Nueva partida».
+10. ⏳ Pendiente: animación de victoria.
 
 ## Pruebas y validación (desde `web/`)
 
-326 pruebas en 31 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
+351 pruebas en 33 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
 
 - `src/lib/engine/__tests__/rules.test.ts` (57): reglas, correcciones del motor original y tramo final (entrada + 7 + meta) en los cuatro colores.
 - `src/lib/engine/__tests__/simulation.test.ts` (3): 60 partidas completas con semilla (2, 3 y 4 jugadores); comprueba que terminan y que el estado es coherente en cada acción.
@@ -568,7 +585,7 @@ Ampliación, no reestructuración:
   - `writer.test.ts` (17): frases de los 4 personajes (tipos, marcadores permitidos, longitud con cualquier nombre y racha, sin repeticiones ni casi repeticiones), estilo distinto de cada uno, `renderLine` con `{count}`/`{Count}`/`{ritmo}`, antirrepetición global (también con otro rival) y por personaje (agota las frases antes de repetir), validación y coherencia (tres seises, casa frente a meta, victoria sin despedidas, rachas sin números escritos a mano).
   - `load.test.ts` (3): la carga inicial mira la cola antes que los mensajes y nunca devuelve "sin el último mensaje y sin pendientes", aunque el lote se confirme durante la carga (B2); errores y id no válido.
   - `config.test.ts` (6): `config.ts` coincide con el SQL (disparadores, orígenes, longitud, `seq`, formato del personaje, rangos de reserva y lote) y los esquemas aplican exactamente esos límites (incluido el estado del director sin `usedLines`).
-  - `service.test.ts` (19): cola en orden; fuera de orden; reserva ocupada sin descartar; 10 procesadores simultáneos → 1, sin duplicados ni pérdidas; varios lotes; proceso interrumpido tras reservar (recuperado al caducar); respuesta perdida al reservar y al confirmar; fallo durante la confirmación; reserva caducada; versión defectuosa (sola o en medio del lote, sin penalizar a las demás); versiones desfasadas; victoria pendiente (antigua, con intentos agotados y datos dañados en modo mínimo, junto a una defectuosa, con todas sus frases "repetidas"); y 6 partidas completas con caos (procesadores sin esperar, concurrentes, `after()` perdidos, fallos, respuestas perdidas e interrupciones), donde no se pierde la victoria, no hay duplicados, la cola acaba vacía y se cumplen pausas, réplicas y límites. En esas partidas, cada texto es una frase del propio personaje, y la coherencia se comprueba contra los eventos reales, calculados aparte: el número y "seguidas" de cada racha, y ninguna mención a la casa en tres seises sin ficha devuelta. Además, en 8 partidas, las capturas son menos del 56 % del chat, pero se siguen comentando, y la victoria siempre (B4).
+  - `service.test.ts` (31): cola en orden; fuera de orden; reserva ocupada sin descartar; 10 procesadores simultáneos → 1, sin duplicados ni pérdidas; varios lotes; proceso interrumpido tras reservar (recuperado al caducar); respuesta perdida al reservar y al confirmar; fallo durante la confirmación; reserva caducada; versión defectuosa (sola o en medio del lote, sin penalizar a las demás); versiones desfasadas; victoria pendiente (antigua, con intentos agotados y datos dañados en modo mínimo, junto a una defectuosa, con todas sus frases "repetidas"); y 6 partidas completas con caos (procesadores sin esperar, concurrentes, `after()` perdidos, fallos, respuestas perdidas e interrupciones), donde no se pierde la victoria, no hay duplicados, la cola acaba vacía y se cumplen pausas, réplicas y límites. En esas partidas, cada texto es una frase del propio personaje, y la coherencia se comprueba contra los eventos reales, calculados aparte: el número y "seguidas" de cada racha, y ninguna mención a la casa en tres seises sin ficha devuelta. Además, en 8 partidas, las capturas son menos del 56 % del chat, pero se siguen comentando, y la victoria siempre (B4). Y con un escritor principal lento o que falla: reparto en varias reservas sin caducar ni repetir llamadas, tiempo máximo dentro del margen de su reserva, aborto y escritor local si no responde, local si falla o ya no queda tiempo, y victoria con el local. Temporizador del principal: se limpia y no vence si responde a tiempo, si falla o si lanza de forma síncrona (el local se usa una vez por intervención); si vence, aborta y usa el local una vez; si también falla el local, el error se propaga, lo anterior se confirma y esa versión queda pendiente sin reintentar en la misma ejecución; y en el peor caso (dos plazos agotados en la última versión) se confirma justo al empezar el margen (27 s).
   - `store.test.ts` (5): parámetros de las RPC (lote, confirmación, `pending`), validación antes de escribir, lecturas y errores sin detalles.
   - `chatController.test.ts` (9): feed (duplicados, orden, límite, visibilidad por versión) y controlador (carga inicial + recuperación + Realtime sin duplicados, reconexión con páginas, sin red, 429, filas ajenas y `stop()`). Además, **partida terminada con el procesador interrumpido: consulta hasta recuperar la victoria**; en curso no consulta por pendientes.
   - `schedule.test.ts` (4): `after()` con el procesador de esa partida, fallo al programar, BD caída sin lanzar y registro limitado.
@@ -604,6 +621,8 @@ Ampliación, no reestructuración:
   - Regresión de contratos.
   - Espectadores reales: 1 y 3 pestañas tras la misma IP sin 429 en 5 min; 6 pestañas sí se limitan.
 - `src/components/hud/__tests__/chatScroll.test.ts` (4): con un contenedor simulado (Vitest corre sin DOM), compensa exactamente el desplazamiento de WebKit, no corrige dos veces si el navegador ya lo hizo, no toca nada estando abajo (tampoco con una posición antigua) y no hace nada sin posición o sin el mensaje (B6).
+- `src/lib/home/__tests__/newGame.test.ts` (8): respuestas de `POST /api/games` (201 válido, 429 con espera en segundos, minutos o sin cabecera, 503, 500, 400 y 201 sin id o con un id no UUID); el controlador entra en carga y hace el POST, navega a `/partida/[id]` y sigue en carga; varios clics durante la creación o la navegación hacen una sola petición; error y reintento con éxito; sin red, límite de creación y respuesta no JSON (no se queda bloqueado).
+- `src/components/home/__tests__/NewGameButton.test.tsx` (5): el botón en reposo, creando (desactivado, `aria-busy` y estado anunciado) y con error (alerta y «Reintentar» activo); la portada muestra «Nueva partida» y el enlace al tablero, sin login ni campos de entrada; `NewGameButton` se renderiza en el servidor.
 - `src/lib/hud/__tests__/hud.test.ts` (19): progreso de las fichas, resumen de jugadores (zonas, puestos, ganador), fases del turno (tirar, mover, bonus, fin) y textos de los eventos.
 
 Comandos:
@@ -612,7 +631,7 @@ Comandos:
 - `npm test`: pruebas (`npm run test:watch` en modo observación)
 - `npm run lint`: ESLint
 - `npx tsc --noEmit`: comprobación de tipos
-- `bash supabase/tests/run-chat-sql-tests.sh`: pruebas del SQL del chat (42 SQL, 3 `WARNING` y 6 de concurrencia) en un PostgreSQL desechable (Docker; no toca Supabase)
+- `bash supabase/tests/run-chat-sql-tests.sh`: pruebas del SQL del chat (43 SQL, 3 `WARNING` y 6 de concurrencia) en un PostgreSQL desechable (Docker; no toca Supabase)
 - `npm run build`: compilación de producción
 
 ## Restricciones
