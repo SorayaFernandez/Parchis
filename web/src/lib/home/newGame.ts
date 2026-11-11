@@ -45,6 +45,8 @@ export interface NewGameDeps {
 export class NewGameController {
   private state: NewGameState = { kind: "idle" };
   private listeners = new Set<() => void>();
+  /** Cambia con cada `reset()`: el resultado de una creación anterior se ignora (no navega). */
+  private generation = 0;
 
   constructor(private readonly deps: NewGameDeps) {}
 
@@ -58,6 +60,7 @@ export class NewGameController {
   /** Crea la partida y navega a ella. Si ya hay una creación en curso, no hace nada. */
   async create(): Promise<void> {
     if (this.state.kind === "creating") return;
+    const generation = this.generation;
     this.set({ kind: "creating" });
     let outcome: CreateGameOutcome;
     try {
@@ -71,12 +74,23 @@ export class NewGameController {
     } catch {
       outcome = { kind: "error", message: "No hay conexión con el servidor. Comprueba la red e inténtalo de nuevo." };
     }
+    if (generation !== this.generation) return; // se salió de la portada mientras se creaba
     if (outcome.kind === "error") {
       this.set({ kind: "error", message: outcome.message });
       return;
     }
     // Se queda en "creating" mientras se navega: un segundo clic no crea otra partida.
     this.deps.navigate(`/partida/${outcome.id}`);
+  }
+
+  /**
+   * Vuelve al estado inicial. Lo llama el botón cuando la portada deja de verse: con
+   * `cacheComponents`, Next.js no la desmonta al navegar (la oculta con <Activity> y conserva el
+   * estado), así que sin esto, al volver, el botón seguía en "creating" y no respondía.
+   */
+  reset() {
+    this.generation++;
+    if (this.state.kind !== "idle") this.set({ kind: "idle" });
   }
 
   private set(state: NewGameState) {
