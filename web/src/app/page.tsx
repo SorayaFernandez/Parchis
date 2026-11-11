@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NewGameButton } from "@/components/home/NewGameButton";
 
 const PLAYER_COLORS = [
   { name: "Rosa", className: "bg-pink-400" },
@@ -31,6 +32,9 @@ export default function Home() {
       <p className="rounded-full border px-4 py-1 text-sm text-muted-foreground">
         En construcción
       </p>
+
+      {/* Partida real: la crean y la juegan los cuatro personajes; aquí solo se abre para mirarla. */}
+      <NewGameButton />
 
       <Link href="/tablero" className="text-sm font-medium underline underline-offset-4">
         Ver el tablero (demo)

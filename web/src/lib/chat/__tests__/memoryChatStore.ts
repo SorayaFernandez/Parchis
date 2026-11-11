@@ -175,6 +175,8 @@ export function createMemoryChatStore() {
     },
     /** Avanza el reloj de la "BD" (ms). */
     advance: (ms: number) => (now += ms),
+    /** Reloj de la "BD" (ms), para que el procesador mida la reserva con el mismo tiempo. */
+    clock: () => now,
     /** Las próximas `times` llamadas a `op` fallan ANTES de aplicarse. */
     fail: (op: Op, times = 1) => failures.set(op, times),
     /** Las próximas `times` llamadas a `op` se aplican pero la respuesta se pierde. */

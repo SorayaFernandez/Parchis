@@ -17,14 +17,19 @@ const victory = (winner = "ai-green"): GameEvent[] => [
 ];
 const LEASE_MS = CHAT_LIMITS.leaseSeconds * 1000;
 
-function setup(writer?: ChatWriter) {
+/**
+ * `writer`: escritor principal (por defecto, el local). `fallback`: escritor de reserva (por defecto,
+ * el local). Para simular una versión defectuosa (que no se puede escribir de ninguna forma), se pasa
+ * el mismo escritor que falla como reserva.
+ */
+function setup(writer?: ChatWriter, fallback?: ChatWriter) {
   const memory = createMemoryChatStore();
   let tokens = 0;
   const local = createLocalWriter(createSeededRandom(1));
   const deps: ChatDeps = {
     store: memory.store,
     writer: writer ?? local,
-    fallbackWriter: local,
+    fallbackWriter: fallback ?? local,
     random: () => 0, // el director siempre "quiere" hablar
     newToken: () => `token-${++tokens}`,
   };
@@ -161,7 +166,7 @@ describe("cola: reservas caducadas, respuestas perdidas y fallos", () => {
         return { text: `Frase de ${utterance.speaker} ${Math.random()}`, source: "local" };
       },
     };
-    const t = setup(failing);
+    const t = setup(failing, failing);
     t.enqueue(10, [capture("ai-pink", "ai-purple")]); // falla siempre
     t.enqueue(20, [capture("ai-blue", "ai-green")]);
     for (let i = 0; i < CHAT_LIMITS.maxAttempts; i++) expect((await t.drain()).kind).toBe("error");
@@ -177,7 +182,7 @@ describe("cola: reservas caducadas, respuestas perdidas y fallos", () => {
         return { text: `Frase ${utterance.speaker} ${utterance.trigger} ${Math.random()}`, source: "local" };
       },
     };
-    const t = setup(failing);
+    const t = setup(failing, failing);
     t.enqueue(10, [capture("ai-pink", "ai-purple")]);
     t.enqueue(14, [capture("ai-green", "ai-blue")]); // falla siempre
     t.enqueue(22, [capture("ai-blue", "ai-pink")]);
@@ -229,7 +234,7 @@ describe("victoria pendiente", () => {
         return { text: "¡Victoria!", source: "llm" };
       },
     };
-    const t = setup(failing);
+    const t = setup(failing, failing);
     t.enqueue(4, [capture()]);
     t.enqueue(5, victory("ai-pink"));
     let result;
@@ -434,5 +439,284 @@ describe("proporción de mensajes (B4)", () => {
     // Antes (0,8/0,95/0,9) eran el 63 %; ahora en torno al 51 %.
     expect(captureRelated / total).toBeLessThan(0.56);
     expect(total / 8).toBeGreaterThan(25); // el chat no se queda mudo
+  });
+});
+
+describe("reserva de 30 s con un escritor principal lento o que falla (preparación de 8.2b)", () => {
+  const LEASE = CHAT_LIMITS.leaseSeconds * 1000;
+  /**
+   * Capturas en las que siempre hablan dos (captor y víctima) sin chocar con las pausas: parejas
+   * alternas y separadas ≥ 8 versiones del mismo personaje, todas a menos de 15 de la última.
+   */
+  const pairs = [["ai-pink", "ai-purple"], ["ai-green", "ai-blue"]];
+  const enqueueCaptures = (t: ReturnType<typeof setup>, versions: number[]) =>
+    versions.forEach((v, i) => t.enqueue(v, [capture(pairs[i % 2][0], pairs[i % 2][1])]));
+  /** Textos bien distintos entre sí (para que la antirrepetición no los descarte). */
+  const TEXTS = [
+    "El dado manda y yo obedezco sin rechistar.", "Qué jugada tan bonita, casi me emociono.", "Hoy las fichas vuelan por el tablero.",
+    "Paciencia y estrategia, mis queridos rivales.", "No pienso rendirme todavía, ni de broma.", "Eso ha dolido más de lo que parece.",
+    "Una captura limpia, de manual absoluto.", "Me lo apunto para la revancha de mañana.", "Vaya racha de suerte llevamos aquí.",
+    "Cada casilla cuenta, no lo olvidéis nunca.", "Menudo susto me acabas de dar, amigo.", "Sigamos, que la tarde es muy larga.",
+  ];
+
+  /** Escritor principal que "tarda" `ms` en el reloj de la BD y responde con un texto único. */
+  function slowWriter(t: { memory: ReturnType<typeof createMemoryChatStore> }, ms: number) {
+    const calls: { version?: number; timeoutMs?: number; at: number }[] = [];
+    let n = 0;
+    const writer: ChatWriter = {
+      async write(request) {
+        calls.push({ timeoutMs: request.timeoutMs, at: t.memory.clock() });
+        t.memory.advance(ms);
+        return { text: TEXTS[n++ % TEXTS.length], source: "llm" };
+      },
+    };
+    return { writer, calls };
+  }
+
+  it("un principal de 4 s por mensaje ya no deja la cola bloqueada: cada reserva avanza y confirma a tiempo", async () => {
+    const holder = { memory: createMemoryChatStore() };
+    const slow = slowWriter(holder, 4_000);
+    const t = setup(slow.writer);
+    holder.memory = t.memory;
+    t.deps.now = t.memory.clock;
+    enqueueCaptures(t, [2, 5, 11, 14]);
+
+    // 4 versiones × 2 intervenciones × 4 s = 32 s > 30 s de reserva. La 1.ª reserva hace la v2 (0–8 s)
+    // y la v5 (8–16 s); a los 16 s ya pasó la mitad: confirma y la siguiente reserva hace v11 y v14.
+    const result = await t.drain();
+    expect(result).toMatchObject({ kind: "done", batches: 2, published: 8 });
+    expect(t.memory.queue).toEqual([]);
+    expect(t.versions()).toEqual([2, 5, 11, 14]);
+    // Sin llamadas repetidas: una por mensaje publicado, y todas del principal.
+    expect(slow.calls).toHaveLength(8);
+    expect(t.memory.rows.every((r) => r.source === "llm")).toBe(true);
+  });
+
+  it("cada llamada tiene un tiempo máximo que deja siempre el margen para confirmar su reserva", async () => {
+    const holder = { memory: createMemoryChatStore() };
+    const slow = slowWriter(holder, 7_000);
+    const t = setup(slow.writer);
+    holder.memory = t.memory;
+    t.deps.now = t.memory.clock;
+    // Inicio de cada reserva (según el reloj del procesador, tras la respuesta).
+    const leaseStarts: number[] = [];
+    const claim = t.memory.store.claim.bind(t.memory.store);
+    t.deps.store = { ...t.memory.store, claim: async (...args: Parameters<typeof claim>) => {
+      const batch = await claim(...args);
+      if (batch) leaseStarts.push(t.memory.clock());
+      return batch;
+    } };
+    enqueueCaptures(t, [2, 5, 11]);
+    await t.drain();
+    expect(t.memory.queue).toEqual([]);
+    expect(leaseStarts.length).toBeGreaterThan(1); // las llamadas de 7 s obligan a repartir en varias reservas
+    for (const c of slow.calls) {
+      const start = Math.max(...leaseStarts.filter((s0) => s0 <= c.at));
+      expect(c.timeoutMs!).toBeGreaterThanOrEqual(CHAT_LIMITS.minWriterMs);
+      expect(c.timeoutMs!).toBeLessThanOrEqual(CHAT_LIMITS.writerTimeoutMs);
+      expect(c.at + c.timeoutMs!).toBeLessThanOrEqual(start + LEASE - CHAT_LIMITS.commitMarginMs);
+    }
+  });
+
+  it("si el principal agota su tiempo: se aborta, se usa el escritor local y no se repite la llamada", async () => {
+    let signal: AbortSignal | undefined;
+    let calls = 0;
+    const hanging: ChatWriter = {
+      write(request) {
+        calls++;
+        signal = request.signal;
+        return new Promise(() => {}); // nunca responde
+      },
+    };
+    const t = setup(hanging);
+    const timers: number[] = [];
+    t.deps.setTimeout = (fn, ms) => {
+      timers.push(ms);
+      queueMicrotask(fn); // el plazo vence enseguida
+      return 0;
+    };
+    t.deps.clearTimeout = () => {};
+    t.enqueue(4, [capture()]);
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 2 });
+    expect(signal?.aborted).toBe(true);
+    expect(calls).toBe(2); // una por intervención, sin reintentos
+    expect(timers.every((ms) => ms <= CHAT_LIMITS.writerTimeoutMs)).toBe(true);
+    expect(t.memory.rows.every((r) => r.source === "local")).toBe(true);
+  });
+
+  it("si el principal falla, se usa el escritor local", async () => {
+    const failing: ChatWriter = { write: async () => { throw new Error("proveedor caído o cuota agotada"); } };
+    const t = setup(failing);
+    t.enqueue(4, [capture()]);
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 2 });
+    expect(t.memory.rows.map((r) => r.source)).toEqual(["local", "local"]);
+  });
+
+  it("si casi no queda reserva, ni se llama al principal: directamente el local", async () => {
+    let calls = 0;
+    const counting: ChatWriter = { write: async () => (calls++, { text: "nunca", source: "llm" }) };
+    const t = setup(counting);
+    let tick = 0;
+    // 1.ª lectura: inicio de la reserva; después, a 200 ms del margen de confirmación.
+    t.deps.now = () => (tick++ === 0 ? 0 : LEASE - CHAT_LIMITS.commitMarginMs - 200);
+    t.enqueue(4, [capture()]);
+    await t.drain();
+    expect(calls).toBe(0);
+    expect(t.memory.rows.map((r) => r.source)).toEqual(["local", "local"]);
+  });
+
+  it("la victoria se escribe con el escritor local aunque el principal falle o tarde demasiado", async () => {
+    const failing: ChatWriter = { write: async () => { throw new Error("LLM caído"); } };
+    const t = setup(failing);
+    t.enqueue(9, victory("ai-blue"));
+    await t.drain();
+    expect(t.memory.rows[0]).toMatchObject({ version: 9, trigger: "victory", character_id: "ai-blue", source: "local" });
+    expect(CHARACTERS[3].chat.lines.victory_win).toContain(t.memory.rows[0].text);
+  });
+});
+
+describe("tiempo máximo del escritor principal: temporizador, reserva local y margen (preparación de 8.2b)", () => {
+  const LEASE = CHAT_LIMITS.leaseSeconds * 1000;
+
+  /** Temporizadores registrados: cuáles se crean, cuáles se limpian y cuáles llegan a vencer. */
+  function recordingTimers(t: ReturnType<typeof setup>, { fire = false, advance = false } = {}) {
+    const timers = new Map<number, { ms: number; cleared: boolean; fired: boolean; fn: () => void }>();
+    let next = 1;
+    t.deps.setTimeout = (fn, ms) => {
+      const id = next++;
+      timers.set(id, { ms, cleared: false, fired: false, fn });
+      if (fire) {
+        // Vence en una tarea posterior (como un temporizador real): antes se procesan las promesas
+        // ya resueltas, así que una respuesta a tiempo lo limpia y no llega a vencer.
+        setTimeout(() => {
+          const timer = timers.get(id)!;
+          if (timer.cleared) return;
+          if (advance) t.memory.advance(ms); // el escritor "estuvo colgado" todo el plazo
+          timer.fired = true;
+          fn();
+        }, 0);
+      }
+      return id;
+    };
+    t.deps.clearTimeout = (h) => {
+      const timer = timers.get(h as number);
+      if (timer) timer.cleared = true;
+    };
+    return timers;
+  }
+
+  /** Escritor de reserva que cuenta sus llamadas (envuelve al local). */
+  function countingLocal() {
+    const local = createLocalWriter(createSeededRandom(2));
+    const counter = { calls: 0 };
+    const writer: ChatWriter = { write: (request) => (counter.calls++, local.write(request)) };
+    return { writer, counter };
+  }
+
+  it("si el principal responde antes del plazo, su temporizador se limpia y nunca vence", async () => {
+    const replies = ["¡Menuda jugada acabo de hacer, señores!", "Esto no se queda así, te lo aseguro."];
+    let n = 0;
+    const ok: ChatWriter = { write: async () => ({ text: replies[n++], source: "llm" }) };
+    const t = setup(ok);
+    const timers = recordingTimers(t);
+    t.enqueue(4, [capture()]);
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 2 });
+    expect(timers.size).toBe(2); // una llamada por intervención
+    for (const timer of timers.values()) expect(timer).toMatchObject({ cleared: true, fired: false });
+    expect(t.memory.rows.map((r) => r.source)).toEqual(["llm", "llm"]);
+  });
+
+  it("si el principal falla antes del plazo, el temporizador se limpia y el local se usa una sola vez por intervención", async () => {
+    const failing: ChatWriter = { write: async () => { throw new Error("cuota agotada"); } };
+    const fallback = countingLocal();
+    const t = setup(failing, fallback.writer);
+    const timers = recordingTimers(t);
+    t.enqueue(4, [capture()]);
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 2 });
+    for (const timer of timers.values()) expect(timer).toMatchObject({ cleared: true, fired: false });
+    expect(fallback.counter.calls).toBe(2);
+    expect(t.memory.rows.map((r) => r.source)).toEqual(["local", "local"]);
+  });
+
+  it("también si el principal lanza el error de forma síncrona (sin devolver una promesa)", async () => {
+    const throwsSync: ChatWriter = { write: () => { throw new Error("fallo al preparar la petición"); } };
+    const fallback = countingLocal();
+    const t = setup(throwsSync, fallback.writer);
+    const timers = recordingTimers(t);
+    t.enqueue(4, [capture()]);
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 2 });
+    expect(timers.size).toBe(2);
+    for (const timer of timers.values()) expect(timer).toMatchObject({ cleared: true, fired: false });
+    expect(fallback.counter.calls).toBe(2);
+  });
+
+  it("si vence el plazo: se aborta la llamada y el local se usa una sola vez (el temporizador ya venció)", async () => {
+    let signal: AbortSignal | undefined;
+    const hanging: ChatWriter = { write: (request) => ((signal = request.signal), new Promise(() => {})) };
+    const fallback = countingLocal();
+    const t = setup(hanging, fallback.writer);
+    const timers = recordingTimers(t, { fire: true });
+    t.enqueue(4, [capture()]);
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 2 });
+    expect(signal?.aborted).toBe(true);
+    for (const timer of timers.values()) expect(timer.fired).toBe(true);
+    expect(fallback.counter.calls).toBe(2);
+  });
+
+  it("si también falla el local, el error se propaga: lo anterior se confirma y esa versión queda pendiente", async () => {
+    const failing: ChatWriter = { write: async () => { throw new Error("LLM caído"); } };
+    const local = createLocalWriter(createSeededRandom(3));
+    let fallbackCalls = 0;
+    const brokenForGreen: ChatWriter = {
+      write(request) {
+        fallbackCalls++;
+        if (request.utterance.speaker === "ai-green") throw new Error("frases dañadas");
+        return local.write(request);
+      },
+    };
+    const t = setup(failing, brokenForGreen);
+    recordingTimers(t);
+    t.enqueue(10, [capture("ai-pink", "ai-purple")]);
+    t.enqueue(14, [capture("ai-green", "ai-blue")]); // su escritor local falla
+    t.enqueue(20, [capture("ai-blue", "ai-pink")]);
+    const result = await t.drain();
+    expect(result.kind).toBe("error");
+    expect((result as { error: Error }).error.message).toBe("frases dañadas");
+    expect(t.versions()).toEqual([10]); // lo anterior, confirmado
+    expect(t.memory.queue.map((q) => q.version)).toEqual([14, 20]); // la versión que falla, pendiente (y las siguientes)
+    expect(t.memory.chats.get(GAME)).toMatchObject({ lastVersion: 10, lockToken: null });
+    expect(fallbackCalls).toBe(3); // 2 de la v10 + 1 de la v14 (se detiene en el primer fallo, sin reintentar)
+  });
+
+  it("peor caso: el principal agota los dos plazos de la última versión y aun así se confirma dentro del margen", async () => {
+    // v2: dos llamadas de 7,45 s (14,9 s, justo antes de la mitad). v5 empieza a los 14,9 s y su principal
+    // se cuelga: 1.ª llamada hasta 22,9 s; 2.ª, con el tiempo que queda hasta el margen (27 s). Local: al instante.
+    const t = setup();
+    const confirmedAt: number[] = [];
+    let calls = 0;
+    const principal: ChatWriter = {
+      write: () => {
+        calls++;
+        if (calls <= 2) {
+          t.memory.advance(7_450);
+          return Promise.resolve({ text: calls === 1 ? "Primera respuesta generada, bien larga." : "Segunda frase distinta para la réplica.", source: "llm" as const });
+        }
+        return new Promise(() => {}); // colgado hasta que vence su plazo
+      },
+    };
+    t.deps.writer = principal;
+    t.deps.now = t.memory.clock;
+    recordingTimers(t, { fire: true, advance: true });
+    const commit = t.memory.store.commit.bind(t.memory.store);
+    t.deps.store = { ...t.memory.store, commit: async (...args: Parameters<typeof commit>) => (confirmedAt.push(t.memory.clock()), commit(...args)) };
+    t.enqueue(2, [capture("ai-pink", "ai-purple")]);
+    t.enqueue(5, [capture("ai-green", "ai-blue")]);
+
+    expect(await t.drain()).toMatchObject({ kind: "done", published: 4 });
+    expect(confirmedAt).toHaveLength(1);
+    // Confirma justo al empezar el margen: los 3 s de margen quedan intactos (el local no consume tiempo).
+    expect(confirmedAt[0]).toBeLessThanOrEqual(LEASE - CHAT_LIMITS.commitMarginMs);
+    expect(confirmedAt[0]).toBe(14_900 + 8_000 + 4_100); // 22,9 s + lo que quedaba hasta el margen = 27 s
+    expect(t.memory.rows.map((r) => [r.version, r.source])).toEqual([[2, "llm"], [2, "llm"], [5, "local"], [5, "local"]]);
   });
 });
