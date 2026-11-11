@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { getRealBoardPosition, isOnMainTrack, isSafeCell } from "../board";
-import { FINAL_POSITION } from "../constants";
+import { FINAL_POSITION, HOME_ENTRY_STEPS } from "../constants";
 import { applyAction, createGame, getAvailableMoves } from "../engine";
 import type { GameState } from "../types";
 import { stateForSteps } from "./helpers";
@@ -27,7 +27,7 @@ function checkInvariants(state: GameState) {
     for (const piece of player.pieces) {
       if (piece.state !== stateForSteps(piece.steps)) fail("estado/steps incoherentes");
       if (piece.steps < -1 || piece.steps > FINAL_POSITION) fail("steps fuera de rango");
-      if (piece.state === "track" && piece.steps > 63) fail("ficha pasada la entrada");
+      if (piece.state === "track" && piece.steps > HOME_ENTRY_STEPS) fail("ficha pasada la entrada");
       if (isOnMainTrack(piece)) {
         const cell = getRealBoardPosition(player.color, piece.steps);
         perCell.set(cell, (perCell.get(cell) ?? 0) + 1);

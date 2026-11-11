@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { getDistanceToHomeEntry, getRealBoardPosition } from "../board";
+import {
+  FINAL_POSITION,
+  FINAL_SECTION_SIZE,
+  FINAL_STRETCH_SIZE,
+  HOME_ENTRIES,
+  HOME_ENTRY_STEPS,
+  MAIN_TRACK_SIZE,
+} from "../constants";
 import { applyAction, createGame, getAvailableMoves } from "../engine";
 import { canMovePiece } from "../moves";
+import type { GameState } from "../types";
 import { act, eventTypes, run, setup, steps, stepsForCell } from "./helpers";
 
 const roll = (playerId: string, value: number) => ({ type: "roll" as const, playerId, value });
@@ -399,5 +409,105 @@ describe("penalización por tres seises", () => {
     state = act(state, roll("a", 6));
     state = act(state, { type: "timeout" });
     expect(state.sixesInTurn).toBe(0);
+  });
+});
+
+describe("tramo final: entrada + 7 casillas de color + meta", () => {
+  const COLORS_ = ["pink", "purple", "green", "blue"] as const;
+  const EXPECTED_ENTRY = { pink: 34, purple: 0, green: 17, blue: 51 } as const; // 0 = casilla impresa "68"
+
+  /** Pasa turnos (los demás jugadores tiran 1 sin poder mover) hasta que le toque a `color`. */
+  function untilTurn(state: GameState, color: string): GameState {
+    while (state.turn !== color) state = act(state, roll(state.turn, 1));
+    return state;
+  }
+
+  it("el tramo final tiene 8 casillas (entrada + 7 de color) y la meta va aparte", () => {
+    expect(FINAL_SECTION_SIZE).toBe(8);
+    expect(FINAL_STRETCH_SIZE).toBe(7);
+    expect(FINAL_POSITION).toBe(HOME_ENTRY_STEPS + 12); // 63 -> 68..74 son 7 casillas y la 8ª es 75
+    expect(FINAL_POSITION - MAIN_TRACK_SIZE).toBe(FINAL_STRETCH_SIZE);
+  });
+
+  for (const color of COLORS_) {
+    describe(color, () => {
+      it(`la entrada es la casilla ${EXPECTED_ENTRY[color] || 68} y es la 1ª del tramo final`, () => {
+        expect(HOME_ENTRIES[color]).toBe(EXPECTED_ENTRY[color]);
+        expect(getRealBoardPosition(color, HOME_ENTRY_STEPS)).toBe(EXPECTED_ENTRY[color]);
+        expect(getDistanceToHomeEntry(color, HOME_ENTRY_STEPS)).toBe(0);
+        // La casilla anterior está a 1 de la entrada.
+        expect(getDistanceToHomeEntry(color, HOME_ENTRY_STEPS - 1)).toBe(1);
+      });
+
+      it("desde la entrada se recorren las 7 casillas de color y la 8ª es la meta, sin saltar ni repetir", () => {
+        let state = setup({ [color]: [HOME_ENTRY_STEPS - 1, -1, -1, -1] });
+        // Casilla anterior -> entrada (sigue en el recorrido común).
+        state = untilTurn(state, color);
+        state = act(act(state, roll(color, 1)), move(color, 0));
+        expect(state.players.find((p) => p.color === color)!.pieces[0]).toMatchObject({
+          state: "track",
+          steps: HOME_ENTRY_STEPS,
+        });
+
+        const visited: number[] = [];
+        for (let i = 1; i <= 7; i++) {
+          state = untilTurn(state, color);
+          state = act(act(state, roll(color, 1)), move(color, 0));
+          const piece = state.players.find((p) => p.color === color)!.pieces[0];
+          expect(piece.state).toBe("final");
+          visited.push(piece.steps);
+        }
+        expect(visited).toEqual([68, 69, 70, 71, 72, 73, 74]);
+
+        state = untilTurn(state, color);
+        const result = run(act(state, roll(color, 1)), move(color, 0));
+        expect(result.state.players.find((p) => p.color === color)!.pieces[0]).toMatchObject({
+          state: "finished",
+          steps: FINAL_POSITION,
+        });
+        expect(eventTypes(result)).toContain("piece_reached_goal");
+      });
+
+      it("desde la entrada: 1..8 casillas son válidas, 8 llega exacta a la meta y 9 o más no", () => {
+        const state = setup({ [color]: [HOME_ENTRY_STEPS, -1, -1, -1] });
+        for (let d = 1; d <= 8; d++) expect(canMovePiece(state, color, 0, d)).toEqual({ ok: true });
+        for (const d of [9, 10, 20]) {
+          expect(canMovePiece(state, color, 0, d)).toEqual({ ok: false, error: "EXACT_ROLL_REQUIRED" });
+        }
+      });
+    });
+  }
+
+  it("con dados reales: entrada + 6 -> 6ª casilla de color; un 3 no vale, un 2 llega a la meta", () => {
+    let state = act(setup({ pink: [HOME_ENTRY_STEPS, -1, -1, -1] }), roll("pink", 6));
+    state = act(state, move("pink", 0)); // con 6 repite
+    expect(steps(state, "pink")[0]).toBe(73);
+    expect(canMovePiece(state, "pink", 0, 3)).toEqual({ ok: false, error: "EXACT_ROLL_REQUIRED" });
+    const noMove = run(state, roll("pink", 3));
+    expect(eventTypes(noMove)).toEqual(["dice_rolled", "no_moves", "turn_changed"]);
+    state = untilTurn(noMove.state, "pink");
+    const result = run(act(state, roll("pink", 2)), move("pink", 0));
+    expect(steps(result.state, "pink")[0]).toBe(FINAL_POSITION);
+  });
+
+  it("al entrar desde el recorrido, la entrada cuenta como una casilla (no se cuenta dos veces)", () => {
+    // A 3 casillas de la entrada: 3 llega a la entrada, 4 a la 1ª de color, 11 a la meta.
+    const state = setup({ green: [HOME_ENTRY_STEPS - 3, -1, -1, -1] });
+    const target = (d: number) => {
+      const r = act(act(untilTurn(state, "green"), { type: "roll", playerId: "green", value: Math.min(d, 6) }), move("green", 0));
+      return steps(r, "green")[0];
+    };
+    expect(target(3)).toBe(HOME_ENTRY_STEPS);
+    expect(target(4)).toBe(68);
+    expect(target(6)).toBe(70);
+    expect(canMovePiece(state, "green", 0, 11)).toEqual({ ok: true }); // 3 + 8
+    expect(canMovePiece(state, "green", 0, 12)).toEqual({ ok: false, error: "EXACT_ROLL_REQUIRED" });
+  });
+
+  it("la entrada sigue siendo casilla del recorrido común: otros colores pasan por ella", () => {
+    // purple en la casilla 33 avanza 2: pasa por 34 (entrada de pink) y llega a 35.
+    const state = act(setup({ purple: [stepsForCell("purple", 33), -1, -1, -1] }, ["pink", "purple"]), roll("pink", 1));
+    const result = run(act(state, roll("purple", 2)), move("purple", 0));
+    expect(getRealBoardPosition("purple", steps(result.state, "purple")[0])).toBe(35);
   });
 });
