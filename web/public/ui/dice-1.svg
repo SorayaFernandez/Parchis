@@ -76,14 +76,6 @@
     stroke-width="3"
   />
 
-  <!-- HIGHLIGHT -->
-  <path
-    d="M160 150C200 120 300 120 350 170"
-    stroke="rgba(255,255,255,.18)"
-    stroke-width="12"
-    stroke-linecap="round"
-  />
-
   <!-- DOT -->
   <circle
     cx="256"

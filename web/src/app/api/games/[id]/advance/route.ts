@@ -5,6 +5,8 @@
 
 import { randomInt, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { isChatCandidate } from "@/lib/chat/director";
+import { scheduleDrain } from "@/lib/chat/schedule";
 import { EngineRejectedActionError, advanceGame } from "@/lib/game/advance";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
@@ -40,11 +42,16 @@ export async function POST(request: Request, ctx: RouteContext<"/api/games/[id]/
       repository: getGamesRepository(),
       rollDie: () => randomInt(1, 7), // 1..6, solo en el servidor
       newToken: () => randomUUID(),
+      random: () => randomInt(0, 2 ** 32) / 2 ** 32, // [0, 1) para el azar acotado de Chispa
     });
 
     switch (result.kind) {
       case "advanced": {
         const { game, action, events } = result;
+        // La versión ya está en la cola del chat (la encoló PostgreSQL al confirmar). Si tiene algo
+        // que comentar, se procesa la cola después de responder: el avance nunca lo espera. Las
+        // versiones sin nada que comentar esperan al siguiente lote (no hace falta otra ejecución).
+        if (isChatCandidate(events, game.version)) scheduleDrain(game.id);
         return Response.json(
           { id: game.id, version: game.version, status: game.status, winner: game.winner, action, events, state: game.state },
           { headers: NO_STORE },

@@ -1,8 +1,10 @@
 import { ParchisBoard } from "@/components/board/ParchisBoard";
+import { ChatPanel } from "@/components/hud/ChatPanel";
 import { DicePanel } from "@/components/hud/DicePanel";
 import { PlayersPanel } from "@/components/hud/PlayersPanel";
 import { TurnLog, type TurnLogEntry } from "@/components/hud/TurnLog";
 import { COLOR_HEX } from "@/lib/board/geometry";
+import type { ChatMessage } from "@/lib/chat/schemas";
 import { getAvailableMoves, type GameAction, type GameState } from "@/lib/engine";
 import type { GameResponse } from "@/lib/game/api";
 import { CHARACTER_NAMES } from "@/lib/game/characters";
@@ -167,7 +169,16 @@ export interface LiveBoardProps {
  * dado y turno, jugadores, jugadas y datos de la partida.
  * Solo presentación (sin hooks): sirve en el servidor (estático) y en LiveGame (en directo).
  */
-export function GameView({ game, live }: { game: GameResponse; live?: LiveBoardProps }) {
+export function GameView({
+  game,
+  live,
+  chat,
+}: {
+  game: GameResponse;
+  live?: LiveBoardProps;
+  /** Mensajes del chat ya visibles (los de versiones que el tablero ha mostrado). Sin él, no hay panel. */
+  chat?: readonly ChatMessage[];
+}) {
   const { state } = game;
   const finished = game.status === "finished";
 
@@ -204,6 +215,13 @@ export function GameView({ game, live }: { game: GameResponse; live?: LiveBoardP
       <aside aria-label="Información de la partida" className="flex min-w-0 flex-col gap-3">
         <DicePanel turn={getTurnInfo(state)} names={CHARACTER_NAMES} rollKey={live?.rollKey ?? 0} />
         <PlayersPanel players={getPlayerSummaries(state)} names={CHARACTER_NAMES} />
+        {chat && (
+          <ChatPanel
+            messages={chat}
+            names={CHARACTER_NAMES}
+            colors={Object.fromEntries(state.players.map((p) => [p.id, p.color]))}
+          />
+        )}
         <TurnLog
           title={live ? "Últimas jugadas" : "Última jugada"}
           description={actionText}

@@ -9,7 +9,7 @@
 // la versión ya habrá cambiado (version_conflict) o la reserva estará tomada (turn_in_progress).
 
 import { applyAction, type GameAction, type GameEvent } from "@/lib/engine";
-import { decideAction } from "./ai";
+import { decideAction, type RandomSource } from "./ai";
 import type { GamesRepository } from "./repository";
 import type { StoredGame } from "./schemas";
 
@@ -30,6 +30,11 @@ export interface AdvanceDeps {
   rollDie: () => number;
   /** Token único para la reserva. En el servidor: crypto.randomUUID(). */
   newToken: () => string;
+  /**
+   * Azar en [0, 1) para los personajes con azar acotado (Chispa). En el servidor: crypto.
+   * Sin él, todos eligen siempre su mejor jugada (determinista).
+   */
+  random?: RandomSource;
 }
 
 /** Error del motor al aplicar la acción elegida (no debería ocurrir: la IA solo elige jugadas legales). */
@@ -38,7 +43,7 @@ export class EngineRejectedActionError extends Error {
 }
 
 export async function advanceGame(id: string, expectedVersion: number, deps: AdvanceDeps): Promise<AdvanceResult> {
-  const { repository, rollDie, newToken } = deps;
+  const { repository, rollDie, newToken, random } = deps;
 
   // 1. Comprobaciones previas (evitan reservar en vano y dan respuestas precisas).
   const current = await repository.get(id);
@@ -59,7 +64,7 @@ export async function advanceGame(id: string, expectedVersion: number, deps: Adv
 
   try {
     // 3. Decidir y aplicar con el motor sobre el estado reservado (el de la BD en esa versión).
-    const action = decideAction(claimed.state, rollDie);
+    const action = decideAction(claimed.state, rollDie, random);
     const result = applyAction(claimed.state, action);
     if (!result.ok) throw new EngineRejectedActionError(`El motor rechazó ${action.type}: ${result.error}`);
 

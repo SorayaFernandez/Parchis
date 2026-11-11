@@ -49,14 +49,14 @@ describe("página /partida/[id]: estados", () => {
 });
 
 describe("página /partida/[id]: partida en curso", () => {
-  it("versión 1: en curso, turno de Rosa, 16 fichas, los 4 personajes y sin jugadas; sin botón de tirar", () => {
+  it("versión 1: en curso, turno de Brava, 16 fichas, los 4 personajes y sin jugadas; sin botón de tirar", () => {
     const html = render(game(createGame([...CHARACTER_IDS])));
     expect(html).toContain("En curso");
     expect(html).toContain("Turno de");
     expect(html).not.toContain("Partida terminada");
     expect(html.match(/<title>Ficha /g)).toHaveLength(16);
-    for (const name of ["Rosa", "Morado", "Verde", "Azul"]) expect(html).toContain(name);
-    expect(html).toContain("Rosa puede lanzar el dado");
+    for (const name of ["Brava", "Don Ernesto", "Abuela Pilar", "Chispa"]) expect(html).toContain(name);
+    expect(html).toContain("Brava puede lanzar el dado");
     expect(html).toContain("Todavía no se ha jugado ningún turno.");
     expect(html).not.toContain("Lanzar dado");
   });
@@ -71,9 +71,9 @@ describe("página /partida/[id]: partida en curso", () => {
       game(moved.state, { version: 3, lastAction: { type: "move", playerId: "ai-pink", pieceIndex: 0 }, lastEvents: moved.events }),
     );
     expect(html).toContain("Ficha 1 rosa, en la casilla 39"); // posición real: salida de pink
-    expect(html).toContain("Rosa mueve la ficha 1");
-    expect(html).toContain("Rosa saca una ficha de casa");
-    expect(html).toContain("Azul puede lanzar el dado"); // turno siguiente
+    expect(html).toContain("Brava mueve la ficha 1");
+    expect(html).toContain("Brava saca una ficha de casa");
+    expect(html).toContain("Chispa puede lanzar el dado"); // turno siguiente
     expect(html).toContain("Dado: 5"); // último valor del dado
     expect(html).toContain(">3<"); // versión
   });
@@ -82,7 +82,7 @@ describe("página /partida/[id]: partida en curso", () => {
     const rolled = applyAction(createGame([...CHARACTER_IDS]), { type: "roll", playerId: "ai-pink", value: 5 });
     if (!rolled.ok) throw new Error(rolled.error);
     const html = render(game(rolled.state, { version: 2 }));
-    expect(html).toContain("Rosa elige ficha (4 posibles)");
+    expect(html).toContain("Brava elige ficha (4 posibles)");
     expect(html.match(/stroke="white"/g)).toHaveLength(4);
   });
 });
@@ -97,8 +97,8 @@ describe("página /partida/[id]: partida terminada", () => {
     };
     const html = render(game(state, { version: 646, finishedAt: "2026-11-11T00:59:07.109624+00:00" }));
     expect(html).toContain("Partida terminada");
-    expect(html).toMatch(/Gana.*Verde/);
-    for (const [place, name] of [["1º", "Verde"], ["2º", "Rosa"], ["3º", "Morado"], ["4º", "Azul"]]) {
+    expect(html).toMatch(/Gana.*Abuela Pilar/);
+    for (const [place, name] of [["1º", "Abuela Pilar"], ["2º", "Brava"], ["3º", "Don Ernesto"], ["4º", "Chispa"]]) {
       expect(html).toMatch(new RegExp(`${place}</span>.*?${name}`));
     }
     expect(html).not.toContain("En curso");
@@ -107,3 +107,39 @@ describe("página /partida/[id]: partida terminada", () => {
     expect(html).toContain("11/11/26, 1:59:07"); // finished_at en hora de Madrid
   });
 });
+
+describe("página /partida/[id]: chat", () => {
+  const message = (id: number, version: number, characterId: string, text: string, seq = 0) => ({
+    id, version, seq, characterId, trigger: "capture" as const, replyToSeq: seq === 0 ? null : 0, text, createdAt: "2026-11-11T00:00:00Z",
+  });
+
+  it("muestra los mensajes con nombre y color del personaje, la réplica y ningún campo de escritura", () => {
+    const g = game(createGame([...CHARACTER_IDS]), { version: 12 });
+    const html = renderToStaticMarkup(
+      <GameScreen
+        result={{ kind: "ok", game: g }}
+        messages={[message(1, 10, "ai-pink", "¡A casa, Chispa!"), message(2, 10, "ai-blue", "Vale, Brava. Pido el VAR.", 1)]}
+      />,
+    );
+    expect(html).toContain('aria-label="Chat de los personajes"');
+    expect(html).toContain('role="log"');
+    expect(html).toContain("¡A casa, Chispa!");
+    expect(html).toMatch(/responde a (<!-- -->)?Brava/);
+    expect(html).toContain("/pieces/pink-piece.png");
+    expect(html).not.toMatch(/<input|<textarea|Enviar/);
+  });
+
+  it("no adelanta mensajes de versiones que el tablero aún no ha mostrado", () => {
+    const g = game(createGame([...CHARACTER_IDS]), { version: 12 });
+    const html = renderToStaticMarkup(
+      <GameScreen result={{ kind: "ok", game: g }} messages={[message(1, 12, "ai-green", "Paso a paso se llega lejos."), message(2, 13, "ai-purple", "Mensaje del futuro")]} />,
+    );
+    expect(html).toContain("Paso a paso se llega lejos.");
+    expect(html).not.toContain("Mensaje del futuro");
+  });
+
+  it("sin mensajes: texto de espera", () => {
+    expect(render(game(createGame([...CHARACTER_IDS])))).toContain("Los personajes todavía no han dicho nada.");
+  });
+});
+

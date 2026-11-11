@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { GameScreen } from "@/components/game/GameScreen";
 import { GameLoading } from "@/components/game/GameStatus";
+import { loadChatMessages } from "@/lib/chat/load";
 import { loadGame } from "@/lib/game/load";
 import { checkRead } from "@/lib/security/guards";
 
@@ -27,7 +28,9 @@ async function GameLoader({ params }: { params: Promise<{ id: string }> }) {
       />
     );
   }
-  return <GameScreen result={await loadGame(id)} />;
+  // Partida y últimos mensajes del chat en paralelo; si el chat falla, la partida se muestra igual.
+  const [result, chat] = await Promise.all([loadGame(id), loadChatMessages(id)]);
+  return <GameScreen result={result} messages={chat.messages} chatPending={chat.pending} />;
 }
 
 /** Partida en modo espectador: carga inicial en el servidor y, después, en directo (LiveGame). */
