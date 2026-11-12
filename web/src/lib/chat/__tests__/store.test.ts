@@ -25,7 +25,7 @@ function fakeClient(result: Result) {
 
 const dbRow = (id: number) => ({
   id, game_id: GAME, version: 7, seq: 0, character_id: "ai-blue", trigger: "goal", reply_to_seq: null,
-  text: "¡Ficha en meta! ¡Gooool!", source: "local", created_at: "2026-11-11T10:00:00+00:00",
+  text: "¡Ficha en meta!", source: "local", created_at: "2026-11-11T10:00:00+00:00",
 });
 
 describe("ChatStore (Supabase)", () => {
