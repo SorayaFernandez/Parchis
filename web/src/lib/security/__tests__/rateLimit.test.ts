@@ -26,6 +26,7 @@ const {
   disabledLimiter,
   identifierFor,
   loadRules,
+  rateLimitPrefix,
   rateLimitResponse,
 } = await import("../rateLimit");
 const { createFakeLimiter } = await import("./fakeLimiter");
@@ -133,6 +134,37 @@ describe("adaptador de Upstash", () => {
     expect(identifier).not.toContain("203.0.113.7");
     expect(identifierFor(rule, "a")).not.toBe(identifierFor(rule, "b"));
   });
+
+  it("usa el prefijo indicado; sin indicarlo, el de Production (`parchis:rl`)", async () => {
+    limitMock.mockResolvedValue({ success: true, reset: 0 });
+    await createUpstashLimiter(redis, { prefix: "parchis:rl:preview" }).check(rule, "k");
+    await createUpstashLimiter(redis).check(rule, "k");
+    expect(constructed).toHaveLength(2);
+    expect(constructed[0]).toMatchObject({ prefix: "parchis:rl:preview" });
+    expect(constructed[1]).toMatchObject({ prefix: "parchis:rl" });
+    // El identificador (regla + hash) no cambia con el prefijo.
+    expect(limitMock.mock.calls[0][0]).toBe(limitMock.mock.calls[1][0]);
+  });
+});
+
+describe("rateLimitPrefix", () => {
+  it("Production conserva exactamente `parchis:rl`; cada otro entorno tiene el suyo", () => {
+    expect(rateLimitPrefix({ VERCEL: "1", VERCEL_ENV: "production" })).toBe("parchis:rl");
+    expect(rateLimitPrefix({ VERCEL: "1", VERCEL_ENV: "preview" })).toBe("parchis:rl:preview");
+    expect(rateLimitPrefix({ VERCEL: "1", VERCEL_ENV: "development" })).toBe("parchis:rl:development");
+  });
+
+  it("fuera de Vercel → local (aunque haya VERCEL_ENV)", () => {
+    expect(rateLimitPrefix({})).toBe("parchis:rl:local");
+    expect(rateLimitPrefix({ VERCEL_ENV: "production" })).toBe("parchis:rl:local");
+    expect(rateLimitPrefix({ VERCEL: "0", VERCEL_ENV: "production" })).toBe("parchis:rl:local");
+  });
+
+  it("VERCEL_ENV ausente o desconocido → unknown (nunca el de Production)", () => {
+    for (const value of [undefined, "", "Production", " production", "staging"]) {
+      expect(rateLimitPrefix({ VERCEL: "1", VERCEL_ENV: value })).toBe("parchis:rl:unknown");
+    }
+  });
 });
 
 describe("getRateLimiter", () => {
@@ -145,5 +177,22 @@ describe("getRateLimiter", () => {
     expect(errors).toHaveBeenCalledWith(expect.stringContaining("DESACTIVADO"));
     const limiter = fresh.getRateLimiter({ KV_REST_API_URL: "https://ejemplo.upstash.io", KV_REST_API_TOKEN: "token-ficticio-123" });
     expect(limiter.enabled).toBe(true);
+  });
+
+  it.each([
+    [{ VERCEL: "1", VERCEL_ENV: "production" }, "parchis:rl"],
+    [{ VERCEL: "1", VERCEL_ENV: "preview" }, "parchis:rl:preview"],
+    [{ VERCEL: "1", VERCEL_ENV: "development" }, "parchis:rl:development"],
+    [{}, "parchis:rl:local"],
+    [{ VERCEL: "1", VERCEL_ENV: "otro" }, "parchis:rl:unknown"],
+    [{ VERCEL: "1" }, "parchis:rl:unknown"],
+  ])("con credenciales y %j usa el prefijo %s", async (vercel, prefix) => {
+    vi.resetModules();
+    const fresh = await import("../rateLimit");
+    const limiter = fresh.getRateLimiter({ ...vercel, UPSTASH_REDIS_REST_URL: "https://ejemplo.upstash.io", UPSTASH_REDIS_REST_TOKEN: "token-ficticio-123" });
+    expect(limiter.enabled).toBe(true);
+    limitMock.mockResolvedValue({ success: true, reset: 0 });
+    await limiter.check(fresh.DEFAULT_RULES.create, "203.0.113.7");
+    expect(constructed.at(-1)).toMatchObject({ prefix, limiter: { limit: 5, window: "600 s" }, timeout: 1000, analytics: false });
   });
 });

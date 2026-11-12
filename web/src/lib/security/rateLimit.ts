@@ -85,8 +85,38 @@ export const disabledLimiter: RateLimiter = { enabled: false, check: async () =>
 export const identifierFor = (rule: RateLimitRule, key: string) =>
   `${rule.name}:${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 
-/** Limitador sobre Upstash. `timeoutMs`: pasado ese tiempo se considera que el proveedor no responde. */
-export function createUpstashLimiter(redis: Redis, { timeoutMs = 1000, now = Date.now } = {}): RateLimiter {
+/** Prefijo de Production (sin cambios: conserva sus claves y contadores). */
+export const PRODUCTION_PREFIX = "parchis:rl";
+
+/**
+ * Prefijo de las claves en Redis según el entorno, para que Preview, Development y local no compartan
+ * contadores con Production aunque usen la misma base de Upstash:
+ * Production → `parchis:rl`; Preview → `parchis:rl:preview`; Development → `parchis:rl:development`;
+ * fuera de Vercel (`VERCEL` ≠ "1") → `parchis:rl:local`; `VERCEL_ENV` desconocido o ausente →
+ * `parchis:rl:unknown` (nunca el de Production).
+ */
+export function rateLimitPrefix(env: Env): string {
+  if (env.VERCEL !== "1") return `${PRODUCTION_PREFIX}:local`;
+  switch (env.VERCEL_ENV) {
+    case "production":
+      return PRODUCTION_PREFIX;
+    case "preview":
+      return `${PRODUCTION_PREFIX}:preview`;
+    case "development":
+      return `${PRODUCTION_PREFIX}:development`;
+    default:
+      return `${PRODUCTION_PREFIX}:unknown`;
+  }
+}
+
+/**
+ * Limitador sobre Upstash. `timeoutMs`: pasado ese tiempo se considera que el proveedor no responde.
+ * `prefix`: prefijo de las claves en Redis (ver `rateLimitPrefix`).
+ */
+export function createUpstashLimiter(
+  redis: Redis,
+  { timeoutMs = 1000, now = Date.now, prefix = PRODUCTION_PREFIX }: { timeoutMs?: number; now?: () => number; prefix?: string } = {},
+): RateLimiter {
   const instances = new Map<string, Ratelimit>();
   const instanceFor = (rule: RateLimitRule) => {
     const id = `${rule.name}:${rule.limit}/${rule.windowSec}`;
@@ -95,7 +125,7 @@ export function createUpstashLimiter(redis: Redis, { timeoutMs = 1000, now = Dat
       instance = new Ratelimit({
         redis,
         limiter: Ratelimit.slidingWindow(rule.limit, `${rule.windowSec} s`),
-        prefix: `parchis:rl`,
+        prefix,
         timeout: timeoutMs, // al agotarse, Upstash deja pasar con reason "timeout": se trata como fallo
         analytics: false,
       });
@@ -145,7 +175,7 @@ export function getRateLimiter(env: Env = process.env): RateLimiter {
     }
     return disabledLimiter; // no se cachea: si se añaden las variables, se usará en el próximo arranque
   }
-  shared = createUpstashLimiter(new Redis({ url: parsed.data.url, token: parsed.data.token }));
+  shared = createUpstashLimiter(new Redis({ url: parsed.data.url, token: parsed.data.token }), { prefix: rateLimitPrefix(env) });
   return shared;
 }
 
