@@ -7,6 +7,7 @@ import { CHARACTER_NAMES, getCharacter } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "./config";
 import type { Random, Utterance } from "./director";
 import type { ChatSource } from "./schemas";
+import { detectCatchphrases } from "./catchphrases";
 
 export interface RecentText {
   speaker: PlayerId;
@@ -24,6 +25,11 @@ export interface ChatWriteRequest {
    * reciente). El escritor local agota las de un tipo antes de repetir ninguna.
    */
   usedLines?: readonly string[];
+  /**
+   * Coletillas que este personaje ya ha publicado en la partida (índices en `character.catchphrases`,
+   * del registro del director). El validador del LLM las rechaza; el escritor local las evita si puede.
+   */
+  usedCatchphrases?: readonly number[];
   /**
    * Se aborta cuando vence el tiempo de la llamada: un escritor con red (LLM) debe pasarlo a su
    * petición HTTP para cancelarla. Su resultado tardío se ignora.
@@ -137,16 +143,22 @@ export function validateChatText(text: string, recent: readonly RecentText[]): s
 /**
  * Escritor con las frases locales de cada personaje (sin coste ni red).
  * Entre las frases válidas (con sus datos y sin parecerse a los textos recientes de la partida),
- * elige al azar una que el personaje aún no haya usado; si ya las usó todas, la usada hace más tiempo.
+ * prefiere las que no contienen coletillas ya publicadas por el personaje y, entre ellas, elige al azar
+ * una que aún no haya usado; si ya las usó todas, la usada hace más tiempo.
  */
 export function createLocalWriter(random: Random): ChatWriter {
   return {
-    async write({ utterance, recent, usedLines = [] }) {
+    async write({ utterance, recent, usedLines = [], usedCatchphrases = [] }) {
       const lines = getCharacter(utterance.speaker)?.chat.lines[utterance.kind] ?? [];
-      const options = lines
+      const valid = lines
         .map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) }))
         .filter((o): o is { id: string; text: string } => o.text !== null && validateChatText(o.text, recent) === o.text);
-      if (options.length === 0) return null;
+      if (valid.length === 0) return null;
+      // Preferencia (no prohibición): frases sin coletillas que este personaje ya haya publicado. Si
+      // todas las válidas las tienen, se usan igualmente: el escritor local nunca se queda sin frase
+      // por esto (es la reserva del LLM y la garantía de la victoria).
+      const withoutUsed = valid.filter((o) => !detectCatchphrases(utterance.speaker, o.text).some((i) => usedCatchphrases.includes(i)));
+      const options = withoutUsed.length > 0 ? withoutUsed : valid;
 
       const fresh = options.filter((o) => !usedLines.includes(o.id));
       let pool = fresh;

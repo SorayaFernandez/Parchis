@@ -7,6 +7,7 @@ import type { Utterance } from "../../director";
 import { drainChat, type ChatDeps } from "../../service";
 import { createLocalWriter, type ChatWriteRequest } from "../../writer";
 import { createMemoryChatStore } from "../../__tests__/memoryChatStore";
+import { detectCatchphrases } from "../../catchphrases";
 import { logChatError } from "../../log";
 import { buildChatPrompt } from "../prompt";
 import {
@@ -598,6 +599,48 @@ describe("integración con drainChat", () => {
       expect(failure.detail).not.toContain("Despacito");
     }
     expect(memory.queue).toEqual([]);
+  });
+
+  it("registro de coletillas: cientos de versiones después, la coletilla de Pilar se rechaza y el rechazo no entra en el registro", async () => {
+    const memory = createMemoryChatStore();
+    const replies = [
+      "Despacito y buena letra, cariño: esa ficha, a su casita.", // v10, Pilar (LLM, aceptada)
+      "¡Vaya, qué mala pata la mía!", // v10, réplica de Chispa
+      "Despacito y buena letra, hijo. Quien ríe el último…", // v600, Pilar (repite la coletilla 0)
+      "Era cuestión de tiempo, señora.", // v600, réplica de Ernesto
+    ];
+    let call = 0;
+    const f = fakeFetch(() => completion(replies[call++] ?? "Sin más."));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const local = createLocalWriter(createSeededRandom(1));
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    const state = () => memory.chats.get(GAME)!.directorState as { recent: { speaker: string; text: string }[]; usedCatchphrases: Record<string, number[]> };
+
+    memory.enqueue(GAME, 10, [capture("ai-green", "ai-blue")], createGame([...CHARACTER_IDS]));
+    await drainChat(GAME, deps);
+    expect(memory.rows[0]).toMatchObject({ character_id: "ai-green", source: "llm" });
+    expect(state().usedCatchphrases["ai-green"]).toEqual([0]);
+    // Más de 12 mensajes locales (metas) entre medias: el texto de Pilar sale de la ventana de recientes.
+    // (Se procesan una a una: encoladas de golpe, las antiguas quedarían desfasadas y no hablarían.)
+    for (let i = 0; i < 14; i++) {
+      memory.enqueue(GAME, 20 + i * 4, [goal(CHARACTER_IDS[i % 4])], createGame([...CHARACTER_IDS]));
+      await drainChat(GAME, deps);
+    }
+    expect(memory.rows.filter((r) => r.trigger === "goal").length).toBeGreaterThan(12);
+    expect(state().recent.some((r) => r.text.startsWith("Despacito y buena letra, cariño"))).toBe(false);
+
+    memory.enqueue(GAME, 600, [capture("ai-green", "ai-purple")], createGame([...CHARACTER_IDS]));
+    await drainChat(GAME, deps);
+    const pilar600 = memory.rows.find((r) => r.version === 600 && r.character_id === "ai-green")!;
+    expect(pilar600.source).toBe("local"); // rechazada por el registro → frase local
+    expect(failures.some((e) => e.message === "expresión característica repetida" && e.detail?.startsWith("termino=Despacito y buena letra"))).toBe(true);
+    // El registro de Pilar solo refleja lo publicado: el texto rechazado (que también traía la coletilla 2) no cuenta.
+    const published = memory.rows.filter((r) => r.character_id === "ai-green").flatMap((r) => detectCatchphrases("ai-green", r.text));
+    expect(state().usedCatchphrases["ai-green"]).toEqual([...new Set(published)]);
+    expect(published.includes(2)).toBe(false);
+    expect(state().usedCatchphrases["ai-green"]).not.toContain(2);
   });
 
   it("si el LLM no responde, el tiempo máximo del servicio lo aborta y se usa el local, dentro de la reserva", async () => {

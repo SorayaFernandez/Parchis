@@ -220,6 +220,7 @@ async function writeUtterances(
       recent,
       replyToText: replyToSeq === null ? null : messages[replyToSeq].text,
       usedLines: director.usedLines[utterance.speaker] ?? [],
+      usedCatchphrases: director.usedCatchphrases[utterance.speaker] ?? [],
     };
     let written = minimal ? await deps.fallbackWriter.write(request) : await writeWithFallback(request, deps, lease);
     let text = written ? validateChatText(written.text, recent) : null;

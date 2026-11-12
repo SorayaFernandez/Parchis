@@ -720,3 +720,49 @@ describe("tiempo máximo del escritor principal: temporizador, reserva local y m
     expect(t.memory.rows.map((r) => [r.version, r.source])).toEqual([[2, "llm"], [2, "llm"], [5, "local"], [5, "local"]]);
   });
 });
+
+describe("registro de coletillas: persistencia, reintentos y confirmaciones parciales", () => {
+  const stateOf = (t: ReturnType<typeof setup>) => t.memory.chats.get(GAME)!.directorState as { usedCatchphrases: Record<string, number[]> };
+
+  it("se guarda con la confirmación; si una versión falla, solo cuenta lo confirmado y el reintento lo completa sin duplicar", async () => {
+    let calls = 0;
+    let phase = 1;
+    const texts: Record<number, Record<string, string>> = {
+      1: { "ai-pink": "¡A casa, Don Ernesto! Eso no ha sido nada.", "ai-purple": "Previsible, Brava." },
+      2: { "ai-pink": "¿Quién es el siguiente? Hoy reparto yo.", "ai-purple": "Todo según lo previsto, Brava." },
+    };
+    // El mismo escritor como principal y reserva: si falla, la versión falla entera (no hay fallback).
+    const writer: ChatWriter = {
+      async write({ utterance }) {
+        calls++;
+        if (phase === 1 && calls === 3) throw new Error("escritor caído");
+        return { text: texts[phase][utterance.speaker] ?? "Sin comentarios por ahora.", source: "local" };
+      },
+    };
+    const t = setup(writer, writer);
+    // Dos capturas cercanas (sin desfase) y sin racha: Brava captura en la v1 y Ernesto en la v12.
+    t.enqueue(1, [capture("ai-pink", "ai-purple")]);
+    t.enqueue(12, [capture("ai-purple", "ai-pink")]);
+    await t.drain();
+    // v1 confirmada (Brava: «¡A casa!» y «Eso no ha sido nada»; Ernesto: «Previsible»); v12 falló y sigue pendiente.
+    expect(t.versions()).toEqual([1]);
+    expect(stateOf(t).usedCatchphrases).toEqual({ "ai-pink": [0, 2], "ai-purple": [0] });
+    // Reintento: la v12 se publica y el registro se completa sin duplicados.
+    phase = 2;
+    await t.drain();
+    expect(t.versions()).toEqual([1, 12]);
+    expect(stateOf(t).usedCatchphrases).toEqual({ "ai-pink": [0, 2, 1], "ai-purple": [0, 1] });
+  });
+
+  it("un estado guardado sin `usedCatchphrases` (partida anterior al cambio) se sigue usando y gana el campo", async () => {
+    const t = setup();
+    const old = { lastMessageVersion: 5, lastSpokeAt: { "ai-green": 5 }, captures: [], recent: [{ speaker: "ai-green", text: "Hola, cariño." }], usedLines: {} };
+    t.memory.chats.set(GAME, { lastVersion: 0, messageCount: 1, directorState: old, lockToken: null, lockedUntil: null, lockedThrough: null });
+    t.enqueue(40, [capture("ai-pink", "ai-purple")]);
+    await t.drain();
+    const state = stateOf(t) as unknown as { usedCatchphrases: unknown; recent: { text: string }[] };
+    expect(state.usedCatchphrases).toBeTypeOf("object");
+    // No se ha reiniciado el estado: el texto reciente antiguo sigue ahí.
+    expect(state.recent[0]).toEqual({ speaker: "ai-green", text: "Hola, cariño." });
+  });
+});

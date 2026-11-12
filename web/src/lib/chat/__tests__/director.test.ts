@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createGame, type GameEvent, type GameState } from "@/lib/engine";
 import { createSeededRandom } from "@/lib/game/ai";
-import { CHARACTER_IDS } from "@/lib/game/characters";
+import { CHARACTERS, CHARACTER_IDS } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "../config";
-import { initialDirectorState, isChatCandidate, planChat, recordPublished, streakOf, type Random } from "../director";
-import type { DirectorState } from "../schemas";
+import { ambientCandidates, initialDirectorState, isChatCandidate, planChat, recordPublished, streakOf, type Random } from "../director";
+import { DirectorStateSchema, type DirectorState } from "../schemas";
 
 const [BRAVA, ERNESTO, PILAR, CHISPA] = CHARACTER_IDS;
 const game = (patch: Partial<GameState> = {}): GameState => ({ ...createGame([...CHARACTER_IDS]), ...patch });
@@ -205,5 +205,121 @@ describe("frecuencia, pausas y límites", () => {
     expect(director.lastSpokeAt[CHISPA]).toBe(20);
     expect(director.recent).toHaveLength(CHAT_LIMITS.recentTexts);
     expect(recordPublished(director, 21, [])).toBe(director);
+  });
+});
+
+describe("registro de coletillas por partida (usedCatchphrases)", () => {
+  it("registra, por personaje, las coletillas de lo publicado (del LLM o local), sin duplicados", () => {
+    let d = initialDirectorState();
+    expect(d.usedCatchphrases).toEqual({});
+    // Pilar (LLM, sin lineId) y Brava (local, con lineId) en la misma versión.
+    d = recordPublished(d, 327, [
+      { speaker: PILAR, text: "Despacito y buena letra, hijito, que la paciencia siempre gana la partida." },
+      { speaker: BRAVA, text: "¡A casa, Chispa!", lineId: "capture_boast:0" },
+    ]);
+    expect(d.usedCatchphrases).toEqual({ [PILAR]: [0], [BRAVA]: [0] });
+    // Cientos de versiones después, la misma coletilla no se duplica y se añade otra nueva.
+    d = recordPublished(d, 671, [{ speaker: PILAR, text: "Ay, hijo, qué prisas. Despacito y buena letra." }]);
+    expect(d.usedCatchphrases[PILAR]).toEqual([0, 1]);
+    // Palabras comunes y coletillas de otros no se registran.
+    d = recordPublished(d, 700, [{ speaker: CHISPA, text: "Vuelve a casa, Brava. Previsible." }]);
+    expect(d.usedCatchphrases[CHISPA]).toBeUndefined();
+  });
+
+  it("cada partida tiene su propio registro (estado puro, sin estado global)", () => {
+    const a = recordPublished(initialDirectorState(), 10, [{ speaker: ERNESTO, text: "Previsible, Chispa." }]);
+    const b = initialDirectorState();
+    expect(a.usedCatchphrases).toEqual({ [ERNESTO]: [0] });
+    expect(b.usedCatchphrases).toEqual({});
+    expect(recordPublished(b, 10, []).usedCatchphrases).toEqual({});
+  });
+
+  it("un estado guardado antes de existir el campo se lee con el registro vacío", () => {
+    const old = { lastMessageVersion: 40, lastSpokeAt: { [BRAVA]: 40 }, captures: [], recent: [], usedLines: {} };
+    expect(DirectorStateSchema.parse(old).usedCatchphrases).toEqual({});
+    expect(DirectorStateSchema.safeParse({ ...old, usedCatchphrases: { [BRAVA]: [-1] } }).success).toBe(false);
+  });
+});
+
+describe("ambiente: liderazgo y posiciones reales", () => {
+  const talkOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.talkativeness;
+  /** Partida con la ficha 0 de cada personaje en esos `steps` (los demás en casa). */
+  function withSteps(steps: Partial<Record<string, number>>): GameState {
+    const state = game();
+    for (const p of state.players) {
+      const st = steps[p.id];
+      if (st !== undefined) p.pieces[0] = { ...p.pieces[0], steps: st, state: "track" };
+    }
+    return state;
+  }
+  const byPlayer = (state: GameState) => {
+    const out: Record<string, string[]> = {};
+    for (const c of ambientCandidates(state)) (out[c.speaker] ??= []).push(`${c.kind}:${c.rival ?? "-"}`);
+    return out;
+  };
+  const weightsSumToTalkativeness = (state: GameState) => {
+    for (const id of CHARACTER_IDS) {
+      const total = ambientCandidates(state).filter((c) => c.speaker === id).reduce((n, c) => n + c.weight, 0);
+      expect(total, id).toBeCloseTo(talkOf(id));
+    }
+  };
+
+  it("primero en solitario: solo él lidera; segundo y tercero, neutral o «por detrás»; el último no nombra a un último", () => {
+    const state = withSteps({ [PILAR]: 40, [BRAVA]: 30, [ERNESTO]: 20, [CHISPA]: 10 });
+    expect(byPlayer(state)).toEqual({
+      [PILAR]: [`ambient_lead:${CHISPA}`],
+      [BRAVA]: [`ambient_ahead:${CHISPA}`, `ambient_behind:${PILAR}`],
+      [ERNESTO]: [`ambient_ahead:${CHISPA}`, `ambient_behind:${PILAR}`],
+      [CHISPA]: ["ambient_ahead:-", `ambient_behind:${PILAR}`],
+    });
+    weightsSumToTalkativeness(state);
+  });
+
+  it("empate en cabeza: nadie lidera, los empatados no dicen que van por detrás y no se nombra a un «primero»", () => {
+    const state = withSteps({ [BRAVA]: 40, [CHISPA]: 40, [ERNESTO]: 20, [PILAR]: 10 });
+    expect(byPlayer(state)).toEqual({
+      [BRAVA]: [`ambient_ahead:${PILAR}`],
+      [CHISPA]: [`ambient_ahead:${PILAR}`],
+      [ERNESTO]: [`ambient_ahead:${PILAR}`, "ambient_behind:-"],
+      [PILAR]: ["ambient_ahead:-", "ambient_behind:-"],
+    });
+    weightsSumToTalkativeness(state);
+  });
+
+  it("empate total (todos con el mismo progreso): solo frases neutrales, sin rival; la partida no se queda en silencio", () => {
+    const state = game();
+    const candidates = ambientCandidates(state);
+    expect(candidates.map((c) => `${c.speaker}:${c.kind}:${c.rival ?? "-"}`)).toEqual(CHARACTER_IDS.map((id) => `${id}:ambient_ahead:-`));
+    weightsSumToTalkativeness(state);
+    const quiet = { lastMessageVersion: 10, lastSpokeAt: {} };
+    const spoken = Array.from({ length: 50 }, (_, s) => plan(routine, { version: 100, state, director: quiet, random: createSeededRandom(s) }).utterances[0]);
+    expect(spoken.some(Boolean)).toBe(true);
+    expect(spoken.filter(Boolean).every((u) => u!.kind === "ambient_ahead" && u!.rival === null)).toBe(true);
+  });
+
+  it("empate en el último puesto: no se nombra a ningún «último»", () => {
+    const state = withSteps({ [BRAVA]: 40, [ERNESTO]: 20, [PILAR]: 10, [CHISPA]: 10 });
+    for (const c of ambientCandidates(state)) {
+      if (c.kind !== "ambient_behind") expect(c.rival, `${c.speaker} ${c.kind}`).toBeNull();
+    }
+    expect(byPlayer(state)[BRAVA]).toEqual(["ambient_lead:-"]);
+  });
+
+  it("los empates no favorecen a Brava por el orden de los jugadores: Brava y Chispa reciben lo mismo", () => {
+    const tied = withSteps({ [BRAVA]: 30, [CHISPA]: 30, [ERNESTO]: 10, [PILAR]: 10 });
+    const options = byPlayer(tied);
+    expect(options[BRAVA]).toEqual(options[CHISPA]);
+    expect(options[BRAVA]).not.toContain(expect.stringMatching(/^ambient_lead/));
+    // Igual al intercambiar sus progresos.
+    const swapped = withSteps({ [BRAVA]: 10, [CHISPA]: 10, [ERNESTO]: 30, [PILAR]: 30 });
+    expect(byPlayer(swapped)[ERNESTO]).toEqual(byPlayer(swapped)[PILAR]);
+  });
+
+  it("a través del director: con un líder en solitario, solo él usa `ambient_lead`", () => {
+    const state = withSteps({ [PILAR]: 40, [BRAVA]: 30, [ERNESTO]: 20, [CHISPA]: 10 });
+    const quiet = { lastMessageVersion: 10, lastSpokeAt: {} };
+    const kinds = Array.from({ length: 200 }, (_, s) => plan(routine, { version: 100, state, director: quiet, random: createSeededRandom(s) }).utterances[0]).filter(Boolean);
+    expect(kinds.some((u) => u!.kind === "ambient_lead")).toBe(true);
+    for (const u of kinds) if (u!.kind === "ambient_lead") expect(u!.speaker).toBe(PILAR);
   });
 });

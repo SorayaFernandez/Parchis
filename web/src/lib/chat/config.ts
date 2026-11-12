@@ -43,6 +43,11 @@ export const CHAT_LIMITS = {
    * cada personaje agota las frases de un tipo antes de repetir ninguna.
    */
   usedLinesPerCharacter: 40,
+  /**
+   * Coletillas registradas por personaje y partida (`DirectorState.usedCatchphrases`): índices de
+   * `character.catchphrases`, que tiene 3 por personaje. Es una cota de seguridad del esquema.
+   */
+  usedCatchphrasesPerCharacter: 10,
   /** Similitud (0-1, trigramas) a partir de la cual dos textos se consideran repetidos. */
   maxSimilarity: 0.6,
   /** Longitud máxima de un mensaje publicado. */
@@ -137,8 +142,9 @@ export const CHAT_LLM = {
    * Tamaño máximo del prompt (sistema + usuario, en caracteres) en el peor caso realista: réplica,
    * historial completo, textos propios recientes y todas las reglas. Antes la prueba usaba 1500 con un
    * caso corto; con las reglas de calidad (idioma, nombres, usted, coletillas, vocabulario y
-   * afirmaciones) el peor caso medido es de 2672 (Chispa, por su regla de comentarista); Don Ernesto,
-   * con su regla de usted, llega a 2602. Se deja un margen hasta el límite configurado de 2800: unos
+   * afirmaciones) y el estilo de cada personaje (`chat.voice`), el peor caso medido es de 2698 (Chispa,
+   * por su regla de comentarista); Don Ernesto, con su regla de usted, llega a 2613. Se deja un margen
+   * hasta el límite configurado de 2800: unos
    * 750 tokens de entrada, con un modelo gratuito y `max_tokens: 60`.
    */
   maxPromptChars: 2800,
