@@ -440,7 +440,8 @@ describe("respuestas del modelo", () => {
     expect(() => cleanLlmText("Don Ernesto: Previsible.", request())).toThrow(/otro personaje/);
     expect(() => cleanLlmText("¡A casa, Chispa! Y tú, Abuela Pilar, la siguiente.", request())).toThrow(/ajeno/);
     // Quien habla y su rival sí se pueden nombrar.
-    expect(cleanLlmText("Brava nunca falla, Chispa.", request())).toBe("Brava nunca falla, Chispa.");
+    // (Sin hablar de sí misma en tercera persona: ver quality.ts.)
+    expect(cleanLlmText("Soy Brava y nunca fallo, Chispa.", request())).toBe("Soy Brava y nunca fallo, Chispa.");
   });
 
   // Habla Don Ernesto y su rival es Abuela Pilar: Brava y Chispa son ajenas a la intervención.
@@ -480,9 +481,9 @@ describe("respuestas del modelo", () => {
   });
 
   it("quien habla y su rival se pueden nombrar; en la victoria (sin rival) solo el propio nombre", () => {
-    expect(cleanLlmText("Don Ernesto nunca se equivoca, Abuela Pilar.", ernesto())).toBe("Don Ernesto nunca se equivoca, Abuela Pilar.");
+    expect(cleanLlmText("Le habla Don Ernesto, Abuela Pilar: era previsible.", ernesto())).toBe("Le habla Don Ernesto, Abuela Pilar: era previsible.");
     const win = request({ utterance: utterance({ speaker: "ai-blue", kind: "victory_win", trigger: "victory", rival: null }) });
-    expect(cleanLlmText("¡Chispa gana, a toda velocidad!", win)).toBe("¡Chispa gana, a toda velocidad!");
+    expect(cleanLlmText("¡Victoria para Chispa, a toda velocidad!", win)).toBe("¡Victoria para Chispa, a toda velocidad!");
     expect(rejection("¡Gané! Brava, toma nota.", win)!.detail).toBe("nombre=Brava coincidencia=palabra forma=capitalizada");
   });
 });

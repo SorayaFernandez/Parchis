@@ -72,6 +72,19 @@ describe("personalidades y frases locales", () => {
   });
 });
 
+describe("concordancia de la frase de ambiente de Chispa (C)", () => {
+  it("«{rival} va a toda máquina» funciona con los cuatro nombres y ya no hay «va lanzado»", () => {
+    const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
+    const template = "{rival} va a toda máquina. Pero aquí hay partido.";
+    expect(chispa.chat.lines.ambient_behind).toContain(template);
+    expect(CHARACTERS.flatMap((c) => Object.values(c.chat.lines).flat()).some((l) => /lanzad[oa]/.test(l))).toBe(false);
+    for (const rival of CHARACTERS) {
+      const u = { speaker: "ai-blue", kind: "ambient_behind", rival: rival.id, trigger: "ambient", replyTo: null, important: false } as Utterance;
+      expect(renderLine(template, u)).toBe(`${CHARACTER_NAMES[rival.id]} va a toda máquina. Pero aquí hay partido.`);
+    }
+  });
+});
+
 describe("escritor local y antirrepetición", () => {
   it("renderLine sustituye {rival} y descarta la frase si falta el rival", () => {
     expect(renderLine("¡A casa, {rival}!", { rival: "ai-blue" })).toBe("¡A casa, Chispa!");
