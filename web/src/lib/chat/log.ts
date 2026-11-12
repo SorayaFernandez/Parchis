@@ -3,7 +3,7 @@
 // LLM añade su resumen saneado, que no forma parte del tipo: no multiplica los registros.
 
 import { SupabaseEnvError } from "@/lib/supabase/env";
-import { ChatLlmError } from "./llm/gatewayWriter";
+import { ChatLlmError, INVALID_RESPONSE_REASONS } from "./llm/gatewayWriter";
 import { ChatStoreError } from "./store";
 
 /** Un mismo tipo de error se registra como mucho una vez por minuto (p. ej., si faltan las tablas). */
@@ -19,6 +19,11 @@ export function logChatError(stage: string, error: unknown, now = Date.now()) {
   else if (error instanceof SupabaseEnvError) detail = "configuración de Supabase incorrecta";
   else if (error instanceof ChatLlmError) {
     detail = `LLM ${error.kind}${error.status ? ` (${error.status})` : ""}`;
+    // Motivo concreto del rechazo: solo si es uno de los textos fijos (conjunto cerrado, así que puede
+    // formar parte del límite por minuto sin multiplicar los registros).
+    if (error.kind === "invalid_response") {
+      detail += `: ${(INVALID_RESPONSE_REASONS as readonly string[]).includes(error.message) ? error.message : "motivo desconocido"}`;
+    }
     if (error.detail) extra = ` ${error.detail}`;
   } else detail = error instanceof Error ? error.name : "error desconocido";
   const key = `${stage}:${detail}`;

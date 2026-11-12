@@ -14,7 +14,9 @@ import {
   createGatewayWriter,
   createImportantOnlyWriter,
   createLlmBreaker,
+  describeCompletion,
   describeHttpError,
+  INVALID_RESPONSE_REASONS,
   redactSecrets,
   type LlmBreaker,
 } from "../gatewayWriter";
@@ -267,6 +269,119 @@ describe("diagnóstico de errores HTTP (resumen saneado)", () => {
     const html = writerWith(() => new Response("<html>x</html>", { status: 500, headers: { "content-type": "text/html" } }), { now: () => 0 });
     await expect(html.writer.write(request())).rejects.toMatchObject({ kind: "http", status: 500 });
     expect(html.breaker.blockedUntil).toBe(CHAT_LLM.serverErrorCooldownMs);
+  });
+});
+
+describe("diagnóstico de respuestas rechazadas (invalid_response)", () => {
+  const SECRET_TEXT = "Texto secreto generado por el modelo que nunca debe aparecer";
+  const REASONING = "Razonamiento interno del modelo que tampoco debe aparecer en el registro";
+  const body = (message: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    Response.json({ id: "x", model: MODEL, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", ...message } }], ...extra });
+  const rejectWith = async (response: Response) => {
+    const t = writerWith(() => response);
+    const error = await t.writer.write(request()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ChatLlmError);
+    expect(error).toMatchObject({ kind: "invalid_response" });
+    expect(t.breaker.blockedUntil).toBe(0); // sin corte temporal, como antes
+    expect(t.calls).toHaveLength(1);
+    return error as ChatLlmError;
+  };
+  const noLeaks = (text: string | undefined) => {
+    expect(text).toBeDefined();
+    for (const secret of [SECRET_TEXT, REASONING, "Secreto", "Razonamiento", KEY, "Eres", "Situación"]) expect(text).not.toContain(secret);
+  };
+
+  it("content null por agotar max_tokens razonando: finish_reason, razonamiento y usage, sin su texto", async () => {
+    const response = Response.json({
+      model: MODEL,
+      choices: [{ index: 0, finish_reason: "length", message: { role: "assistant", content: null, reasoning: REASONING, reasoning_content: REASONING } }],
+      usage: { prompt_tokens: 300, completion_tokens: 60, completion_tokens_details: { reasoning_tokens: 60 } },
+    });
+    const error = await rejectWith(response);
+    expect(error.message).toBe("respuesta sin texto");
+    expect(error.detail).toBe(
+      `choices=1 finish_reason=length content=null razonamiento=reasoning:string(${REASONING.length}),reasoning_content:string(${REASONING.length}) usage=completion_tokens=60 reasoning_tokens=60 model=${MODEL}`,
+    );
+    noLeaks(error.detail);
+  });
+
+  it("content en array de partes: se sigue rechazando (respuesta sin texto) y se anotan los tipos", async () => {
+    const error = await rejectWith(body({ content: [{ type: "text", text: SECRET_TEXT }, { type: "reasoning", text: REASONING }, { type: "Raro tipo" }] }));
+    expect(error.message).toBe("respuesta sin texto");
+    expect(error.detail).toContain("content=array(3:text,reasoning,?)");
+    noLeaks(error.detail);
+  });
+
+  it("textos rechazados: motivo correcto y solo longitud, líneas y <think>", async () => {
+    const long = await rejectWith(body({ content: `${SECRET_TEXT} ${"y".repeat(140)}` }));
+    expect(long.message).toBe("texto demasiado largo");
+    expect(long.detail).toContain(`content=string(${SECRET_TEXT.length + 141}) lineas=1 think=no`);
+    noLeaks(long.detail);
+    const think = await rejectWith(body({ content: `<think>\n${REASONING}\n</think>\n${SECRET_TEXT}` }));
+    expect(think.message).toBe("texto repetido o no válido");
+    expect(think.detail).toContain("lineas=4 think=sí");
+    noLeaks(think.detail);
+    const markdown = await rejectWith(body({ content: `**${SECRET_TEXT}**` }));
+    expect(markdown.message).toBe("formato no permitido");
+    noLeaks(markdown.detail);
+  });
+
+  it("valores no válidos de finish_reason, model, usage o tipos de parte → ? (nunca su contenido)", async () => {
+    const error = await rejectWith(
+      Response.json({
+        model: `Bearer ${KEY}`,
+        choices: [{ finish_reason: `stop ${SECRET_TEXT}`, message: { content: "" } }],
+        usage: { completion_tokens: "60 tokens", completion_tokens_details: { reasoning_tokens: -1 } },
+      }),
+    );
+    expect(error.message).toBe("texto vacío");
+    expect(error.detail).toBe("choices=1 finish_reason=? content=string(0) lineas=1 think=no razonamiento=ausente usage=completion_tokens=? reasoning_tokens=? model=?");
+    noLeaks(error.detail);
+    expect(describeCompletion(null)).toBe("choices=ausente finish_reason=ausente content=ausente razonamiento=ausente usage=ausente model=ausente");
+    expect(describeCompletion({ choices: "x" })).toContain("choices=string(1)");
+    expect(describeCompletion({ choices: [] })).toContain("choices=0 finish_reason=ausente content=ausente");
+  });
+
+  it("cada motivo de cleanLlmText es uno de los textos fijos que se registran", () => {
+    const reasons = new Set<string>();
+    for (const raw of [null, "Don Ernesto: hola", '""', "a".repeat(141), "**hola**", "Saluda a Abuela Pilar", "hola {rival}"]) {
+      try {
+        cleanLlmText(raw, request());
+      } catch (error) {
+        reasons.add((error as ChatLlmError).message);
+      }
+    }
+    expect(reasons.size).toBe(7);
+    for (const reason of reasons) expect(INVALID_RESPONSE_REASONS).toContain(reason);
+  });
+
+  it("el registro incluye el motivo y el resumen, sin texto del modelo, prompt ni clave; uno por minuto por motivo", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stage = "escritor LLM (prueba de invalid_response)";
+      const first = await rejectWith(body({ content: null, reasoning: REASONING }, { usage: { completion_tokens: 60 } }));
+      logChatError(stage, first, 7_000_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const line = String(spy.mock.calls[0][0]);
+      expect(line).toBe(
+        `[chat] ${stage}: LLM invalid_response: respuesta sin texto choices=1 finish_reason=stop content=null razonamiento=reasoning:string(${REASONING.length}) usage=completion_tokens=60 model=${MODEL}`,
+      );
+      noLeaks(line);
+      // Mismo motivo con otro resumen dentro del minuto: no se repite.
+      logChatError(stage, await rejectWith(body({ content: [] })), 7_010_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      // Otro motivo: sí se registra (conjunto cerrado de motivos).
+      const long = await rejectWith(body({ content: `${SECRET_TEXT} ${"y".repeat(140)}` }));
+      logChatError(stage, long, 7_020_000);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(String(spy.mock.calls[1][0])).toContain("LLM invalid_response: texto demasiado largo");
+      noLeaks(String(spy.mock.calls[1][0]));
+      // Un mensaje que no es un motivo conocido nunca se registra tal cual.
+      logChatError(stage, new ChatLlmError("invalid_response", SECRET_TEXT), 7_030_000);
+      expect(String(spy.mock.calls[2][0])).toBe(`[chat] ${stage}: LLM invalid_response: motivo desconocido`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

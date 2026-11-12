@@ -165,6 +165,86 @@ export async function describeHttpError(response: Response, apiKey?: string): Pr
   return parts.join(" ");
 }
 
+/**
+ * Motivos (textos fijos) con los que `cleanLlmText` rechaza una respuesta. Son los únicos mensajes de
+ * `invalid_response` que se registran: nunca contienen texto del modelo.
+ */
+export const INVALID_RESPONSE_REASONS = [
+  "respuesta sin texto",
+  "habla como otro personaje",
+  "texto vacío",
+  "texto demasiado largo",
+  "formato no permitido",
+  "nombra a un personaje ajeno a la intervención",
+  "texto repetido o no válido",
+  "respuesta no válida",
+] as const;
+
+const SAFE_WORD = /^[a-z_]{1,32}$/;
+const SAFE_MODEL = /^[a-z0-9._/-]{1,80}$/;
+const REASONING_FIELDS = ["reasoning", "reasoning_content", "reasoning_details"] as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const safeCount = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 1e9 ? String(value) : "?");
+
+/** Tipo y tamaño de un valor, sin su contenido: `string(12)`, `array(3)`, `null`, `object`, `ausente`… */
+function shape(value: unknown): string {
+  if (value === undefined) return "ausente";
+  if (value === null) return "null";
+  if (typeof value === "string") return `string(${value.length})`;
+  if (Array.isArray(value)) return `array(${value.length})`;
+  return typeof value === "object" ? "object" : typeof value;
+}
+
+/**
+ * Resumen SOLO estructural de una respuesta de Chat Completions, para diagnosticar un rechazo:
+ * número de `choices`, `finish_reason`, tipo y longitud de `content` (con el número de líneas, si
+ * empieza por `<think>` y, si es un array, los tipos de sus partes), presencia y longitud de los
+ * campos de razonamiento, `usage` (solo números) y `model` (solo con formato de id).
+ * Nunca incluye texto generado, razonamiento, prompt ni claves. Nunca lanza.
+ */
+export function describeCompletion(payload: unknown): string {
+  try {
+    const parts: string[] = [];
+    const root = isRecord(payload) ? payload : {};
+    const choices = root.choices;
+    parts.push(`choices=${Array.isArray(choices) ? choices.length : shape(choices)}`);
+    const choice = Array.isArray(choices) && isRecord(choices[0]) ? choices[0] : {};
+    const finish = choice.finish_reason;
+    parts.push(`finish_reason=${finish === undefined || finish === null ? shape(finish) : typeof finish === "string" && SAFE_WORD.test(finish) ? finish : "?"}`);
+
+    const message = isRecord(choice.message) ? choice.message : {};
+    const content = message.content;
+    if (Array.isArray(content)) {
+      const types = [...new Set(content.map((part) => (isRecord(part) && typeof part.type === "string" && SAFE_WORD.test(part.type) ? part.type : "?")))];
+      parts.push(`content=array(${content.length}:${types.slice(0, 5).join(",") || "-"})`);
+    } else {
+      parts.push(`content=${shape(content)}`);
+    }
+    if (typeof content === "string") {
+      parts.push(`lineas=${content.split(/\r?\n/).length}`);
+      parts.push(`think=${/^\s*<think>/i.test(content) ? "sí" : "no"}`);
+    }
+
+    const reasoning = REASONING_FIELDS.filter((name) => message[name] !== undefined).map((name) => `${name}:${shape(message[name])}`);
+    parts.push(`razonamiento=${reasoning.length > 0 ? reasoning.join(",") : "ausente"}`);
+
+    const usage = isRecord(root.usage) ? root.usage : null;
+    if (usage) {
+      const details = isRecord(usage.completion_tokens_details) ? usage.completion_tokens_details : {};
+      const reasoningTokens = details.reasoning_tokens === undefined ? "" : ` reasoning_tokens=${safeCount(details.reasoning_tokens)}`;
+      parts.push(`usage=completion_tokens=${safeCount(usage.completion_tokens)}${reasoningTokens}`);
+    } else {
+      parts.push("usage=ausente");
+    }
+    const model = root.model;
+    parts.push(`model=${model === undefined ? "ausente" : typeof model === "string" && SAFE_MODEL.test(model) ? model : "?"}`);
+    return parts.join(" ");
+  } catch {
+    return "resumen=ilegible";
+  }
+}
+
 const ALL_NAMES = Object.values(CHARACTER_NAMES);
 
 /**
@@ -256,7 +336,9 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       try {
         return { text: cleanLlmText(content, request), source: "llm" };
       } catch (error) {
-        return fail(error instanceof ChatLlmError ? error : new ChatLlmError("invalid_response", "respuesta no válida"));
+        // Mismo error, con un resumen solo estructural de la respuesta (nunca su texto) para el registro.
+        const base = error instanceof ChatLlmError ? error : new ChatLlmError("invalid_response", "respuesta no válida");
+        return fail(new ChatLlmError(base.kind, base.message, base.status, describeCompletion(payload)));
       }
     },
   };
