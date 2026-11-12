@@ -131,6 +131,17 @@ export const CHAT_LLM = {
   /** Textos recientes de la partida que se envían para no repetirlos (cada uno recortado). */
   recentTexts: 3,
   recentTextMaxChars: 100,
+  /** Textos propios recientes de quien habla que se envían para que no repita sus coletillas. */
+  ownRecentTexts: 2,
+  /**
+   * Tamaño máximo del prompt (sistema + usuario, en caracteres) en el peor caso realista: réplica,
+   * historial completo, textos propios recientes y todas las reglas. Antes la prueba usaba 1500 con un
+   * caso corto; con las reglas de calidad (idioma, nombres, usted, coletillas, vocabulario y
+   * afirmaciones) el peor caso medido es de 2672 (Chispa, por su regla de comentarista); Don Ernesto,
+   * con su regla de usted, llega a 2602. Se deja un margen hasta el límite configurado de 2800: unos
+   * 750 tokens de entrada, con un modelo gratuito y `max_tokens: 60`.
+   */
+  maxPromptChars: 2800,
   /** Corte temporal ante errores de configuración, autenticación, cuota o modelo (401, 402, 403, 404). */
   configErrorCooldownMs: 10 * 60_000,
   /** Corte ante 429 sin `Retry-After` válido. */

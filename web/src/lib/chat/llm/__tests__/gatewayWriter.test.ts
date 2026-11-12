@@ -571,6 +571,34 @@ describe("integración con drainChat", () => {
     expect(memory.queue).toEqual([]);
   });
 
+  it("regla de calidad (inglés): el diagnóstico lleva el término del catálogo y se usa la frase local una sola vez", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Despacito y buena letra. Who laughs last laughs best, secreto";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-purple", "ai-green")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ kind: "invalid_response", message: "idioma no permitido" });
+      expect(failure.detail).toMatch(/^termino=who laughs last choices=1 /);
+      expect(failure.detail).not.toContain("laughs best");
+      expect(failure.detail).not.toContain("secreto");
+      expect(failure.detail).not.toContain("Despacito");
+    }
+    expect(memory.queue).toEqual([]);
+  });
+
   it("si el LLM no responde, el tiempo máximo del servicio lo aborta y se usa el local, dentro de la reserva", async () => {
     const t = setup(() => "hang");
     t.deps.now = t.memory.clock;

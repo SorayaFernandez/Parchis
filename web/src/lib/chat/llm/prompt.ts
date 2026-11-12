@@ -5,6 +5,7 @@
 import type { PlayerId } from "@/lib/engine";
 import { CHARACTER_NAMES, getCharacter, type ChatLineKind } from "@/lib/game/characters";
 import { CHAT_LLM } from "../config";
+import { COMMENTATOR } from "./quality";
 import type { Utterance } from "../director";
 import { countWord, type ChatWriteRequest } from "../writer";
 
@@ -14,6 +15,10 @@ export interface PromptMessage {
 }
 
 const nameOf = (id: PlayerId | null) => (id ? (CHARACTER_NAMES[id] ?? id) : "");
+
+/** Papeles explícitos de una captura: quién gana la ficha y quién la pierde (evita contradicciones). */
+const youWin = (rival: string) => `Tú capturas y ${rival} pierde la ficha: no te lamentes ni digas que la mala suerte es tuya.`;
+const youLose = (rival: string) => `Tú pierdes la ficha y ${rival} la captura: no presumas ni digas que la mala suerte es de ${rival}.`;
 
 /** Qué acaba de pasar, en segunda persona, para cada tipo de intervención. */
 function situation(utterance: Utterance): string {
@@ -26,11 +31,11 @@ function situation(utterance: Utterance): string {
     : "";
   const byKind: Record<ChatLineKind, string> = {
     victory_win: "Acabas de terminar el primero: has ganado la partida (los demás siguen jugando por los otros puestos).",
-    victory_reply: `${rival} acaba de ganar la partida. Reaccionas a su victoria.`,
-    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa.`,
-    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa.`,
-    streak_boast: `Acabas de capturar una ficha de ${rival}.${streak}`,
-    streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted}`,
+    victory_reply: `${rival} acaba de ganar la partida, no tú. Reaccionas a su victoria.`,
+    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival)}`,
+    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival)}`,
+    streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival)}`,
+    streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted} ${youLose(rival)}`,
     third_six_self: "Has sacado tres seises seguidos y te han castigado.",
     third_six_tease: `${rival} ha sacado tres seises seguidos y le han castigado.`,
     goal: "Una de tus fichas acaba de llegar a la meta.",
@@ -50,21 +55,36 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   const character = getCharacter(utterance.speaker);
   if (!character) throw new Error("Personaje desconocido");
 
+  const names = utterance.rival ? `ti (${character.name}) y ${nameOf(utterance.rival)}` : `ti (${character.name})`;
   const system = [
     `Eres ${character.name}, un personaje de una partida de Parchís entre cuatro personajes de IA. ${character.title}.`,
     `Personalidad: ${character.personality}`,
     `Forma de hablar: ${character.chat.register}`,
-    `Expresiones tuyas (inspírate, no las copies siempre): ${character.catchphrases.join(" / ")}.`,
+    `Expresiones tuyas (son tu estilo; no las repitas literalmente): ${character.catchphrases.join(" / ")}.`,
     "Reglas:",
     `- Responde en español con UNA sola frase corta: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres.`,
     "- Ve directo a tu reacción, como si lo dijeras en voz alta en la mesa: sin saludos, introducciones, explicaciones ni resumen de la jugada.",
-    "- Escribe solo lo que dice el personaje: sin comillas, sin tu nombre delante, sin emojis, sin listas.",
+    "- Responde solo en español: ni palabras ni frases en otros idiomas.",
+    "- Escribe solo lo que dice el personaje, en primera persona: sin comillas, sin tu nombre delante, sin emojis, sin listas.",
+    `- Solo puedes nombrar a ${names}; a nadie más, tampoco con parte del nombre ni con apodos.`,
+    ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
+    "- No copies tus expresiones tal cual y nunca repitas las que acabas de decir.",
+    character.id === COMMENTATOR
+      ? "- Habla de parchís (fichas, dado, casa, meta, seguros, barreras). Como comentarista puedes usar metáforas deportivas (¡gol!, ¡golazo!), pero nunca reglas o situaciones de otros juegos (tres en raya, jaque, fuera de juego, penalti…)."
+      : "- Habla de parchís (fichas, dado, casa, meta, seguros, barreras), no de otros juegos ni deportes.",
+    "- No digas quién va ganando o perdiendo, quién va último o está a punto de ganar, ni hables de rachas, salvo que la situación lo diga. Sí puedes picar y retar.",
     "- Comenta solo los hechos que se te dan. No inventes números, fichas, casillas, jugadas ni a otros personajes.",
     "- Puedes picar o bromear, pero sin insultos ni groserías. Nunca menciones que eres una IA ni hables de las reglas del chat.",
   ].join("\n");
 
   const lines = [`Situación: ${situation(utterance)}`];
-  if (request.replyToText) lines.push(`Respondes a este mensaje: «${clip(request.replyToText)}»`);
+  if (request.replyToText) {
+    // En las réplicas, el rival es quien dijo el mensaje al que se responde (ver director.ts).
+    const author = utterance.rival ? nameOf(utterance.rival) : null;
+    lines.push(author ? `Respondes a lo que acaba de decir ${author}: «${clip(request.replyToText)}»` : `Respondes a este mensaje: «${clip(request.replyToText)}»`);
+  }
+  const own = request.recent.filter((r) => r.speaker === utterance.speaker).slice(-CHAT_LLM.ownRecentTexts);
+  if (own.length > 0) lines.push(`Ya has dicho hace poco (no lo repitas): ${own.map((r) => `«${clip(r.text)}»`).join(" ")}`);
   const recent = request.recent.slice(-CHAT_LLM.recentTexts);
   if (recent.length > 0) lines.push(`No repitas estas frases recientes: ${recent.map((r) => `«${clip(r.text)}»`).join(" ")}`);
   lines.push("Tu frase (una sola, corta y con tu estilo):");
