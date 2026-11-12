@@ -13,6 +13,7 @@ import { CHAT_LIMITS, CHAT_LLM } from "../config";
 import { validateChatText, type ChatWriteRequest, type ChatWriter, type WrittenText } from "../writer";
 import type { ChatLlmConfig } from "./env";
 import { buildChatPrompt } from "./prompt";
+import { QUALITY_REASONS, allowedNames, checkQuality, foreignAlias } from "./quality";
 
 export type ChatLlmErrorKind =
   /** Corte temporal activo: no se ha llamado. */
@@ -178,6 +179,7 @@ export const INVALID_RESPONSE_REASONS = [
   "nombra a un personaje ajeno a la intervención",
   "texto repetido o no válido",
   "respuesta no válida",
+  ...QUALITY_REASONS,
 ] as const;
 
 const SAFE_WORD = /^[a-z_]{1,32}$/;
@@ -287,7 +289,7 @@ export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
   if (text === "") throw new ChatLlmError("invalid_response", "texto vacío");
   if (text.length > CHAT_LLM.maxChars) throw new ChatLlmError("invalid_response", "texto demasiado largo");
   if (/https?:|www\.|[*#`@]/i.test(text)) throw new ChatLlmError("invalid_response", "formato no permitido");
-  const allowed = new Set([CHARACTER_NAMES[request.utterance.speaker], request.utterance.rival ? CHARACTER_NAMES[request.utterance.rival] : ""]);
+  const allowed = allowedNames(request);
   for (const { name, pattern } of NAME_PATTERNS) {
     if (allowed.has(name)) continue;
     const match = pattern.exec(text);
@@ -297,8 +299,18 @@ export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
       throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención", undefined, detail);
     }
   }
+  // Alias de personajes ajenos («Ernesto», «Pilar», «la abuela»…).
+  const alias = foreignAlias(text, allowed);
+  if (alias) {
+    throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención", undefined, `nombre=${alias.name} coincidencia=alias:${alias.alias}`);
+  }
   const valid = validateChatText(text, request.recent);
   if (valid === null) throw new ChatLlmError("invalid_response", "texto repetido o no válido");
+  // Calidad (después de todas las comprobaciones anteriores, que no cambian): idioma, nombres cruzados,
+  // usted de Don Ernesto, coletillas repetidas, ajeno al parchís y afirmaciones sin respaldo (ver
+  // quality.ts). El diagnóstico lleva el término del catálogo, nunca el texto del modelo.
+  const issue = checkQuality(valid, request);
+  if (issue) throw new ChatLlmError("invalid_response", issue.reason, undefined, `termino=${issue.term}`);
   return valid;
 }
 

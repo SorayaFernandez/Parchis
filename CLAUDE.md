@@ -28,10 +28,20 @@ Nueva versión del Parchís online: cuatro personajes controlados por IA juegan 
 
 ### Reglas implementadas
 
-- Se sale de casa con un 5 y se captura a una ficha rival en la propia salida. En la salida caben como máximo 2 fichas.
-- Las barreras (2 fichas del mismo color) no se pueden atravesar ni ocupar, sean propias o rivales. Con un 6 es obligatorio abrir una barrera propia.
-- Se captura en casillas normales; nunca en casillas seguras ni en barreras. Si hay varias fichas candidatas, se captura la que llegó la última.
-- Máximo 2 fichas en una casilla segura y 4 en una casilla normal.
+- **Ocupación:** como máximo 2 fichas en cualquier casilla del recorrido (segura o normal).
+- **Barreras** (`getBlockades` en `board.ts`; el pasillo final, la casa y la meta no cuentan):
+  - En una casilla normal, 2 fichas del mismo color. Dos fichas de distinto color en una casilla normal no son barrera.
+  - En una casilla segura, 2 fichas de cualquier color (iguales o distintos). La de dos colores tiene `color: null`.
+  - Ninguna ficha, de ningún color (tampoco las de quienes la forman), puede atravesar una barrera ni caer en ella (`BLOCKADE_IN_PATH`). Una barrera en la entrada del pasillo impide entrar en él.
+  - Una ficha que forma parte de una barrera puede salir de su casilla y la rompe.
+  - En el original solo había barreras del mismo color y cabían 4 fichas en una casilla normal.
+- **Salida de casa con un 5** (regla propia, prevalece sobre la de barreras):
+  - Si hay fichas en casa y alguna puede salir, es **obligatorio** sacar una: con el 5 solo se ofrecen salidas (`MUST_EXIT_HOME` si se intenta otra jugada). Si ninguna puede salir, el 5 se juega con normalidad.
+  - No se puede salir si ya hay 2 fichas propias en la salida (`OWN_BLOCKADE_ON_EXIT`).
+  - Con una ficha propia, sale (barrera propia). Con una rival, o con una propia y una rival, sale y captura a la rival. Con dos fichas de otros colores (iguales o distintos), sale y captura a la que llegó la última (mayor `arrivalOrder`). Una barrera de dos colores en la salida no impide salir. Nunca quedan más de 2.
+- **Con un 6, obligación de abrir barreras:** si alguna jugada legal abre una barrera en la que participa una ficha propia (del mismo color o de dos colores en un seguro), solo se ofrecen esas jugadas (`MUST_BREAK_BLOCKADE` si se intenta otra). Si ninguna se puede abrir, se aplican las reglas normales del 6. Nunca obliga a abrir barreras formadas solo por rivales.
+- Las dos obligaciones están en `getLegalMoves` (`moves.ts`), la única fuente de movimientos legales: la usan `getAvailableMoves` (y con ella la IA), la validación de `applyAction` y la concesión de bonus. Los bonus (+10/+20) no son ni 5 ni 6, así que no les afecta ninguna.
+- Se captura en casillas normales; nunca en casillas seguras ni en barreras (salvo al salir de casa). Si hay varias fichas candidatas, se captura la que llegó la última: la de mayor `arrivalOrder`, que se asigna con `moveCounter` cada vez que una ficha se mueve (mismo criterio que el original).
 - Para llegar a la meta hace falta la tirada exacta.
 - Bonus: +20 por captura y +10 por llegar a la meta. Se juegan antes de volver a tirar, se pueden encadenar y se pierden si ninguna ficha puede usarlos.
 - Con un 6 se vuelve a tirar. Si el bonus venía de un movimiento con 6, también se vuelve a tirar después de usarlo.
@@ -42,9 +52,7 @@ Nueva versión del Parchís online: cuatro personajes controlados por IA juegan 
 
 Ninguna de estas reglas existía en el original; no se ha inventado nada.
 
-- **Salida obligatoria con 5:** no implementada. Con un 5 se puede sacar ficha, pero no es obligatorio.
 - **Contar 7 con un 6 cuando todas las fichas están fuera:** no implementado.
-- **Barrera que no se puede abrir:** con un 6 y una barrera propia bloqueada, el jugador se queda sin movimientos aunque otra ficha pudiera moverse. Es el comportamiento original y está documentado en una prueba.
 - **Tercer 6:** devuelve a casa la última ficha movida aunque esté en el pasillo final o en la meta (como en el original).
 
 ## Tablero visual
@@ -75,7 +83,7 @@ Solo dibuja el `GameState` del motor; no contiene reglas. Todo se dibuja en un �
 - `demo.ts`:
   - `DEMO_PLAYER_IDS` / `DEMO_PLAYER_NAMES`: jugadores con nombres provisionales hasta tener los personajes de IA.
   - `createDemoGame()`: partida nueva con esos jugadores.
-  - `createShowcaseState()`: estado de ejemplo con un caso de cada (casa, salida, barrera, dos colores en un seguro, pasillos y meta).
+  - `createShowcaseState()`: estado de ejemplo con un caso de cada (casa, salida, barrera, dos colores en un seguro —también barrera—, pasillos y meta).
 
 ### `src/components/board/`
 
@@ -209,7 +217,7 @@ Ninguno usa hooks; reciben los datos ya calculados.
     - `release(id, token)`.
     - `55P03` (reserva vigente o caducada) o 0 filas → `null`, que el servicio trata como conflicto.
   - `ai.ts` (puro): IA heurística sin LLM, con el perfil de cada personaje (ver "Personajes").
-    - `scoreMove(state, i, strategy?)`: simula cada jugada legal con `applyAction` (sin duplicar reglas) y puntúa con `AI_WEIGHTS` × multiplicadores del perfil. Pesos base: captura 1000, meta 800, salir de casa 400, entrar al pasillo 250, casilla segura 120, +1 por casilla, −150 por cada rival a 1-6 casillas detrás, +60 por barrera propia y +30 por cada rival capturable a 1-6 casillas delante (caza). Por defecto, el perfil del jugador en turno.
+    - `scoreMove(state, i, strategy?)`: simula cada jugada legal con `applyAction` (sin duplicar reglas) y puntúa con `AI_WEIGHTS` × multiplicadores del perfil. Pesos base: captura 1000, meta 800, salir de casa 400, entrar al pasillo 250, casilla segura 120, +1 por casilla, −150 por cada rival a 1-6 casillas detrás, +60 por barrera propia (dos fichas propias en una casilla normal) y +30 por cada rival capturable a 1-6 casillas delante (caza). Por defecto, el perfil del jugador en turno.
     - `chooseMove(state, moves, { strategy?, random? })`: solo considera índices que también devuelve `getAvailableMoves` (si no queda ninguno, lanza un error). Sin azar: la mejor jugada, con desempate por el índice más bajo.
     - `candidateMoves` y `createSeededRandom` (mulberry32, para pruebas).
     - `decideAction(state, rollDie, random?)`: sin dado ni bonus → `roll` con el valor de `rollDie`; con dado o bonus → `move`; sin movimientos legales (estado anómalo) → `timeout`.
@@ -227,6 +235,7 @@ Ninguno usa hooks; reciben los datos ya calculados.
 - Página `/partida/[id]` (`src/app/partida/[id]/page.tsx`): partida guardada en modo espectador, **leída en el servidor** (Partial Prerender).
   - La página no es async: el componente async `GameLoader` (`await params` + `loadGame`) va dentro de `<Suspense fallback={<GameLoading />}>`. La cabecera y el esqueleto son estáticos y la partida llega en streaming.
   - El HTML ya trae la partida (carga inicial siempre en el servidor). La clave secreta no sale del servidor.
+  - `GameLoader` lee `headers()` y después hace `await connection()` antes del límite de lectura (`checkRead`) y de la carga. Con `cacheComponents`, `headers()` también se resuelve al prerenderizar el App Shell de la ruta; sin `connection()`, el limitador (y el `Date.now()` de Upstash) se ejecutaba durante el prerender y Next.js lo avisaba. El límite se sigue aplicando en cada petición real.
   - Después, **en directo** (ver "Partida en directo"): el navegador la hace avanzar y la sigue por Realtime.
   - `src/components/game/`:
     - `GameScreen.tsx`: decide qué mostrar según `LoadGameResult`; con `ok` renderiza `LiveGame`.
@@ -473,7 +482,7 @@ Los personajes comentan los acontecimientos **reales** de la partida. El especta
   - Tres seises sin ficha devuelta: ninguno de sus mensajes menciona la casa.
 - **Auditoría:** todos los puntos resueltos. M3: el SQL se ha ejecutado en Supabase y el chat se ha comprobado en producción (Vercel).
 
-## Fase 8.2b: textos con LLM (Vercel AI Gateway) — implementado, desactivado
+## Fase 8.2b: textos con LLM (Vercel AI Gateway) — implementado; probado en Preview, desactivado en Production
 
 El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimientos, dados, turnos ni resultados (eso sigue en el motor y la IA heurística). El director, la cola, las reservas, el SQL y el navegador no cambian.
 
@@ -495,36 +504,78 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   - Si no, queda desactivado con un motivo: `off`, `not_preview`, `missing_key`, `missing_model`, `model_not_allowed`, `invalid_provider` o `public_secret`. Este último salta si existe `NEXT_PUBLIC_AI_GATEWAY_API_KEY` o `NEXT_PUBLIC_CHAT_LLM_API_KEY`, aunque el LLM no esté activado.
   - Orden de las comprobaciones: `public_secret` → `off` → `not_preview` → clave → modelo → proveedor. `chatWriters` registra (sin valores) cualquier motivo salvo `off`.
 - `src/lib/chat/llm/prompt.ts` (puro): `buildChatPrompt(request)`.
-  - **Sistema:** quién es el personaje (nombre, arquetipo, personalidad, registro y expresiones) y las reglas: español, una o dos frases, 140 caracteres como máximo, solo los hechos dados, sin insultos y sin mencionar que es una IA.
-  - **Usuario:** la situación del tipo de intervención (con el rival y la racha reales), el mensaje al que responde y los 3 últimos textos de la partida (recortados a 100 caracteres) para no repetirlos.
-  - Nunca el estado de la partida ni identificadores internos (menos de 1500 caracteres en total).
+  - **Sistema:** quién es el personaje (nombre, arquetipo, personalidad, forma de hablar y expresiones; sin cambios en `characters.ts`) y las reglas:
+    - Español, una sola frase corta: como mucho 18 palabras y menos de 120 caracteres (`CHAT_LLM.promptMaxWords`/`promptMaxChars`), por debajo del límite de validación de 140. Directa, sin saludos, introducciones, explicaciones ni resumen de la jugada.
+    - Solo en español, sin palabras ni frases en otros idiomas; en primera persona.
+    - Solo puede nombrar a quien habla y a su rival («Solo puedes nombrar a ti (X) y Y»), tampoco con parte del nombre ni con apodos.
+    - Solo Don Ernesto: tratar siempre de usted (usted, su, le), nunca tutear.
+    - Sus expresiones son su estilo, pero no debe copiarlas tal cual ni repetir las que acaba de decir.
+    - Hablar de parchís (fichas, dado, casa, meta, seguros, barreras). Brava, Don Ernesto y Abuela Pilar: «no de otros juegos ni deportes». Chispa (comentarista): puede usar metáforas deportivas («¡gol!», «¡golazo!»), pero nunca reglas o situaciones de otros juegos (tres en raya, jaque, fuera de juego, penalti…).
+    - No decir quién va ganando o perdiendo, quién va último o está a punto de ganar, ni hablar de rachas, salvo que la situación lo diga; sí puede picar y retar.
+    - Solo los hechos dados, sin insultos y sin mencionar que es una IA.
+  - **Usuario:**
+    - La situación del tipo de intervención, con el rival y la racha reales y los **papeles explícitos** en capturas y rachas: «Tú capturas y Y pierde la ficha: no te lamentes…» o «Tú pierdes la ficha y Y la captura: no presumas…». En la victoria ajena, «Y acaba de ganar la partida, no tú».
+    - En las réplicas, a quién responde: «Respondes a lo que acaba de decir Y: «…»» (el rival de una réplica es siempre quien dijo el mensaje; ver `director.ts`).
+    - Los 3 últimos textos de la partida y los 2 últimos del propio personaje (`CHAT_LLM.ownRecentTexts`), recortados a 100 caracteres, para no repetirlos.
+    - Termina con «Tu frase (una sola, corta y con tu estilo):».
+  - Nunca el estado de la partida ni identificadores internos.
+  - **Tamaño:** como máximo `CHAT_LLM.maxPromptChars` (2800 caracteres, sistema + usuario). El peor caso realista medido (réplica, historial completo de textos largos, textos propios y todas las reglas) es de 2672, con Chispa por su regla de comentarista (Don Ernesto, 2602). Son unos 750 tokens de entrada, con un modelo gratuito y `max_tokens: 60`. El límite anterior (1500) se medía con un caso corto y ya no es realista con las reglas de calidad.
 - `src/lib/chat/llm/gatewayWriter.ts`: `createGatewayWriter({ config, fetch, breaker, now?, onFailure? })`.
-  - **Petición:** una por intervención, sin reintentos. Cuerpo: `model`, `messages`, `max_tokens: 60`, `temperature: 0.8` y `stream: false`.
+  - **Petición:** una por intervención, sin reintentos. Cuerpo: `model`, `messages`, `max_tokens: 60`, `temperature: 0.8`, `stream: false` y `reasoning_effort: "none"` (en la raíz del cuerpo).
+    - `reasoning_effort: "none"` desactiva el razonamiento de Nemotron: sin él, gastaba los 60 tokens razonando y devolvía `content` vacío (`finish_reason=length`). `chat_template_kwargs.enable_thinking` no tuvo efecto a través de AI Gateway.
     - Sin `models`: AI Gateway no cambia a otro modelo.
     - Con `CHAT_LLM_PROVIDER`, `providerOptions.gateway.only`: tampoco cambia de proveedor.
     - La clave va solo en la cabecera.
   - **Cancelación:** `AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)])`, con `timeoutMs` acotado a 8 s. Respeta la cancelación del servicio y su propio plazo.
-  - **Respuesta:** `cleanLlmText` toma la primera línea, quita comillas y un prefijo con el nombre de quien habla, y exige:
+  - **Respuesta:** `cleanLlmText` toma la primera línea, quita comillas y un prefijo con el nombre de quien habla, y exige, en este orden:
     - Como mucho 140 caracteres (si es más larga, se rechaza; no se corta).
     - Sin URL ni formato.
-    - Solo los nombres de quien habla y su rival.
+    - Solo los nombres de quien habla y su rival, como palabra completa (límites Unicode: «bravata» o «chispazo» no cuentan), y tampoco los alias de los demás (ver `quality.ts`).
     - Que pase `validateChatText` (repeticiones).
+    - Que pase las comprobaciones de calidad de `quality.ts` (`checkQuality`). Van después de todas las anteriores, que no cambian.
   - **Cualquier problema lanza `ChatLlmError`** (`cooldown`, `http` con `status`, `network`, `aborted` o `invalid_response`), y el servicio usa la frase local.
   - **Corte temporal**, en memoria del proceso y compartido (`createLlmBreaker`); mientras dura, falla al instante sin llamar:
     - 401, 402, 403 y 404: 10 min.
     - 429: `Retry-After` en segundos si es válido (máximo 1 h); si no, 60 s.
     - 5xx: 30 s.
     - 400, red y abortos: sin corte.
-  - **Registro:** `onFailure` → `logChatError("escritor LLM")`: solo el tipo y el código HTTP, como mucho una vez por minuto, nunca la clave, el prompt ni la respuesta.
+  - **Registro:** `onFailure` → `logChatError("escritor LLM")`, como mucho una vez por minuto por tipo (y, en `invalid_response`, por motivo). Nunca la clave, la cabecera `Authorization`, el prompt, el texto del modelo ni su razonamiento. Incluye:
+    - El tipo y el código HTTP.
+    - En `invalid_response`, el motivo del rechazo (solo uno de los textos fijos de `INVALID_RESPONSE_REASONS`) y un resumen estructural saneado de la respuesta (`describeCompletion`): `finish_reason`, tipo y longitud de `content`, líneas, razonamiento presente y su longitud, `usage` y `model`. Si nombra a un personaje ajeno, también el nombre del catálogo y la coincidencia: la forma, si es el nombre completo, o `alias:<alias>`. En las reglas de calidad, `termino=<término de la lista>`.
+    - En errores HTTP, un resumen saneado (`describeHttpError`, cuerpo leído como mucho 2 KB): `content-type`, `x-vercel-id` y `error.type`/`code`/`message`, con la clave, `Bearer …` y las cadenas con aspecto de token enmascaradas.
+- `src/lib/chat/llm/quality.ts` (puro): comprobaciones de calidad, a partir de los problemas de la partida de Preview `707c3c6d…`. Cada una devuelve un motivo fijo (`QUALITY_REASONS`, incluidos en `INVALID_RESPONSE_REASONS`) y el término de su propia lista que coincidió, nunca el texto del modelo.
+  - **Idioma** (`idioma no permitido`): una expresión inglesa inequívoca («who laughs last», «game over», «let's go»…), una contracción («it's», «don't»…) o dos palabras inglesas distintas de una lista sin ambigüedades. Una palabra suelta como «game» no basta.
+  - **Alias:** «Ernesto» es Don Ernesto y «Pilar» es Abuela Pilar. «abuela» solo cuenta como Abuela Pilar cuando el contexto la identifica («la abuela», «¡Abuela!», «abuela,»), no en usos genéricos («mi abuela», «una abuela», «como abuela»). Un alias de quien no participa se rechaza como `nombra a un personaje ajeno a la intervención`.
+  - **Nombres cruzados** (`mezcla nombres de personajes`): un tratamiento delante del nombre de otro personaje («la abuela Brava», «don Chispa», «doña Brava»), aunque los dos participen.
+  - **Usted** (`tutea (Don Ernesto)`): solo si habla Don Ernesto, marcas de tuteo como palabra completa (tú, tu, te, ti, contigo, eres, estás, tienes, has, vas…), distinguiendo tildes («estas fichas» no es tuteo). Se ignoran las citas entre comillas y lo que sigue a «dice:».
+  - **Coletillas** (`expresión característica repetida`): una expresión característica copiada como frase propia («¡A casa, …!», pero no «vuelve a casa») solo se rechaza si ese mismo personaje ya la usó en el historial reciente (los 12 textos de `recent`). Si la dijo otro, no cuenta.
+  - **Ajeno al parchís** (`expresión ajena al parchís`):
+    - Reglas o situaciones de otros juegos (`OTHER_GAMES`), prohibidas para todos: tres en raya, jaque mate (antes que «jaque», para informar del término más específico), jaque, ajedrez, fuera de juego, penalti, tarjeta roja, naipes, ruleta, bingo, la oca…
+    - Metáforas deportivas de comentarista (`SPORTS_METAPHORS`: gol, golazo, por la escuadra, triple, canasta, fútbol, baloncesto, tenis): **solo las puede usar Chispa** (`COMMENTATOR`, también usado por el prompt), por su forma de hablar de comentarista. Sus frases locales ya las usan, como «¡Golazo por la escuadra!».
+  - **Afirmaciones sin respaldo** (`afirmación no respaldada`):
+    - «racha», «seguidas» o «seguidos» solo si el disparador es `capture_streak` o `bad_streak`, así que la réplica dentro de una racha también puede usarlas.
+    - Eliminación («estás fuera», «eliminada»), posición («voy ganando», «vas el último», «a punto de ganar»).
+    - El resultado («he ganado», «ha perdido la partida») solo en la victoria.
+    - Se aceptan las expresiones de competición («Voy a por ti», «Esta partida es mía») y los hechos de la captura («Has perdido una ficha»).
+  - Ninguna de las 119 frases locales de capturas, rachas y victoria de los cuatro personajes incumple estas reglas.
 - **Reserva local garantizada** (sin cambios en el servicio ni en las reservas):
   - El servicio aplica su tiempo máximo (≤ 8 s y respetando el margen de 3 s) y su `AbortSignal`.
   - Si el escritor LLM lanza un error o agota el tiempo, se usa el escritor local una sola vez.
   - La victoria en modo mínimo, y cuando todas sus frases "se repiten", va directamente al local.
-- **Comprobado** (pruebas, sin llamar a la API real):
+- **Comprobado con pruebas automáticas** (LLM simulado, sin llamar a la API real):
   - Con un LLM simulado que falla (402, 500, red o respuesta inválida), que se cuelga o que está caído, cada mensaje se publica con la frase local.
   - La cola se vacía y la reserva se libera; si se cuelga, el aborto llega dentro del margen.
   - En partidas completas con un LLM inestable: victoria siempre, sin duplicados, LLM solo en lo importante y exactamente una petición HTTP por texto pedido.
   - El navegador no recibe la URL, la clave ni el modelo (comprobado en `.next/static` tras el build).
+- **Pruebas reales en Preview** (con `CHAT_LLM_ENABLED`, la clave, el modelo y `CHAT_LLM_PROVIDER=nvidia` configurados solo en Preview):
+  - Un 403 inicial de AI Gateway quedó resuelto.
+  - Nemotron gastaba los 60 tokens razonando (`finish_reason=length`, `reasoning_tokens=60`, `content` vacío); con `reasoning_effort: "none"` genera texto sin razonamiento.
+  - En Supabase, 7 de 12 mensajes de una partida se guardaron con `source = 'llm'` y el resto con la frase local.
+  - Rechazos vistos en los registros: `texto demasiado largo` (de ahí el prompt de una sola frase de menos de 120 caracteres) y `nombra a un personaje ajeno a la intervención` (de ahí la búsqueda de nombres como palabra completa).
+  - Partida `707c3c6d-98c4-4069-9f32-ea2b4aaea4a1`: 25 mensajes, 11 del LLM (todos en capturas y rachas) y 14 locales.
+    - Un `LLM aborted` a las 17:05:19 fue el tiempo máximo de 8 s de la llamada; la réplica se publicó una vez con la frase local.
+    - Problemas del LLM: una frase en inglés, «la abuela Brava», «racha» en una captura simple, Don Ernesto tuteando, coletillas copiadas, «tres en raya» y «ya casi estás fuera». De ahí las reglas del prompt y de `quality.ts`.
+  - **Pendiente de comprobar en Preview:** el prompt corto y las reglas de calidad.
 - **Antes de activarlo en producción (manual):**
   1. Verificar que Upstash funciona en producción (ver "Seguridad"). Sin límite de creación de partidas, cualquiera podría crear y hacer avanzar partidas y consumir llamadas.
   2. En AI Gateway: un presupuesto (Budget) para el proyecto o la clave (al superarlo, 402 → frase local) y la recarga automática desactivada.
@@ -532,7 +583,11 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   4. Configurar las variables en Vercel y, cuando se decida activarlo, `CHAT_LLM_ENABLED=true` en el entorno Preview (en Production el código no lo activa: `not_preview`).
   5. Probar primero en un despliegue de prueba: mensajes con `source = 'llm'` en `game_messages`, registros `[chat] escritor LLM` y el consumo en el panel de AI Gateway.
 - **Límites conocidos:**
-  - La comprobación de nombres puede rechazar frases válidas que usen "brava" o "chispa" como palabra común (entonces se usa la frase local).
+  - La comprobación de nombres puede rechazar frases válidas que usen «brava» o «chispa» como palabra suelta, o «la abuela» en sentido genérico cuando Abuela Pilar no participa (entonces se usa la frase local).
+  - Las contradicciones de papeles (quién captura y quién pierde) solo se mitigan con el prompt; las reglas detectan los casos con marcas claras («racha», nombres cruzados).
+  - Las listas de inglés, otros juegos y afirmaciones son cerradas: no cubren todas las variantes.
+  - La memoria de coletillas es de 12 textos (`recent`); para recordar más habría que ampliar el estado del director.
+  - Cada respuesta rechazada consume su llamada y se sustituye por la frase local; conviene vigilar en Preview la proporción `llm`/`local`.
   - No se puede validar que el modelo no invente algún dato; lo limitan el prompt y la comprobación.
   - Cada proceso de Vercel tiene su propio corte temporal.
   - La documentación de AI Gateway no aclara si cancelar una petición evita su cobro (con `max_tokens: 60`, el coste es mínimo).
@@ -550,7 +605,8 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
 - `src/lib/security/rateLimit.ts` (`server-only`):
   - Reglas, `loadRules` (permite cambiarlas por entorno) y `createUpstashLimiter`.
   - Timeout de 1 s: el `reason: "timeout"` de Upstash se trata como proveedor caído.
-  - Identificadores `parchis:rl:<regla>:<sha256 de la clave>`: no se guardan IP en claro.
+  - Identificadores `<prefijo>:<regla>:<sha256 de la clave>`: no se guardan IP en claro.
+  - Prefijo por entorno (`rateLimitPrefix`), para que los entornos no compartan contadores aunque usen la misma base de Upstash: Production `parchis:rl` (sin cambios), Preview `parchis:rl:preview`, Development `parchis:rl:development`, local (sin `VERCEL=1`) `parchis:rl:local` y `VERCEL_ENV` ausente o desconocido `parchis:rl:unknown`.
   - `checkRateLimits`: si se supera un límite, gana el `Retry-After` mayor. Si el proveedor falla, se aplica la política de cada regla.
   - `rateLimitResponse`: 429 `{ error: { code: "rate_limited" } }` con `Retry-After`, o 503 `temporarily_unavailable` con `Retry-After: 30`. Ambas `no-store` y sin IP ni detalles internos.
   - `getRateLimiter()`: Upstash si hay credenciales; si no, desactivado.
@@ -596,15 +652,18 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
 8. Personajes:
    - ✅ 8.1 Personalidades y estrategias diferenciadas (`characters.ts`, `ai.ts`).
    - ✅ 8.2a Chat entre personajes con frases locales (director, cola persistente con trigger tolerante, Realtime y `ChatPanel`). SQL ejecutado en Supabase y chat comprobado en producción.
-   - 🟡 8.2b Textos del chat con LLM vía Vercel AI Gateway (`nvidia/nemotron-3.5-lightning-free`), solo para las intervenciones importantes. Implementado y probado en local con un LLM simulado; **desactivado** (`CHAT_LLM_ENABLED`). Pendiente: los pasos manuales de "Fase 8.2b" antes de activarlo en producción.
+   - 🟡 8.2b Textos del chat con LLM vía Vercel AI Gateway (`nvidia/nemotron-3.5-lightning-free`), solo para las intervenciones importantes. Implementado, probado en local con un LLM simulado y con llamadas reales en Preview; **desactivado en Production** (`CHAT_LLM_ENABLED` solo en Preview; el código no lo activa en Production: `not_preview`). Pendiente: los pasos manuales de "Fase 8.2b" antes de activarlo en producción.
 9. ✅ Despliegue en Vercel y portada con «Nueva partida».
 10. ⏳ Pendiente: animación de victoria.
 
 ## Pruebas y validación (desde `web/`)
 
-402 pruebas en 36 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
+514 pruebas en 37 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
 
-- `src/lib/engine/__tests__/rules.test.ts` (57): reglas, correcciones del motor original y tramo final (entrada + 7 + meta) en los cuatro colores.
+- `src/lib/engine/__tests__/rules.test.ts` (85): reglas, correcciones del motor original y tramo final (entrada + 7 + meta) en los cuatro colores. Además:
+  - Barreras: detección (mismo color en normal, distinto color en normal no, cualquier pareja en seguro), nadie las atraviesa ni cae en ellas, salir de una la rompe, máximo 2 por casilla, entrada del pasillo y bonus bloqueados.
+  - Salida con 5: casilla vacía, una propia, una rival, propia + rival, dos de otros colores (captura a la última llegada según `arrivalOrder`, no según el orden de los jugadores, también en una barrera de dos colores), dos propias, obligación de salir (también llamando directamente a `getLegalMoves`) y nunca más de 2.
+  - Apertura con 6: barrera propia en normal y de dos colores en seguro (y las dos a la vez), sin otras jugadas si hay apertura, reglas normales si no la hay (y `applyAction` acepta el movimiento normal), sin obligación con barreras solo rivales y bonus sin obligación.
 - `src/lib/engine/__tests__/simulation.test.ts` (3): 60 partidas completas con semilla (2, 3 y 4 jugadores); comprueba que terminan y que el estado es coherente en cada acción.
 - `src/lib/board/__tests__/layout.test.ts` (12): geometría, pasillos y entradas, 16 fichas sin duplicar, apilado dentro de la casilla y tamaño en los círculos de casa.
 - `src/lib/board/__tests__/animation.test.ts` (14):
@@ -619,10 +678,13 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   - Errores de Supabase sin exponer su mensaje; el fallo de red se identifica como tal.
   - `claim`, `commit` y `release`: filtros exactos y `55P03` → `null`. `commit` no escribe resultados inválidos.
   - `parseGameRow`.
-- `src/lib/game/__tests__/ai.test.ts` (10):
+- `src/lib/game/__tests__/ai.test.ts` (13):
   - Heurística: capturar, salir de casa, llegar a la meta y evitar dejar una ficha a tiro; solo jugadas legales; desempate.
   - `decideAction`: tirar, mover, bonus, `timeout` sin movimientos y partida terminada.
   - 10 partidas completas de 4 IA aceptadas por el motor.
+  - Barreras: 12 partidas completas (con bonus) en las que ninguna jugada atraviesa ni cae en una barrera y nunca hay más de 2 fichas por casilla.
+  - La IA recibe los mismos movimientos que `getLegalMoves` con un 5 (solo salidas) y con un 6 (solo aperturas).
+  - Oráculo independiente (sin `getLegalMoves` ni `getBlockades`) en 15 partidas completas: `getAvailableMoves` coincide con él en cada decisión, la IA elige dentro y `applyAction` rechaza cada jugada excluida con `MUST_EXIT_HOME` o `MUST_BREAK_BLOCKADE`.
 - `src/lib/game/__tests__/personalities.test.ts` (15): personajes.
   - Catálogo: ids, orden de colores, nombres, solo Chispa con azar (15 %), perfiles distintos y perfil neutro.
   - Estilos: captura arriesgada (Pilar va al seguro y el resto captura), barrera (solo Don Ernesto la forma), caza (solo Brava se acerca al rival). `decideAction` usa el perfil por id, no por color. Los deterministas no cambian aunque reciban `random`.
@@ -645,8 +707,9 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   - `schedule.test.ts` (7): `after()` con el procesador de esa partida, fallo al programar, BD caída sin lanzar y registro limitado; `chatWriters`: sin activar, todo local y sin registros; activo, solo lo importante llama a AI Gateway; mal configurado (modelo no permitido o clave pública), local y un registro sin la clave.
 - `src/lib/chat/llm/__tests__/`:
   - `env.test.ts` (13): solo el modelo permitido; configuración válida; desactivado salvo `CHAT_LLM_ENABLED=true`; falta la clave o el modelo; proveedor no válido; modelo no permitido; clave con `NEXT_PUBLIC_`; en Vercel solo Preview (Production, Development, otros valores y sin `VERCEL_ENV` → `not_preview`; Production sin activarlo → `off`); local sin `VERCEL=1` como antes; en Preview se mantienen las demás comprobaciones; ningún resultado contiene la clave.
-  - `prompt.test.ts` (5): estilo de cada personaje y reglas; situación de los 12 tipos con el rival y la racha reales; réplica y solo los 3 últimos textos recortados; sin datos de la partida ni identificadores internos; personaje desconocido.
-  - `gatewayWriter.test.ts` (26): petición (URL, `Authorization`, cuerpo mínimo sin `models`, clave solo en la cabecera, `providerOptions.gateway.only` con proveedor fijado, sin reintentos); cancelación por la señal del servicio y por su propio `timeoutMs`; 401, 402, 403, 404 y 500 con su corte temporal (sin llamar durante el corte), 429 con `Retry-After` válido, inválido o excesivo, y 400 y red sin corte; registro sin clave ni prompt; respuestas ilegibles, vacías o sin texto; limpieza de comillas, prefijo propio y líneas; demasiado largas, con formato o repetidas; habla como otro personaje o nombra a ajenos; solo lo importante usa el LLM; integración con `drainChat` (captura con el LLM y meta con el local; fallos → local con la cola vacía y la reserva libre; LLM colgado → aborto y local dentro del margen; victoria con el LLM caído; partidas completas con un LLM inestable).
+  - `prompt.test.ts` (13): estilo de cada personaje y reglas; una sola frase de menos de 120 caracteres (por debajo del límite de validación de 140), sin relleno y con recordatorio final; situación de los 12 tipos con el rival y la racha reales; réplica (con quién la dijo) y solo los 3 últimos textos recortados; sin datos de la partida ni identificadores internos; personaje desconocido. Además: reglas de calidad para los cuatro personajes (español, primera persona, nombres permitidos, coletillas, parchís, afirmaciones), regla de usted solo para Don Ernesto, metáforas deportivas solo para Chispa (los otros tres reciben «no de otros juegos ni deportes» y los cuatro tienen prohibidas las reglas o situaciones de otros juegos), papeles explícitos en capturas, rachas y victoria ajena, textos propios recientes, y **tamaño en el peor caso realista** (todos los personajes y los 6 tipos que escribe el LLM, con réplica, historial completo de textos largos y textos propios) por debajo de `CHAT_LLM.maxPromptChars`.
+  - `gatewayWriter.test.ts` (45): petición (URL, `Authorization`, cuerpo mínimo sin `models`, `reasoning_effort: "none"` en la raíz y sin `chat_template_kwargs`, clave solo en la cabecera, `providerOptions.gateway.only` con proveedor fijado, sin reintentos); diagnóstico de errores HTTP (content-type, `x-vercel-id` y `error.type`/`code`/`message` con secretos enmascarados, cuerpos HTML, vacíos, ilegibles o enormes) y de respuestas rechazadas (motivo y resumen estructural sin texto del modelo), con el registro limitado a uno por minuto; nombres ajenos como palabra completa (sin falsos positivos como "bravata" o "chispazo") con el nombre detectado en el diagnóstico; cancelación por la señal del servicio y por su propio `timeoutMs`; 401, 402, 403, 404 y 500 con su corte temporal (sin llamar durante el corte), 429 con `Retry-After` válido, inválido o excesivo, y 400 y red sin corte; registro sin clave ni prompt; respuestas ilegibles, vacías o sin texto; limpieza de comillas, prefijo propio y líneas; demasiado largas, con formato o repetidas; habla como otro personaje o nombra a ajenos; solo lo importante usa el LLM; integración con `drainChat` (captura con el LLM y meta con el local; fallos → local con la cola vacía y la reserva libre; LLM colgado → aborto y local dentro del margen; victoria con el LLM caído; partidas completas con un LLM inestable); un rechazo de calidad (inglés) usa la frase local una sola vez por intervención, con `termino=…` y el resumen estructural en el diagnóstico, sin el texto del modelo.
+  - `quality.test.ts` (44): regresión con los mensajes reales de la partida de Preview `707c3c6d…` (inglés, «la abuela Brava», «racha» en una captura simple, Don Ernesto tuteando, coletilla repetida con y sin historial y dicha por otro, «tres en raya» y «estás fuera»); mensajes naturales que se siguen aceptando (el resto de mensajes del LLM de esa partida, Don Ernesto de usted y con citas, «abuela» genérica, competición, préstamos sueltos y victoria); cada regla por separado; metáforas deportivas en frases naturales de Chispa; **cada término por separado** (en una frase sin ningún otro término, que sin él se acepta): los 8 de `SPORTS_METAPHORS` los acepta Chispa y los rechazan los otros tres, y los 18 de `OTHER_GAMES` los rechazan los cuatro, cada uno informado con su propio término («jaque mate» como tal, no como «jaque»); y los motivos nuevos están en la lista que se registra.
 - `src/app/api/games/__tests__/route.test.ts` (5): 201 con los 4 personajes, cuerpo `{}`, 400 y errores 503 o 500 sin detalles (con el repositorio simulado).
 - `src/app/api/games/[id]/__tests__/route.test.ts` (5): 200 validable con `GameResponseSchema` y sin datos internos (con `lastAction`/`lastEvents`); partida terminada con ganador; 404 si no existe o el id no es válido; 503 y 500 sin detalles.
 - `src/lib/game/__tests__/load.test.ts` (4): `loadGame` con un repositorio falso: `ok` con el contrato validado; `not_found`; cada error → mensaje seguro sin lanzar; contrato incoherente → error.
@@ -665,13 +728,14 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   - Terminada: ganador, clasificación, sin "En curso" ni fichas resaltadas, fecha en hora de Madrid.
   - Chat: nombre, avatar, réplica, sin campo de escritura; no muestra mensajes de versiones posteriores; texto de espera.
 - `src/lib/security/__tests__/clientIp.test.ts` (4): fuera de Vercel no se fía de las cabeceras; orden de preferencia en Vercel; valores no válidos → siguiente o `unknown`; IPv6 /64 e IPv4 mapeada.
-- `src/lib/security/__tests__/rateLimit.test.ts` (10), con `@upstash/ratelimit` simulado y `fakeLimiter.ts` (ventana deslizante exacta, solo para pruebas):
+- `src/lib/security/__tests__/rateLimit.test.ts` (20), con `@upstash/ratelimit` simulado y `fakeLimiter.ts` (ventana deslizante exacta, solo para pruebas):
   - Reglas por defecto y por entorno.
   - Dentro y fuera del límite con `Retry-After`; claves independientes; la regla más restrictiva gana.
   - Proveedor caído (cerrado/abierto) y sin proveedor.
   - 429/503 sin datos internos.
   - Adaptador: éxito, límite, timeout y error; una instancia por regla; sin IP en claro.
   - `getRateLimiter` con y sin credenciales.
+  - Prefijo de las claves por entorno (`rateLimitPrefix`): Production `parchis:rl`, Preview, Development, local y `unknown`; `getRateLimiter` usa el del entorno.
 - `src/lib/security/__tests__/guards.test.ts` (9): camino completo ruta → guard → limitador → adaptador, con `VERCEL=1` y la IP en `x-vercel-forwarded-for`.
   - Crear partida: 5 por IP, después 429; con el proveedor caído, 503 sin crear nada.
   - Avance: cupo por IP + partida (aislado entre partidas y entre IP), 600/min por IP y abierto con el proveedor caído.
