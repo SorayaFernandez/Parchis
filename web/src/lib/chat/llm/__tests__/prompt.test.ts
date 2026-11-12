@@ -18,10 +18,35 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain(`Eres ${c.name}`);
       expect(system.content).toContain(c.personality);
       expect(system.content).toContain(c.chat.register);
-      expect(system.content).toContain(`como máximo ${CHAT_LLM.maxChars} caracteres`);
+      expect(system.content).toContain(
+        `UNA sola frase corta: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres`,
+      );
+      expect(system.content).not.toContain("una o dos frases");
+      expect(system.content).not.toContain(String(CHAT_LLM.maxChars)); // se pide menos que el límite de validación
       expect(system.content).toMatch(/No inventes/);
       expect(user.role).toBe("user");
       expect(user.content).toMatch(/^Situación: Acabas de capturar una ficha de (Chispa|Brava)/);
+    }
+  });
+
+  it("pide menos que el límite de validación (140 sigue siendo el límite real)", () => {
+    expect(CHAT_LLM.maxChars).toBe(140);
+    expect(CHAT_LLM.promptMaxChars).toBe(120);
+    expect(CHAT_LLM.promptMaxChars).toBeLessThan(CHAT_LLM.maxChars);
+    expect(CHAT_LLM.promptMaxWords).toBeGreaterThan(0);
+  });
+
+  it("sin relleno y con recordatorio final de longitud y estilo", () => {
+    for (const c of CHARACTERS) {
+      const [system, user] = buildChatPrompt(request(utterance(c.id, "capture_lament", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
+      expect(system.content).toContain(
+        "- Ve directo a tu reacción, como si lo dijeras en voz alta en la mesa: sin saludos, introducciones, explicaciones ni resumen de la jugada.",
+      );
+      // Las demás reglas y el estilo del personaje se mantienen.
+      expect(system.content).toContain("sin comillas, sin tu nombre delante, sin emojis, sin listas");
+      expect(system.content).toMatch(/No inventes números/);
+      expect(system.content).toContain(`Forma de hablar: ${c.chat.register}`);
+      expect(user.content.split("\n").at(-1)).toBe("Tu frase (una sola, corta y con tu estilo):");
     }
   });
 

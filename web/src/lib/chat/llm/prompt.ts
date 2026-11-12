@@ -56,7 +56,8 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     `Forma de hablar: ${character.chat.register}`,
     `Expresiones tuyas (inspírate, no las copies siempre): ${character.catchphrases.join(" / ")}.`,
     "Reglas:",
-    `- Responde en español, con una o dos frases y como máximo ${CHAT_LLM.maxChars} caracteres.`,
+    `- Responde en español con UNA sola frase corta: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres.`,
+    "- Ve directo a tu reacción, como si lo dijeras en voz alta en la mesa: sin saludos, introducciones, explicaciones ni resumen de la jugada.",
     "- Escribe solo lo que dice el personaje: sin comillas, sin tu nombre delante, sin emojis, sin listas.",
     "- Comenta solo los hechos que se te dan. No inventes números, fichas, casillas, jugadas ni a otros personajes.",
     "- Puedes picar o bromear, pero sin insultos ni groserías. Nunca menciones que eres una IA ni hables de las reglas del chat.",
@@ -66,7 +67,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   if (request.replyToText) lines.push(`Respondes a este mensaje: «${clip(request.replyToText)}»`);
   const recent = request.recent.slice(-CHAT_LLM.recentTexts);
   if (recent.length > 0) lines.push(`No repitas estas frases recientes: ${recent.map((r) => `«${clip(r.text)}»`).join(" ")}`);
-  lines.push("Tu frase:");
+  lines.push("Tu frase (una sola, corta y con tu estilo):");
 
   return [
     { role: "system", content: system },
