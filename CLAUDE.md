@@ -479,7 +479,7 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
 
 - **Modelo configurado:** `nvidia/nemotron-3.5-lightning-free`, el único en `CHAT_LLM.allowedModels` (`config.ts`).
 - **Variables** (solo servidor, nunca con `NEXT_PUBLIC_`; plantilla en `web/.env.example`; en Vercel, Project Settings → Environment Variables):
-  - `CHAT_LLM_ENABLED`: solo `true` lo activa; sin ella el LLM está desactivado.
+  - `CHAT_LLM_ENABLED`: solo `true` lo activa; sin ella el LLM está desactivado. En Vercel solo tiene efecto en Preview (ver `readChatLlmConfig`).
   - `AI_GATEWAY_API_KEY`: clave de AI Gateway.
   - `CHAT_LLM_MODEL`: debe estar en la lista permitida.
   - `CHAT_LLM_PROVIDER` (opcional): fija el proveedor.
@@ -491,7 +491,9 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
 - **Sin dependencias:** `fetch` nativo contra la API compatible con OpenAI (`POST https://ai-gateway.vercel.sh/v1/chat/completions`, `Authorization: Bearer <AI_GATEWAY_API_KEY>`). Sin SDK ni streaming.
 - `src/lib/chat/llm/env.ts` (puro, nunca lanza ni muestra valores): `readChatLlmConfig(env)`.
   - **Activo solo con `CHAT_LLM_ENABLED=true`**, `AI_GATEWAY_API_KEY` no vacía y `CHAT_LLM_MODEL` permitido; `CHAT_LLM_PROVIDER`, si se indica, debe ser un nombre de proveedor válido.
-  - Si no, queda desactivado con un motivo: `off`, `missing_key`, `missing_model`, `model_not_allowed`, `invalid_provider` o `public_secret`. Este último salta si existe `NEXT_PUBLIC_AI_GATEWAY_API_KEY` o `NEXT_PUBLIC_CHAT_LLM_API_KEY`, aunque el LLM no esté activado.
+  - **Solo en Vercel Preview:** en Vercel (`VERCEL=1`) solo se activa con `VERCEL_ENV=preview` (comparación exacta). En Production, Development, cualquier otro valor o sin `VERCEL_ENV` (falla cerrado), queda desactivado con el motivo `not_preview` si se ha pedido activarlo (`CHAT_LLM_ENABLED=true`); sin pedirlo, sigue siendo `off`. Fuera de Vercel (sin `VERCEL=1`: desarrollo local y pruebas) no se aplica y funciona como antes. Ojo: `vercel env pull` escribe `VERCEL="1"` y `VERCEL_ENV="development"` en `.env.local`, lo que desactivaría el LLM en local.
+  - Si no, queda desactivado con un motivo: `off`, `not_preview`, `missing_key`, `missing_model`, `model_not_allowed`, `invalid_provider` o `public_secret`. Este último salta si existe `NEXT_PUBLIC_AI_GATEWAY_API_KEY` o `NEXT_PUBLIC_CHAT_LLM_API_KEY`, aunque el LLM no esté activado.
+  - Orden de las comprobaciones: `public_secret` → `off` → `not_preview` → clave → modelo → proveedor. `chatWriters` registra (sin valores) cualquier motivo salvo `off`.
 - `src/lib/chat/llm/prompt.ts` (puro): `buildChatPrompt(request)`.
   - **Sistema:** quién es el personaje (nombre, arquetipo, personalidad, registro y expresiones) y las reglas: español, una o dos frases, 140 caracteres como máximo, solo los hechos dados, sin insultos y sin mencionar que es una IA.
   - **Usuario:** la situación del tipo de intervención (con el rival y la racha reales), el mensaje al que responde y los 3 últimos textos de la partida (recortados a 100 caracteres) para no repetirlos.
@@ -527,7 +529,7 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   1. Verificar que Upstash funciona en producción (ver "Seguridad"). Sin límite de creación de partidas, cualquiera podría crear y hacer avanzar partidas y consumir llamadas.
   2. En AI Gateway: un presupuesto (Budget) para el proyecto o la clave (al superarlo, 402 → frase local) y la recarga automática desactivada.
   3. Comprobar en el panel que `nvidia/nemotron-3.5-lightning-free` está en el plan gratuito y anotar su proveedor si se quiere fijar con `CHAT_LLM_PROVIDER`.
-  4. Configurar las variables en Vercel y, cuando se decida activarlo, `CHAT_LLM_ENABLED=true`.
+  4. Configurar las variables en Vercel y, cuando se decida activarlo, `CHAT_LLM_ENABLED=true` en el entorno Preview (en Production el código no lo activa: `not_preview`).
   5. Probar primero en un despliegue de prueba: mensajes con `source = 'llm'` en `game_messages`, registros `[chat] escritor LLM` y el consumo en el panel de AI Gateway.
 - **Límites conocidos:**
   - La comprobación de nombres puede rechazar frases válidas que usen "brava" o "chispa" como palabra común (entonces se usa la frase local).
@@ -600,7 +602,7 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
 
 ## Pruebas y validación (desde `web/`)
 
-392 pruebas en 36 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
+402 pruebas en 36 archivos (Vitest, configuración en `vitest.config.mts` con el alias `@/`):
 
 - `src/lib/engine/__tests__/rules.test.ts` (57): reglas, correcciones del motor original y tramo final (entrada + 7 + meta) en los cuatro colores.
 - `src/lib/engine/__tests__/simulation.test.ts` (3): 60 partidas completas con semilla (2, 3 y 4 jugadores); comprueba que terminan y que el estado es coherente en cada acción.
@@ -642,7 +644,7 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   - `chatController.test.ts` (9): feed (duplicados, orden, límite, visibilidad por versión) y controlador (carga inicial + recuperación + Realtime sin duplicados, reconexión con páginas, sin red, 429, filas ajenas y `stop()`). Además, **partida terminada con el procesador interrumpido: consulta hasta recuperar la victoria**; en curso no consulta por pendientes.
   - `schedule.test.ts` (7): `after()` con el procesador de esa partida, fallo al programar, BD caída sin lanzar y registro limitado; `chatWriters`: sin activar, todo local y sin registros; activo, solo lo importante llama a AI Gateway; mal configurado (modelo no permitido o clave pública), local y un registro sin la clave.
 - `src/lib/chat/llm/__tests__/`:
-  - `env.test.ts` (7): solo el modelo permitido; configuración válida; desactivado salvo `CHAT_LLM_ENABLED=true`; falta la clave o el modelo; proveedor no válido; modelo no permitido; clave con `NEXT_PUBLIC_`; ningún resultado contiene la clave.
+  - `env.test.ts` (13): solo el modelo permitido; configuración válida; desactivado salvo `CHAT_LLM_ENABLED=true`; falta la clave o el modelo; proveedor no válido; modelo no permitido; clave con `NEXT_PUBLIC_`; en Vercel solo Preview (Production, Development, otros valores y sin `VERCEL_ENV` → `not_preview`; Production sin activarlo → `off`); local sin `VERCEL=1` como antes; en Preview se mantienen las demás comprobaciones; ningún resultado contiene la clave.
   - `prompt.test.ts` (5): estilo de cada personaje y reglas; situación de los 12 tipos con el rival y la racha reales; réplica y solo los 3 últimos textos recortados; sin datos de la partida ni identificadores internos; personaje desconocido.
   - `gatewayWriter.test.ts` (26): petición (URL, `Authorization`, cuerpo mínimo sin `models`, clave solo en la cabecera, `providerOptions.gateway.only` con proveedor fijado, sin reintentos); cancelación por la señal del servicio y por su propio `timeoutMs`; 401, 402, 403, 404 y 500 con su corte temporal (sin llamar durante el corte), 429 con `Retry-After` válido, inválido o excesivo, y 400 y red sin corte; registro sin clave ni prompt; respuestas ilegibles, vacías o sin texto; limpieza de comillas, prefijo propio y líneas; demasiado largas, con formato o repetidas; habla como otro personaje o nombra a ajenos; solo lo importante usa el LLM; integración con `drainChat` (captura con el LLM y meta con el local; fallos → local con la cola vacía y la reserva libre; LLM colgado → aborto y local dentro del margen; victoria con el LLM caído; partidas completas con un LLM inestable).
 - `src/app/api/games/__tests__/route.test.ts` (5): 201 con los 4 personajes, cuerpo `{}`, 400 y errores 503 o 500 sin detalles (con el repositorio simulado).
@@ -677,7 +679,7 @@ El LLM **solo escribe el texto** de algunas intervenciones; nunca decide movimie
   - Regresión de contratos.
   - Espectadores reales: 1 y 3 pestañas tras la misma IP sin 429 en 5 min; 6 pestañas sí se limitan.
 - `src/components/hud/__tests__/chatScroll.test.ts` (4): con un contenedor simulado (Vitest corre sin DOM), compensa exactamente el desplazamiento de WebKit, no corrige dos veces si el navegador ya lo hizo, no toca nada estando abajo (tampoco con una posición antigua) y no hace nada sin posición o sin el mensaje (B6).
-- `src/lib/home/__tests__/newGame.test.ts` (8): respuestas de `POST /api/games` (201 válido, 429 con espera en segundos, minutos o sin cabecera, 503, 500, 400 y 201 sin id o con un id no UUID); el controlador entra en carga y hace el POST, navega a `/partida/[id]` y sigue en carga; varios clics durante la creación o la navegación hacen una sola petición; error y reintento con éxito; sin red, límite de creación y respuesta no JSON (no se queda bloqueado).
+- `src/lib/home/__tests__/newGame.test.ts` (12): respuestas de `POST /api/games` (201 válido, 429 con espera en segundos, minutos o sin cabecera, 503, 500, 400 y 201 sin id o con un id no UUID); el controlador entra en carga y hace el POST, navega a `/partida/[id]` y sigue en carga; varios clics durante la creación o la navegación hacen una sola petición; error y reintento con éxito; sin red, límite de creación y respuesta no JSON (no se queda bloqueado). Volver a la portada (Next.js la conserva con `<Activity>`): sin `reset` el botón se queda en carga (el fallo original); con `reset` al ocultarse vuelve a reposo y crea otra partida sin duplicar; una respuesta tardía tras `reset` no navega ni muestra un error; `reset` en reposo no notifica.
 - `src/components/home/__tests__/NewGameButton.test.tsx` (5): el botón en reposo, creando (desactivado, `aria-busy` y estado anunciado) y con error (alerta y «Reintentar» activo); la portada muestra «Nueva partida» y el enlace al tablero, sin login ni campos de entrada; `NewGameButton` se renderiza en el servidor.
 - `src/lib/hud/__tests__/hud.test.ts` (19): progreso de las fichas, resumen de jugadores (zonas, puestos, ganador), fases del turno (tirar, mover, bonus, fin) y textos de los eventos.
 
