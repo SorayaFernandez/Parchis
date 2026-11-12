@@ -442,6 +442,49 @@ describe("respuestas del modelo", () => {
     // Quien habla y su rival sí se pueden nombrar.
     expect(cleanLlmText("Brava nunca falla, Chispa.", request())).toBe("Brava nunca falla, Chispa.");
   });
+
+  // Habla Don Ernesto y su rival es Abuela Pilar: Brava y Chispa son ajenas a la intervención.
+  const ernesto = () => request({ utterance: utterance({ speaker: "ai-purple", rival: "ai-green" }) });
+  const rejection = (text: string, req = ernesto()) => {
+    try {
+      cleanLlmText(text, req);
+    } catch (error) {
+      return error as ChatLlmError;
+    }
+    return null;
+  };
+
+  it("palabras comunes que contienen un nombre (bravata, chispazo, bravas) no son menciones", () => {
+    for (const text of ["Menuda bravata la tuya, Pilar.", "¡Vaya chispazo de suerte!", "Esto pide unas bravas y un buen café.", "Chispeante jugada, lo admito.", "Bravamente defendido, no lo niego."]) {
+      expect(cleanLlmText(text, ernesto())).toBe(text);
+    }
+  });
+
+  it("menciones reales a personajes ajenos: palabra completa, sin distinguir mayúsculas, con signos o espacios", () => {
+    for (const [text, name, form] of [
+      ["¡Chispa, prepárate!", "Chispa", "capitalizada"],
+      ["Hoy la chispa me acompaña.", "Chispa", "minúsculas"],
+      ["Ni BRAVA podría con esto.", "Brava", "mayúsculas"],
+      ["«Brava» se va a enterar.", "Brava", "capitalizada"],
+      ["Brava2 no, Brava sí.", "Brava", "capitalizada"],
+    ] as const) {
+      const error = rejection(text);
+      expect(error, text).toMatchObject({ kind: "invalid_response", message: "nombra a un personaje ajeno a la intervención" });
+      expect(error!.detail).toBe(`nombre=${name} coincidencia=palabra forma=${form}`);
+    }
+    // Nombres compuestos, también en minúsculas o con varios espacios (habla Brava contra Chispa).
+    expect(rejection("Ojo, don ernesto acecha.", request())!.detail).toBe("nombre=Don Ernesto coincidencia=palabra forma=minúsculas");
+    expect(rejection("Ojo, Don  Ernesto acecha.", request())!.detail).toBe("nombre=Don Ernesto coincidencia=palabra forma=capitalizada");
+    expect(rejection("Ya verás, (Abuela Pilar).", request())!.detail).toBe("nombre=Abuela Pilar coincidencia=palabra forma=capitalizada");
+    expect(rejection("Ya verás, ABUELA pilar.", request())!.detail).toBe("nombre=Abuela Pilar coincidencia=palabra forma=mixta");
+  });
+
+  it("quien habla y su rival se pueden nombrar; en la victoria (sin rival) solo el propio nombre", () => {
+    expect(cleanLlmText("Don Ernesto nunca se equivoca, Abuela Pilar.", ernesto())).toBe("Don Ernesto nunca se equivoca, Abuela Pilar.");
+    const win = request({ utterance: utterance({ speaker: "ai-blue", kind: "victory_win", trigger: "victory", rival: null }) });
+    expect(cleanLlmText("¡Chispa gana, a toda velocidad!", win)).toBe("¡Chispa gana, a toda velocidad!");
+    expect(rejection("¡Gané! Brava, toma nota.", win)!.detail).toBe("nombre=Brava coincidencia=palabra forma=capitalizada");
+  });
 });
 
 describe("solo las intervenciones importantes usan el LLM", () => {
@@ -496,6 +539,36 @@ describe("integración con drainChat", () => {
       expect(t.memory.queue).toEqual([]);
       expect(t.memory.chats.get(GAME)).toMatchObject({ lastVersion: 4, lockToken: null });
     }
+  });
+
+  it("nombre ajeno: el diagnóstico lleva el nombre y la forma (sin el texto) y se usa la frase local una sola vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Hoy la chispa me acompaña, secreto";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-purple", "ai-green")], createGame([...CHARACTER_IDS]));
+    const result = await drainChat(GAME, deps);
+    expect(result).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    // Una llamada al LLM y un uso del local por cada intervención; sin corte temporal.
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures).toHaveLength(published);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ kind: "invalid_response", message: "nombra a un personaje ajeno a la intervención" });
+      expect(failure.detail).toMatch(/^nombre=Chispa coincidencia=palabra forma=minúsculas choices=1 /);
+      expect(failure.detail).not.toContain("acompaña");
+      expect(failure.detail).not.toContain("secreto");
+    }
+    expect(memory.queue).toEqual([]);
   });
 
   it("si el LLM no responde, el tiempo máximo del servicio lo aborta y se usa el local, dentro de la reserva", async () => {

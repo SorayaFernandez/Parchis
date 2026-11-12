@@ -44,22 +44,39 @@ export function isEnteringHomeStretch(
 }
 
 export interface Blockade {
-  color: Color;
+  /** Color de la barrera, o `null` si la forman fichas de colores distintos (solo en casillas seguras). */
+  color: Color | null;
   cell: number;
 }
 
-/** Barreras: dos o más fichas del mismo color en la misma casilla del recorrido. */
+/**
+ * Barreras del recorrido común (el pasillo final y la meta no cuentan):
+ * - En una casilla normal, dos o más fichas del mismo color.
+ * - En una casilla segura, dos fichas de cualquier color (iguales o distintos).
+ * Una barrera bloquea el paso y el destino a todas las fichas, de cualquier color.
+ * (En el original solo había barreras del mismo color.)
+ */
 export function getBlockades(state: GameState): Blockade[] {
-  const blockades: Blockade[] = [];
+  const byCell = new Map<number, Color[]>();
   for (const player of state.players) {
-    const count = new Map<number, number>();
     for (const piece of player.pieces) {
       if (!isOnMainTrack(piece)) continue;
       const cell = getRealBoardPosition(player.color, piece.steps);
-      count.set(cell, (count.get(cell) ?? 0) + 1);
+      const colors = byCell.get(cell) ?? [];
+      colors.push(player.color);
+      byCell.set(cell, colors);
     }
-    for (const [cell, n] of count) {
-      if (n >= 2) blockades.push({ color: player.color, cell });
+  }
+  const blockades: Blockade[] = [];
+  for (const [cell, colors] of byCell) {
+    if (isSafeCell(cell)) {
+      if (colors.length >= 2) blockades.push({ color: colors.every((c) => c === colors[0]) ? colors[0] : null, cell });
+      continue;
+    }
+    const perColor = new Map<Color, number>();
+    for (const color of colors) perColor.set(color, (perColor.get(color) ?? 0) + 1);
+    for (const [color, n] of perColor) {
+      if (n >= 2) blockades.push({ color, cell });
     }
   }
   return blockades;

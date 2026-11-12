@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { GameScreen } from "@/components/game/GameScreen";
 import { GameLoading } from "@/components/game/GameStatus";
@@ -19,8 +20,13 @@ export const metadata: Metadata = {
  */
 async function GameLoader({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const requestHeaders = await headers();
+  // Con cacheComponents, `headers()` también se resuelve al prerenderizar el App Shell de la ruta.
+  // `connection()` deja lo que sigue (límite de lectura, BD y el Date.now() de Upstash) solo para
+  // peticiones reales: sin esto, Next.js avisaba de Date.now() durante el prerenderizado.
+  await connection();
   // Mismo límite suave de lectura que GET /api/games/[id] (la página también lee la BD).
-  const decision = await checkRead(await headers());
+  const decision = await checkRead(requestHeaders);
   if (decision.kind === "limited") {
     return (
       <GameScreen
