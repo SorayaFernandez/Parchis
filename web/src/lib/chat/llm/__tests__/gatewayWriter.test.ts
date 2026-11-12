@@ -88,7 +88,7 @@ describe("petición a AI Gateway", () => {
     expect(f.calls[0].body.providerOptions).toEqual({ gateway: { only: ["nvidia"] } });
   });
 
-  it("desactiva el razonamiento con chat_template_kwargs en la raíz del JSON enviado; el resto no cambia", async () => {
+  it("desactiva el razonamiento con reasoning_effort = none en la raíz del JSON enviado, sin chat_template_kwargs; el resto no cambia", async () => {
     for (const provider of [null, "nvidia"]) {
       const f = fakeFetch(() => completion("Una frase cualquiera de prueba."));
       const writer = createGatewayWriter({ config: { ...config, provider }, fetch: f.fetch, breaker: createLlmBreaker() });
@@ -96,18 +96,20 @@ describe("petición a AI Gateway", () => {
       expect(f.calls).toHaveLength(1);
       // Lo que se comprueba es el JSON tal y como se pasa a fetch (init.body).
       const sent = JSON.parse(String(f.calls[0].init.body)) as Record<string, unknown>;
-      expect(sent.chat_template_kwargs).toEqual({ enable_thinking: false });
+      expect(sent.reasoning_effort).toBe("none");
+      expect(sent).not.toHaveProperty("chat_template_kwargs");
       expect(Object.keys(sent).sort()).toEqual(
-        ["chat_template_kwargs", "max_tokens", "messages", "model", "stream", "temperature", ...(provider ? ["providerOptions"] : [])].sort(),
+        ["max_tokens", "messages", "model", "reasoning_effort", "stream", "temperature", ...(provider ? ["providerOptions"] : [])].sort(),
       );
       expect(sent).toMatchObject({ model: MODEL, max_tokens: 60, temperature: CHAT_LLM.temperature, stream: false });
       expect(CHAT_LLM.maxTokens).toBe(60);
       expect(sent.messages).toEqual(buildChatPrompt(request()));
       // No queda anidado en otro objeto (ni en providerOptions ni en los mensajes).
       expect(provider ? sent.providerOptions : undefined).toEqual(provider ? { gateway: { only: ["nvidia"] } } : undefined);
-      expect(JSON.stringify(sent.providerOptions ?? {})).not.toContain("chat_template_kwargs");
-      expect(JSON.stringify(sent.messages)).not.toContain("enable_thinking");
-      expect(String(f.calls[0].init.body).match(/chat_template_kwargs/g)).toHaveLength(1);
+      expect(JSON.stringify(sent.providerOptions ?? {})).not.toContain("reasoning_effort");
+      expect(JSON.stringify(sent.messages)).not.toContain("reasoning_effort");
+      expect(String(f.calls[0].init.body).match(/reasoning_effort/g)).toHaveLength(1);
+      expect(String(f.calls[0].init.body)).not.toMatch(/chat_template_kwargs|enable_thinking/);
     }
   });
 
