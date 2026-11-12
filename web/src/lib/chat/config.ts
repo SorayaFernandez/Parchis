@@ -121,6 +121,13 @@ export const CHAT_LLM = {
   temperature: 0.8,
   /** Caracteres como máximo de una respuesta del LLM (se rechaza si es más larga, no se corta). */
   maxChars: 140,
+  /**
+   * Longitud que se PIDE en el prompt (menor que `maxChars`): el modelo cuenta caracteres de forma
+   * aproximada y, pidiendo justo el límite, se pasaba por poco (141–144). No se valida con este valor.
+   */
+  promptMaxChars: 120,
+  /** Palabras como máximo que se piden en el prompt (≈ 100–115 caracteres en español). */
+  promptMaxWords: 18,
   /** Textos recientes de la partida que se envían para no repetirlos (cada uno recortado). */
   recentTexts: 3,
   recentTextMaxChars: 100,
