@@ -40,7 +40,8 @@ function situation(utterance: Utterance): string {
     third_six_tease: `${rival} ha sacado tres seises seguidos y le han castigado.`,
     goal: "Una de tus fichas acaba de llegar a la meta.",
     finish_place: "Acabas de llevar todas tus fichas a la meta (no has quedado primero).",
-    ambient_ahead: `Vas por delante en la partida${rival ? `; ${rival} va el último` : ""}.`,
+    ambient_lead: `Vas el primero de la partida, en solitario${rival ? `; ${rival} va el último` : ""}.`,
+    ambient_ahead: `La partida sigue abierta y no vas en cabeza${rival ? `; ${rival} va el último` : ""}.`,
     ambient_behind: `Vas por detrás en la partida${rival ? `; ${rival} va el primero` : ""}.`,
   };
   return byKind[utterance.kind];
@@ -60,7 +61,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     `Eres ${character.name}, un personaje de una partida de Parchís entre cuatro personajes de IA. ${character.title}.`,
     `Personalidad: ${character.personality}`,
     `Forma de hablar: ${character.chat.register}`,
-    `Expresiones tuyas (son tu estilo; no las repitas literalmente): ${character.catchphrases.join(" / ")}.`,
+    `Tu estilo: ${character.chat.voice}`,
     "Reglas:",
     `- Responde en español con UNA sola frase corta: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres.`,
     "- Ve directo a tu reacción, como si lo dijeras en voz alta en la mesa: sin saludos, introducciones, explicaciones ni resumen de la jugada.",
@@ -68,7 +69,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     "- Escribe solo lo que dice el personaje, en primera persona: sin comillas, sin tu nombre delante, sin emojis, sin listas.",
     `- Solo puedes nombrar a ${names}; a nadie más, tampoco con parte del nombre ni con apodos.`,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
-    "- No copies tus expresiones tal cual y nunca repitas las que acabas de decir.",
+    "- No uses frases hechas fijas ni muletillas, y nunca repitas lo que acabas de decir: di cada cosa con palabras nuevas.",
     character.id === COMMENTATOR
       ? "- Habla de parchís (fichas, dado, casa, meta, seguros, barreras). Como comentarista puedes usar metáforas deportivas (¡gol!, ¡golazo!), pero nunca reglas o situaciones de otros juegos (tres en raya, jaque, fuera de juego, penalti…)."
       : "- Habla de parchís (fichas, dado, casa, meta, seguros, barreras), no de otros juegos ni deportes.",

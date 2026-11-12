@@ -9,6 +9,7 @@
 import { getCharacter, CHARACTER_NAMES } from "@/lib/game/characters";
 import type { ChatTrigger } from "../schemas";
 import type { ChatWriteRequest } from "../writer";
+import { detectCatchphrases, normalizeText } from "../catchphrases";
 
 export interface QualityIssue {
   reason: QualityReason;
@@ -28,13 +29,7 @@ export const QUALITY_REASONS = [
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
 /** Minúsculas y sin tildes (la «ñ» se conserva). */
-export function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/(?!̃)[̀-ͯ]/g, "")
-    .normalize("NFC");
-}
+export const normalize = normalizeText;
 
 const LETTER = "\\p{L}\\p{N}";
 /** Expresión regular de una frase como palabras completas (límites Unicode), sobre texto normalizado. */
@@ -153,25 +148,18 @@ function checkUsted(text: string, speaker: string): QualityIssue | null {
 // ── 5. Coletillas repetidas ────────────────────────────────────────────────────────────────────────
 
 /**
- * La coletilla al inicio de una frase (tras el inicio o un signo), siga o no con más palabras:
- * «¡A casa!», «¡A casa, Chispa!» y «¡A casa con eso!» son la misma expresión; «Vuelve a casa», no.
+ * Coletilla repetida: el texto contiene una coletilla de quien habla (al inicio de una frase, con o sin
+ * palabras detrás; ver `catchphrases.ts`) que ese personaje ya usó en la partida (`usedCatchphrases`,
+ * el registro del director) o en sus textos recientes. Si la dijo otro personaje, no cuenta.
  */
-const clauseRe = (phrase: string) => {
-  const words = normalize(phrase).replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).map(escape).join("\\s+");
-  return new RegExp(`(?:^|[¡!¿?.,;:…—«»"“”-])\\s*${words}(?![\\p{L}\\p{N}])`, "u");
-};
-
 function checkRepeatedCatchphrase(text: string, request: ChatWriteRequest): QualityIssue | null {
-  const character = getCharacter(request.utterance.speaker);
+  const speaker = request.utterance.speaker;
+  const character = getCharacter(speaker);
   if (!character) return null;
-  const own = request.recent.filter((r) => r.speaker === request.utterance.speaker).map((r) => normalize(r.text));
-  if (own.length === 0) return null;
-  const t = normalize(text);
-  for (const phrase of character.catchphrases) {
-    const re = clauseRe(phrase);
-    if (re.test(t) && own.some((previous) => re.test(previous))) return { reason: "expresión característica repetida", term: phrase };
-  }
-  return null;
+  const used = new Set(request.usedCatchphrases ?? []);
+  for (const r of request.recent) if (r.speaker === speaker) for (const index of detectCatchphrases(speaker, r.text)) used.add(index);
+  const repeated = detectCatchphrases(speaker, text).find((index) => used.has(index));
+  return repeated === undefined ? null : { reason: "expresión característica repetida", term: character.catchphrases[repeated] };
 }
 
 // ── 6. Ajeno al parchís y afirmaciones sin respaldo ────────────────────────────────────────────────

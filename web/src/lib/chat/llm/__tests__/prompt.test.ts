@@ -91,7 +91,7 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain("Responde solo en español: ni palabras ni frases en otros idiomas.");
       expect(system.content).toContain("en primera persona");
       expect(system.content).toContain(`Solo puedes nombrar a ti (${c.name}) y ${CHARACTERS.find((x) => x.id === rival)!.name}; a nadie más, tampoco con parte del nombre ni con apodos.`);
-      expect(system.content).toContain("No copies tus expresiones tal cual");
+      expect(system.content).toContain("No uses frases hechas fijas ni muletillas, y nunca repitas lo que acabas de decir");
       expect(system.content).toContain("- Habla de parchís (fichas, dado, casa, meta, seguros, barreras)");
       expect(system.content).toContain("ni hables de rachas, salvo que la situación lo diga. Sí puedes picar y retar.");
       // La personalidad no cambia.
@@ -167,5 +167,33 @@ describe("buildChatPrompt", () => {
     }
     // El peor caso medido ronda los 2600 caracteres (ver CHAT_LLM.maxPromptChars).
     expect(max).toBeGreaterThan(2000);
+  });
+
+  it("sin coletillas literales: el estilo se describe con `voice` y se mantienen personalidad y forma de hablar", () => {
+    const plain = (t: string) => t.toLowerCase().replace(/[¡!¿?….,]/g, "").trim();
+    const voices = new Set<string>();
+    for (const c of CHARACTERS) {
+      const [system, user] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
+      for (const phrase of c.catchphrases) expect(plain(system.content + user.content), `${c.name}: ${phrase}`).not.toContain(plain(phrase));
+      expect(system.content).not.toContain("Expresiones tuyas");
+      expect(system.content).toContain(`Tu estilo: ${c.chat.voice}`);
+      expect(system.content).toContain(c.personality);
+      expect(system.content).toContain(c.chat.register);
+      voices.add(c.chat.voice);
+    }
+    expect(voices.size).toBe(CHARACTERS.length);
+    // Estilos pedidos: Brava desafiante; Ernesto, cálculo y usted; Pilar, refranes sin repetir; Chispa, comentarista supersticioso con el dado.
+    const voiceOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.voice;
+    expect(voiceOf("ai-pink")).toMatch(/desafiante, competitiva y contundente/i);
+    expect(voiceOf("ai-purple")).toMatch(/cálculo y probabilidad.*usted/i);
+    expect(voiceOf("ai-green")).toMatch(/refranes.*diminutivos.*sin repetir siempre el mismo refrán/i);
+    expect(voiceOf("ai-blue")).toMatch(/comentarista imprevisible.*supersticioso con el dado/i);
+  });
+
+  it("situaciones de ambiente: liderar solo en `ambient_lead`; `ambient_ahead` no afirma ir en cabeza", () => {
+    const [, lead] = buildChatPrompt(request(utterance("ai-pink", "ambient_lead", { rival: "ai-blue", trigger: "ambient", important: false })));
+    expect(lead.content).toContain("Vas el primero de la partida, en solitario; Chispa va el último.");
+    const [, ahead] = buildChatPrompt(request(utterance("ai-pink", "ambient_ahead", { rival: null, trigger: "ambient", important: false })));
+    expect(ahead.content).toContain("La partida sigue abierta y no vas en cabeza.");
   });
 });

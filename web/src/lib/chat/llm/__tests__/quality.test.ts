@@ -4,10 +4,11 @@ import type { RecentText } from "../../writer";
 import { ChatLlmError, cleanLlmText, INVALID_RESPONSE_REASONS } from "../gatewayWriter";
 import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality } from "../quality";
 
-const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = []) => ({
+const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = [], usedCatchphrases?: number[]) => ({
   utterance: { speaker, kind: "capture_boast", rival, trigger: "capture", replyTo: null, important: true, ...extra } as Utterance,
   recent,
   replyToText: null,
+  ...(usedCatchphrases ? { usedCatchphrases } : {}),
 });
 type Request = ReturnType<typeof say>;
 
@@ -439,6 +440,35 @@ describe("cada regla nueva por separado", () => {
     ]) {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toBeNull();
     }
+  });
+
+  // ── Registro de coletillas de la partida (usedCatchphrases), sin depender de la ventana de 12 ──
+  it("partida 4e120c1e: Pilar #24 y Don Ernesto #20 se rechazan con el registro aunque el texto anterior esté fuera de la ventana", () => {
+    // #24 (victoria de Pilar): «Despacito y buena letra» ya publicada en el #10, cientos de versiones antes.
+    const pilar24 = "Ay, hijo, qué partida más larga. Despacito y buena letra, que el que mucho abarca, poco aprieta.";
+    expect(reject(pilar24, say("ai-green", null, { kind: "victory_win", trigger: "victory" }, [], [0]))).toEqual({
+      reason: "expresión característica repetida",
+      detail: "termino=Despacito y buena letra",
+    });
+    // #20 (réplica de Ernesto): «Previsible» ya publicada en el #6.
+    const ernesto20 = "Previsible: su captura confirma la ley de probabilidades que manejo.";
+    expect(reject(ernesto20, say("ai-purple", "ai-blue", { kind: "capture_lament", replyTo: 0 }, [], [0]))).toEqual({
+      reason: "expresión característica repetida",
+      detail: "termino=Previsible",
+    });
+    // Sin registro (la primera vez), los dos se aceptan.
+    expect(reject(pilar24, say("ai-green", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
+    expect(reject(ernesto20, say("ai-purple", "ai-blue", { kind: "capture_lament", replyTo: 0 }))).toBeNull();
+  });
+
+  it("el registro es por personaje y no rechaza expresiones comunes ni coletillas no usadas", () => {
+    // Pilar tiene registrada la 0; «Ay, hijo, qué prisas» (1) sí se puede usar.
+    expect(checkQuality("Ay, hijo, qué prisas, Chispa.", say("ai-green", "ai-blue", {}, [], [0]))).toBeNull();
+    expect(checkQuality("Ay, hijo, qué prisas, Chispa.", say("ai-green", "ai-blue", {}, [], [1]))?.term).toBe("Ay, hijo, qué prisas");
+    // «Vuelve a casa» no es la coletilla de Brava aunque «¡A casa!» esté registrada.
+    expect(checkQuality("Vuelve a casa, Chispa.", say("ai-pink", "ai-blue", {}, [], [0]))).toBeNull();
+    // Chispa no hereda el registro de Brava: la petición solo lleva el de quien habla.
+    expect(checkQuality("¡A casa, Brava!", say("ai-blue", "ai-pink", {}, [], []))).toBeNull();
   });
 
   it("los motivos nuevos están en la lista cerrada que se registra", () => {

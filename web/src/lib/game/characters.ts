@@ -39,7 +39,9 @@ export interface StrategyProfile {
  *   (capturas reales de la racha, en palabras) y `{ritmo}` ("seguidas" o "en poco tiempo")
  * - third_six_self / third_six_tease ({rival} = quien sacó los tres seises)
  * - goal, finish_place (sin {rival})
- * - ambient_ahead ({rival} = quien va último) / ambient_behind ({rival} = quien va primero)
+ * - ambient_lead: primero en solitario, el único que afirma ir ganando ({rival} = último en solitario)
+ * - ambient_ahead: sin liderar, frase neutral de progreso que no afirma posición ({rival} = último en solitario)
+ * - ambient_behind: alguien va por delante, «voy perdiendo» ({rival} = primero en solitario)
  */
 export const CHAT_LINE_KINDS = [
   "victory_win",
@@ -52,6 +54,7 @@ export const CHAT_LINE_KINDS = [
   "third_six_tease",
   "goal",
   "finish_place",
+  "ambient_lead",
   "ambient_ahead",
   "ambient_behind",
 ] as const;
@@ -68,6 +71,7 @@ export const LINE_KINDS_WITH_RIVAL: ReadonlySet<ChatLineKind> = new Set([
   "streak_boast",
   "streak_lament",
   "third_six_tease",
+  "ambient_lead",
   "ambient_ahead",
   "ambient_behind",
 ]);
@@ -75,6 +79,11 @@ export const LINE_KINDS_WITH_RIVAL: ReadonlySet<ChatLineKind> = new Set([
 export interface ChatProfile {
   /** Registro y tono (referencia para la generación de texto; en 8.2b irá al prompt). */
   register: string;
+  /**
+   * Estilo para el prompt del LLM, descrito sin frases hechas concretas (las coletillas literales no se
+   * envían: el modelo las imitaba). Se comprueba al cargar que no contiene ninguna coletilla.
+   */
+  voice: string;
   /** Ganas de hablar, de 0 a 1: multiplica la probabilidad de intervenir y de replicar. */
   talkativeness: number;
   /** Frases locales por tipo de intervención (también son la reserva si falla un LLM en 8.2b). */
@@ -91,7 +100,10 @@ export interface Character {
   title: string;
   /** Personalidad y forma de hablar. */
   personality: string;
-  /** Expresiones habituales (referencia para el futuro LLM; varias aparecen en `chat.lines`). */
+  /**
+   * Expresiones habituales. No se envían al LLM: sirven para detectar coletillas repetidas (registro de
+   * la partida y validador). Varias aparecen en `chat.lines`.
+   */
   catchphrases: readonly string[];
   strategy: StrategyProfile;
   chat: ChatProfile;
@@ -143,6 +155,7 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Frases cortas y directas, con exclamaciones. Reta, presume y se pica; nunca insulta.",
+      voice: "Desafiante, competitiva y contundente: frases cortas que retan y rematan, cada vez con palabras distintas.",
       talkativeness: 1,
       lines: {
         victory_win: [
@@ -212,11 +225,17 @@ export const CHARACTERS: readonly Character[] = [
           "Hecho. La próxima vez, el primer puesto.",
           "Meta completa. Que conste que he dado guerra.",
         ],
-        ambient_ahead: [
+        ambient_lead: [
           "Voy ganando. ¡Que se note!",
-          "{rival}, ¿necesitas un mapa? Vas muy mal.",
-          "¿Esto es todo lo que tenéis?",
           "Ganando y con hambre. Mala combinación para vosotros.",
+          "¡En cabeza y sin frenar! ¿Quién me sigue?",
+          "{rival}, ¿necesitas un mapa? Vas muy mal.",
+        ],
+        ambient_ahead: [
+          "¿Esto es todo lo que tenéis?",
+          "Sigo en la pelea. ¡Que tiemble el tablero!",
+          "¡Aquí no se rinde nadie! Y yo, menos.",
+          "{rival}, espabila, que te estás quedando atrás.",
         ],
         ambient_behind: [
           "Calma, {rival}. Ya te alcanzo.",
@@ -247,6 +266,7 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Formal, trata de usted, términos técnicos y probabilidades. Elogia con condescendencia.",
+      voice: "Vocabulario de cálculo y probabilidad, con seguridad en sí mismo y siempre tratando de usted.",
       talkativeness: 0.6,
       lines: {
         victory_win: [
@@ -313,11 +333,17 @@ export const CHARACTERS: readonly Character[] = [
           "Fin de mi recorrido. Una actuación correcta.",
           "Terminado. El análisis posterior será largo.",
         ],
-        ambient_ahead: [
-          "La posición es sólida. Sigamos así.",
-          "{rival}, debería reforzar su retaguardia.",
-          "El control del tablero empieza a ser evidente.",
+        ambient_lead: [
           "Mantengo la ventaja. Paciencia y método.",
+          "El control del tablero empieza a ser evidente.",
+          "Encabezo la partida, tal como había calculado.",
+          "{rival}, la distancia ya es considerable. Le conviene reaccionar.",
+        ],
+        ambient_ahead: [
+          "Analizo cada tirada. El plan sigue en marcha.",
+          "{rival}, debería reforzar su retaguardia.",
+          "Cada movimiento suma. Sigamos con método.",
+          "Los números aún admiten cualquier desenlace. Interesante.",
         ],
         ambient_behind: [
           "Voy por detrás, pero la partida es larga, {rival}.",
@@ -352,6 +378,7 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Cariñosa y tranquila: refranes, diminutivos, «cariño», «hijos». Nunca se enfada de verdad.",
+      voice: "Refranes, diminutivos y consejos tranquilos de abuela, sin repetir siempre el mismo refrán.",
       talkativeness: 0.6,
       lines: {
         victory_win: [
@@ -416,8 +443,14 @@ export const CHARACTERS: readonly Character[] = [
           "Terminé. No he ganado, pero me lo he pasado de maravilla.",
           "Fin para mí. Ahora, a por la merienda.",
         ],
+        ambient_lead: [
+          "Ay, quién me lo iba a decir: la primera, y sin prisas.",
+          "Delante de todos, hijos, y sin correr ni un poquito.",
+          "La abuela va en cabeza. Tomad nota, cariños.",
+          "{rival}, cariño, te espero en la meta con un caldito.",
+        ],
         ambient_ahead: [
-          "Voy bien, ¿eh? Sin correr, pero sin parar.",
+          "Sin correr, pero sin parar, cariño.",
           "{rival}, cariño, no te quedes atrás.",
           "Poquito a poco voy llegando.",
           "Ay, qué tranquila voy. Así da gusto.",
@@ -450,6 +483,7 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Informal y teatral, como un comentarista: bromas, supersticiones y juegos de palabras.",
+      voice: "Comentarista imprevisible y expresivo, supersticioso con el dado: cada frase, una ocurrencia nueva.",
       talkativeness: 1,
       lines: {
         victory_win: [
@@ -522,11 +556,17 @@ export const CHARACTERS: readonly Character[] = [
           "Fin de mi carrera. ¡Qué viaje, señores!",
           "¡Listo! Misión cumplida.",
         ],
-        ambient_ahead: [
+        ambient_lead: [
           "¡Voy en cabeza! Que no pare la música.",
-          "{rival}, ¿te has quedado a merendar? Vas muy atrás.",
           "Voy ganando, señores. Que siga la fiesta.",
+          "¡Primero en la tabla! Que lo apunte el narrador.",
+          "{rival}, desde aquí arriba casi no te veo.",
+        ],
+        ambient_ahead: [
+          "{rival}, ¿te has quedado a merendar? Vas muy atrás.",
           "¡Hoy es mi día! O eso dice mi amuleto.",
+          "¡Qué partida, señores! Esto está que arde.",
+          "El dado me guiña un ojo. Buena señal.",
         ],
         ambient_behind: [
           "{rival} va a toda máquina. Pero aquí hay partido.",
@@ -557,8 +597,12 @@ export function getStrategy(playerId: PlayerId): StrategyProfile {
 if (CHARACTERS.some((c, i) => c.color !== COLORS[i])) {
   throw new Error("CHARACTERS debe seguir el orden de COLORS del motor");
 }
-for (const { id, strategy, chat } of CHARACTERS) {
+for (const { id, strategy, chat, catchphrases } of CHARACTERS) {
   if (!(chat.talkativeness > 0 && chat.talkativeness <= 1)) throw new Error(`Frecuencia de chat no válida en ${id}`);
+  const plain = (text: string) => text.toLowerCase().replace(/[¡!¿?….,]/g, "").trim();
+  if (!chat.voice.trim() || catchphrases.some((c) => plain(chat.voice).includes(plain(c)))) {
+    throw new Error(`El estilo de ${id} no puede estar vacío ni contener sus coletillas literales`);
+  }
   if (CHAT_LINE_KINDS.some((kind) => chat.lines[kind].length === 0)) throw new Error(`Faltan frases de chat en ${id}`);
   for (const kind of CHAT_LINE_KINDS) {
     for (const line of chat.lines[kind]) {

@@ -109,5 +109,12 @@ export const DirectorStateSchema = z.object({
   usedLines: z
     .record(z.string(), z.array(z.string()).max(CHAT_LIMITS.usedLinesPerCharacter))
     .default({}),
+  /**
+   * Coletillas que cada personaje ya ha publicado en la partida (índices de `character.catchphrases`,
+   * sin repetir), de mensajes del LLM o locales. Un estado guardado sin este campo se lee como vacío.
+   */
+  usedCatchphrases: z
+    .record(z.string(), z.array(z.number().int().min(0)).max(CHAT_LIMITS.usedCatchphrasesPerCharacter))
+    .default({}),
 });
 export type DirectorState = z.infer<typeof DirectorStateSchema>;

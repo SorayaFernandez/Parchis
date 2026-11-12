@@ -6,6 +6,7 @@
 import type { GameEvent, GameState, PlayerId } from "@/lib/engine";
 import { getCharacter, type ChatLineKind } from "@/lib/game/characters";
 import { getPlayerSummaries } from "@/lib/hud/summary";
+import { addCatchphrases, detectCatchphrases } from "./catchphrases";
 import { CHAT_LIMITS, REPLY_CHANCE, TRIGGER_CHANCE } from "./config";
 import type { ChatTrigger, DirectorState } from "./schemas";
 
@@ -67,6 +68,7 @@ export const initialDirectorState = (): DirectorState => ({
   captures: [],
   recent: [],
   usedLines: {},
+  usedCatchphrases: {},
 });
 
 const RELEVANT_EVENTS = new Set<GameEvent["type"]>([
@@ -102,7 +104,7 @@ function pick<T>(items: readonly T[], weight: (item: T) => number, random: Rando
 const clamp01 = (r: number) => (Number.isFinite(r) ? Math.min(Math.max(r, 0), 0.999_999) : 0);
 const chance = (p: number, random: Random) => clamp01(random()) < p;
 
-interface Candidate {
+export interface Candidate {
   speaker: PlayerId;
   kind: ChatLineKind;
   rival: PlayerId | null;
@@ -256,23 +258,42 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
     version % CHAT_LIMITS.ambientCheckEvery === 0 &&
     (director.lastMessageVersion === null ? version : sinceLast) >= CHAT_LIMITS.silenceVersions
   ) {
-    // Solo quienes siguen jugando: quien ya terminó no "va delante" ni "va a alcanzar" a nadie.
-    const order = getPlayerSummaries(state)
-      .filter((s) => !state.ranking.includes(s.id))
-      .sort((a, b) => b.progress - a.progress)
-      .map((s) => s.id);
-    const leader = order[0];
-    const last = order[order.length - 1];
-    const candidates: Candidate[] = order.map((id) => {
-      const ahead = order.indexOf(id) < order.length / 2;
-      const rival = ahead ? (id === last ? null : last) : id === leader ? null : leader;
-      return { speaker: id, kind: ahead ? "ambient_ahead" : "ambient_behind", rival, weight: talk(id) };
-    });
+    const candidates = ambientCandidates(state);
     const plan = choose("ambient", TRIGGER_CHANCE.ambient, candidates, false);
     if (plan) return done(plan);
   }
 
   return done([]);
+}
+
+/**
+ * Candidatos del comentario de ambiente. La clasificación usa el progreso real y es independiente del
+ * orden de los jugadores (un empate no favorece a nadie):
+ * - Primero en solitario (progreso estrictamente mayor que el de todos): `ambient_lead`, el único tipo
+ *   que puede afirmar que va ganando. Su rival, si lo nombra, es el último en solitario.
+ * - Los demás pueden decir algo neutral de progreso (`ambient_ahead`, que no afirma posición; su rival,
+ *   si lo nombra, es el último en solitario) o, si alguien va por delante de ellos, que van por detrás
+ *   (`ambient_behind`, «voy perdiendo»; su rival, si lo nombra, es el primero en solitario).
+ * - Con un empate en cabeza nadie lidera; con todos empatados solo hay frases neutrales.
+ * La frecuencia no cambia: el peso total de cada personaje es su `talkativeness`, repartido entre los
+ * tipos que puede usar. Solo cuentan quienes siguen jugando.
+ */
+export function ambientCandidates(state: GameState): Candidate[] {
+  const players = getPlayerSummaries(state).filter((s) => !state.ranking.includes(s.id));
+  if (players.length === 0) return [];
+  const max = Math.max(...players.map((p) => p.progress));
+  const min = Math.min(...players.map((p) => p.progress));
+  const atMax = players.filter((p) => p.progress === max);
+  const atMin = players.filter((p) => p.progress === min);
+  const soleLeader = players.length > 1 && atMax.length === 1 ? atMax[0].id : null;
+  const soleLast = players.length > 1 && atMin.length === 1 && max !== min ? atMin[0].id : null;
+
+  return players.flatMap(({ id, progress }): Candidate[] => {
+    if (id === soleLeader) return [{ speaker: id, kind: "ambient_lead", rival: soleLast, weight: talk(id) }];
+    const kinds: Pick<Candidate, "kind" | "rival">[] = [{ kind: "ambient_ahead", rival: soleLast !== id ? soleLast : null }];
+    if (progress < max) kinds.push({ kind: "ambient_behind", rival: soleLeader });
+    return kinds.map((k) => ({ speaker: id, ...k, weight: talk(id) / kinds.length }));
+  });
 }
 
 /**
@@ -288,8 +309,10 @@ export function trackCaptures(director: DirectorState, version: number, events: 
 }
 
 /**
- * Registra lo publicado de verdad: tiempos de habla, textos recientes y las frases usadas por cada
- * personaje (`lineId`, si el escritor lo indica; el de un LLM no lo tendrá).
+ * Registra lo publicado de verdad: tiempos de habla, textos recientes, las frases usadas por cada
+ * personaje (`lineId`, si el escritor lo indica; el de un LLM no lo tendrá) y las coletillas que ha
+ * publicado (`usedCatchphrases`, de cualquier escritor). Se guarda con `chat_commit`, en la misma
+ * transacción que los mensajes.
  */
 export function recordPublished(
   director: DirectorState,
@@ -299,8 +322,15 @@ export function recordPublished(
   if (published.length === 0) return director;
   const lastSpokeAt = { ...director.lastSpokeAt };
   const usedLines = { ...director.usedLines };
+  const usedCatchphrases = { ...director.usedCatchphrases };
   for (const p of published) {
     lastSpokeAt[p.speaker] = version;
+    // Coletillas de quien habla en el texto publicado (del LLM o local). Solo lo publicado de verdad:
+    // las respuestas rechazadas nunca llegan aquí.
+    const detected = detectCatchphrases(p.speaker, p.text);
+    if (detected.length > 0) {
+      usedCatchphrases[p.speaker] = addCatchphrases(usedCatchphrases[p.speaker] ?? [], detected, CHAT_LIMITS.usedCatchphrasesPerCharacter);
+    }
     if (p.lineId) {
       const previous = (usedLines[p.speaker] ?? []).filter((id) => id !== p.lineId);
       usedLines[p.speaker] = [...previous, p.lineId].slice(-CHAT_LIMITS.usedLinesPerCharacter);
@@ -311,6 +341,7 @@ export function recordPublished(
     lastMessageVersion: version,
     lastSpokeAt,
     usedLines,
+    usedCatchphrases,
     recent: [...director.recent, ...published.map((p) => ({ speaker: p.speaker, text: p.text }))].slice(-CHAT_LIMITS.recentTexts),
   };
 }
