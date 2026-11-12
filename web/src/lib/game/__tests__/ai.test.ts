@@ -3,12 +3,19 @@ import {
   START_POSITIONS,
   MAIN_TRACK_SIZE,
   applyAction,
+  canMovePiece,
   createGame,
   getAvailableMoves,
+  getMoveDistance,
+  isSafeCell,
+  getBlockades,
+  getLegalMoves,
+  getRealBoardPosition,
+  isOnMainTrack,
   type Color,
   type GameState,
 } from "@/lib/engine";
-import { chooseMove, decideAction, scoreMove } from "../ai";
+import { chooseMove, createSeededRandom, decideAction, scoreMove } from "../ai";
 import { CHARACTER_IDS } from "../characters";
 
 const stepsAt = (color: Color, cell: number) => (cell - START_POSITIONS[color] + MAIN_TRACK_SIZE) % MAIN_TRACK_SIZE;
@@ -113,4 +120,131 @@ describe("decideAction", () => {
       expect(state.winner).toBe(state.ranking[0]);
     }
   });
+});
+
+describe("barreras: la IA y los bonus respetan las mismas reglas que el motor", () => {
+  it("en partidas completas, ninguna jugada (de dado o de bonus) atraviesa ni cae en una barrera y nunca hay más de dos fichas por casilla", () => {
+    let moves = 0;
+    let bonusMoves = 0;
+    for (let g = 0; g < 12; g++) {
+      const random = createSeededRandom(500 + g);
+      let state: GameState = createGame([...CHARACTER_IDS]);
+      for (let i = 0; i < 4000 && state.status === "playing"; i++) {
+        const action = decideAction(state, () => 1 + Math.floor(random() * 6), random);
+        const result = applyAction(state, action);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        if (action.type === "move") {
+          moves++;
+          if (state.pendingBonus) bonusMoves++;
+          const player = state.players.find((p) => p.id === action.playerId)!;
+          const from = player.pieces[action.pieceIndex];
+          const to = result.state.players.find((p) => p.id === action.playerId)!.pieces[action.pieceIndex];
+          if (from.steps >= 0 && isOnMainTrack(from)) {
+            const blocked = new Set(getBlockades(state).map((b) => b.cell));
+            const start = getRealBoardPosition(player.color, from.steps);
+            for (let s = from.steps + 1; s <= Math.min(to.steps, 63); s++) {
+              const cell = getRealBoardPosition(player.color, s);
+              expect(cell !== start && blocked.has(cell), `${player.color} ${from.steps}→${to.steps} por ${cell}`).toBe(false);
+            }
+          }
+        }
+        const perCell = new Map<number, number>();
+        for (const p of result.state.players) {
+          for (const piece of p.pieces) {
+            if (!isOnMainTrack(piece)) continue;
+            const cell = getRealBoardPosition(p.color, piece.steps);
+            perCell.set(cell, (perCell.get(cell) ?? 0) + 1);
+          }
+        }
+        expect(Math.max(0, ...perCell.values())).toBeLessThanOrEqual(2);
+        state = result.state;
+      }
+    }
+    expect(moves).toBeGreaterThan(1000);
+    expect(bonusMoves).toBeGreaterThan(0);
+  }, 30_000);
+});
+
+describe("salida con 5 y apertura con 6: la IA recibe los mismos movimientos que el motor", () => {
+  it("con un 5 y fichas en casa solo puede sacar ficha; con un 6 y una barrera propia, solo abrirla", () => {
+    const exit = rolled(setup({ pink: [10, -1, -1, -1] }), 5);
+    expect(getAvailableMoves(exit)).toEqual(getLegalMoves(exit, exit.turn, 5));
+    expect(getAvailableMoves(exit)).toEqual([1, 2, 3]);
+    expect(decideAction(exit, () => 1)).toMatchObject({ type: "move", pieceIndex: 1 });
+    expect(() => chooseMove(exit, [0])).toThrow(); // una jugada que el motor no ofrece no se puede elegir
+
+    const six = rolled(setup({ pink: [3, 3, 20, -1] }), 6);
+    expect(getAvailableMoves(six)).toEqual(getLegalMoves(six, six.turn, 6));
+    expect(getAvailableMoves(six)).toEqual([0, 1]);
+    const action = decideAction(six, () => 1);
+    expect(action.type === "move" && [0, 1].includes(action.pieceIndex)).toBe(true);
+  });
+});
+
+/**
+ * Oráculo independiente (no usa `getLegalMoves` ni `getBlockades`): movimientos válidos según
+ * `canMovePiece`, filtrados por las dos obligaciones escritas desde la regla.
+ */
+function expectedMoves(state: GameState, distance: number): { moves: number[]; obligation: "exit" | "open" | null } {
+  const player = state.players.find((p) => p.id === state.turn)!;
+  const valid = [0, 1, 2, 3].filter((i) => canMovePiece(state, player.id, i, distance).ok);
+  if (distance === 5) {
+    const exits = valid.filter((i) => player.pieces[i].steps < 0);
+    return exits.length > 0 ? { moves: exits, obligation: "exit" } : { moves: valid, obligation: null };
+  }
+  if (distance !== 6) return { moves: valid, obligation: null };
+  const onTrack = (color: Color, steps: number) => steps >= 0 && steps < MAIN_TRACK_SIZE;
+  const cellOf = (i: number) => (onTrack(player.color, player.pieces[i].steps) ? getRealBoardPosition(player.color, player.pieces[i].steps) : null);
+  const inBarrier = (i: number) => {
+    const cell = cellOf(i);
+    if (cell === null) return false;
+    const here = state.players.flatMap((p) => p.pieces.filter((x) => onTrack(p.color, x.steps) && getRealBoardPosition(p.color, x.steps) === cell).map(() => p.color));
+    return isSafeCell(cell) ? here.length >= 2 : here.filter((c) => c === player.color).length >= 2;
+  };
+  const openings = valid.filter(inBarrier);
+  return openings.length > 0 ? { moves: openings, obligation: "open" } : { moves: valid, obligation: null };
+}
+
+describe("obligaciones del 5 y del 6: motor, applyAction e IA coinciden con un oráculo independiente", () => {
+  it("en partidas completas, getAvailableMoves = oráculo, la IA elige dentro y applyAction rechaza lo demás con su error", () => {
+    const seen = { exit: 0, open: 0, mixedOpen: 0, rejectedExit: 0, rejectedOpen: 0, decisions: 0 };
+    for (let g = 0; g < 15; g++) {
+      const random = createSeededRandom(900 + g);
+      let state: GameState = createGame([...CHARACTER_IDS]);
+      for (let i = 0; i < 4000 && state.status === "playing"; i++) {
+        const distance = getMoveDistance(state);
+        if (distance !== null) {
+          seen.decisions++;
+          const { moves, obligation } = expectedMoves(state, distance);
+          expect(getAvailableMoves(state), `dado ${distance}`).toEqual(moves);
+          if (obligation) seen[obligation]++;
+          if (obligation === "open") {
+            const player = state.players.find((p) => p.id === state.turn)!;
+            const cell = getRealBoardPosition(player.color, player.pieces[moves[0]].steps);
+            if (state.players.some((p) => p.id !== player.id && p.pieces.some((x) => x.steps >= 0 && x.steps < MAIN_TRACK_SIZE && getRealBoardPosition(p.color, x.steps) === cell))) seen.mixedOpen++;
+          }
+          // Cualquier jugada válida por sí misma pero excluida por la obligación se rechaza con su error.
+          const excluded = [0, 1, 2, 3].filter((k) => !moves.includes(k) && canMovePiece(state, state.turn, k, distance).ok);
+          for (const k of excluded) {
+            const result = applyAction(state, { type: "move", playerId: state.turn, pieceIndex: k });
+            expect(result).toEqual({ ok: false, error: distance === 5 ? "MUST_EXIT_HOME" : "MUST_BREAK_BLOCKADE" });
+            if (distance === 5) seen.rejectedExit++;
+            else seen.rejectedOpen++;
+          }
+        }
+        const action = decideAction(state, () => 1 + Math.floor(random() * 6), random);
+        if (action.type === "move") expect(getAvailableMoves(state)).toContain(action.pieceIndex);
+        const result = applyAction(state, action);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        state = result.state;
+      }
+    }
+    // Que la prueba no sea vacía: las dos obligaciones aparecen y se rechazan jugadas excluidas.
+    expect(seen.exit).toBeGreaterThan(50);
+    expect(seen.open).toBeGreaterThan(5);
+    expect(seen.rejectedExit).toBeGreaterThan(50);
+    expect(seen.rejectedOpen).toBeGreaterThan(0);
+  }, 60_000);
 });

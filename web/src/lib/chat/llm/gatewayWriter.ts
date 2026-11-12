@@ -247,6 +247,26 @@ export function describeCompletion(payload: unknown): string {
 
 const ALL_NAMES = Object.values(CHARACTER_NAMES);
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Nombre como palabra completa (límites Unicode: ni letra ni dígito a los lados), sin distinguir
+ * mayúsculas y con cualquier espacio entre las palabras de un nombre compuesto. Así "bravata" o
+ * "chispazo" no cuentan como "Brava" o "Chispa", pero "¡Chispa!" o "don  ernesto" sí.
+ */
+const NAME_PATTERNS = ALL_NAMES.map((name) => ({
+  name,
+  pattern: new RegExp(`(?<![\\p{L}\\p{N}])${name.split(/\s+/).map(escapeRegExp).join("\\s+")}(?![\\p{L}\\p{N}])`, "iu"),
+}));
+
+/** Forma de las letras de una coincidencia (para el diagnóstico; nunca el texto). */
+function letterCase(match: string): string {
+  if (match === match.toLowerCase()) return "minúsculas";
+  if (match === match.toUpperCase()) return "mayúsculas";
+  const words = match.split(/\s+/);
+  return words.every((w) => w[0] === w[0].toUpperCase() && w.slice(1) === w.slice(1).toLowerCase()) ? "capitalizada" : "mixta";
+}
+
 /**
  * Limpia y comprueba el texto del modelo: primera línea, sin comillas envolventes ni un prefijo
  * "Nombre:"; como mucho `CHAT_LLM.maxChars`; solo puede nombrar a quien habla y a su rival; y pasa la
@@ -257,7 +277,7 @@ export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
   let text = raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? "";
   // Prefijo "Nombre:" o "Nombre -" de cualquier personaje (el modelo a veces firma la frase).
   for (const name of ALL_NAMES) {
-    const prefix = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:：\\-—]\\s*`, "i");
+    const prefix = new RegExp(`^${escapeRegExp(name)}\\s*[:：\\-—]\\s*`, "i");
     if (prefix.test(text)) {
       if (name !== CHARACTER_NAMES[request.utterance.speaker]) throw new ChatLlmError("invalid_response", "habla como otro personaje");
       text = text.replace(prefix, "");
@@ -268,9 +288,14 @@ export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
   if (text.length > CHAT_LLM.maxChars) throw new ChatLlmError("invalid_response", "texto demasiado largo");
   if (/https?:|www\.|[*#`@]/i.test(text)) throw new ChatLlmError("invalid_response", "formato no permitido");
   const allowed = new Set([CHARACTER_NAMES[request.utterance.speaker], request.utterance.rival ? CHARACTER_NAMES[request.utterance.rival] : ""]);
-  const lower = text.toLowerCase();
-  if (ALL_NAMES.some((name) => !allowed.has(name) && lower.includes(name.toLowerCase()))) {
-    throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención");
+  for (const { name, pattern } of NAME_PATTERNS) {
+    if (allowed.has(name)) continue;
+    const match = pattern.exec(text);
+    if (match) {
+      // Diagnóstico: el nombre del catálogo y la forma de la coincidencia, nunca el texto del modelo.
+      const detail = `nombre=${name} coincidencia=palabra forma=${letterCase(match[0])}`;
+      throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención", undefined, detail);
+    }
   }
   const valid = validateChatText(text, request.recent);
   if (valid === null) throw new ChatLlmError("invalid_response", "texto repetido o no válido");
@@ -342,7 +367,8 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       } catch (error) {
         // Mismo error, con un resumen solo estructural de la respuesta (nunca su texto) para el registro.
         const base = error instanceof ChatLlmError ? error : new ChatLlmError("invalid_response", "respuesta no válida");
-        return fail(new ChatLlmError(base.kind, base.message, base.status, describeCompletion(payload)));
+        const detail = [base.detail, describeCompletion(payload)].filter(Boolean).join(" ");
+        return fail(new ChatLlmError(base.kind, base.message, base.status, detail));
       }
     },
   };

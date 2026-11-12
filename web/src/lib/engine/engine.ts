@@ -7,6 +7,7 @@ import {
   BASE_STEPS,
   CAPTURE_BONUS,
   COLORS,
+  EXIT_ROLL,
   EXTRA_ROLL_VALUE,
   GOAL_BONUS,
   MAX_CONSECUTIVE_SIXES,
@@ -166,10 +167,10 @@ function move(state: GameState, playerId: PlayerId, pieceIndex: number): ActionR
   const validation = canMovePiece(state, playerId, pieceIndex, distance);
   if (!validation.ok) return validation;
   // Se valida contra los movimientos legales (no solo contra canMovePiece). Así se
-  // aplica en el servidor la obligación de abrir barrera con un 6, que en el original
-  // solo se respetaba en la interfaz.
+  // aplican en el servidor las obligaciones de sacar ficha con un 5 y de abrir barrera
+  // con un 6 (en el original, la del 6 solo se respetaba en la interfaz).
   if (!getLegalMoves(state, playerId, distance).includes(pieceIndex)) {
-    return { ok: false, error: "MUST_BREAK_BLOCKADE" };
+    return { ok: false, error: distance === EXIT_ROLL ? "MUST_EXIT_HOME" : "MUST_BREAK_BLOCKADE" };
   }
 
   const next = structuredClone(state);

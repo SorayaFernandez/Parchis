@@ -86,8 +86,9 @@ export function canMovePiece(
     return { ok: true };
   }
 
-  // En el recorrido: ninguna barrera en el camino ni en el destino. Se ignora la
-  // barrera de la casilla de partida, por si la ficha está rompiendo una propia.
+  // En el recorrido: ninguna barrera (de cualquier color, también las de dos colores en un
+  // seguro) en el camino ni en el destino. Se ignora la barrera de la casilla de partida:
+  // una ficha que forma parte de una barrera puede salir de ella, rompiéndola.
   // En el original había una comprobación aparte para el destino, pero este bucle
   // ya lo cubre.
   const startCell = getRealBoardPosition(player.color, piece.steps);
@@ -117,9 +118,15 @@ export function canMovePiece(
 }
 
 /**
- * Índices de las fichas que el jugador puede mover `distance` casillas.
- * Con un 6 de dado, si tiene alguna barrera propia, solo puede mover fichas
- * que la abran (aunque eso deje la lista vacía, igual que en el original).
+ * Índices de las fichas que el jugador puede mover `distance` casillas. Es la única fuente de
+ * movimientos legales: la usan `getAvailableMoves` (y con ella la IA), la validación de
+ * `applyAction` y la concesión de bonus. Dos obligaciones, según el valor:
+ * - Con un 5, si alguna ficha de casa puede salir, hay que sacar una (solo se ofrecen salidas).
+ *   No puede salir si ya hay dos fichas propias en su salida (ver `canMovePiece`).
+ * - Con un 6, si alguna jugada legal abre una barrera en la que participa una ficha propia (del
+ *   mismo color o de dos colores en un seguro), solo se ofrecen esas jugadas. Si ninguna barrera se
+ *   puede abrir, se aplican las reglas normales. Nunca obliga a abrir barreras solo de rivales.
+ * Los bonus (+10/+20) no son ni 5 ni 6, así que no les afecta ninguna de las dos.
  */
 export function getLegalMoves(
   state: GameState,
@@ -131,26 +138,28 @@ export function getLegalMoves(
     if (canMovePiece(state, playerId, i, distance).ok) moves.push(i);
   }
 
+  const player = getPlayer(state, playerId);
+  if (!player || moves.length === 0) return moves;
+
+  if (distance === EXIT_ROLL) {
+    const exits = moves.filter((i) => player.pieces[i].state === "base");
+    return exits.length > 0 ? exits : moves;
+  }
+
   if (distance !== EXTRA_ROLL_VALUE) return moves;
 
-  const player = getPlayer(state, playerId);
-  if (!player) return moves;
+  // Casillas con barrera en las que hay alguna ficha propia (el original solo miraba la primera
+  // barrera de su color y, si no se podía abrir, dejaba al jugador sin movimientos).
+  const cellOf = (piece: Piece) => (isOnMainTrack(piece) ? getRealBoardPosition(player.color, piece.steps) : null);
+  const ownCells = new Set(player.pieces.map(cellOf).filter((cell): cell is number => cell !== null));
+  const barrierCells = new Set(getBlockades(state).map((b) => b.cell).filter((cell) => ownCells.has(cell)));
+  if (barrierCells.size === 0) return moves;
 
-  // El original solo miraba la primera barrera propia; aquí se consideran todas.
-  const ownBlockadeCells = new Set(
-    getBlockades(state)
-      .filter((b) => b.color === player.color)
-      .map((b) => b.cell),
-  );
-  if (ownBlockadeCells.size === 0) return moves;
-
-  return moves.filter((i) => {
-    const piece = player.pieces[i];
-    return (
-      isOnMainTrack(piece) &&
-      ownBlockadeCells.has(getRealBoardPosition(player.color, piece.steps))
-    );
+  const openings = moves.filter((i) => {
+    const cell = cellOf(player.pieces[i]);
+    return cell !== null && barrierCells.has(cell);
   });
+  return openings.length > 0 ? openings : moves;
 }
 
 export function toPosition(piece: Piece): PiecePosition {

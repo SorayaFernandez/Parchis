@@ -73,9 +73,9 @@ export const EXTRA_ROLL_VALUE = 6;
 /** Seises seguidos que provocan la penalización. */
 export const MAX_CONSECUTIVE_SIXES = 3;
 
-/** Máximo de fichas en una casilla segura y en una normal. */
+/** Máximo de fichas en una casilla segura y en una normal (dos en cualquier casilla). */
 export const MAX_PIECES_SAFE_CELL = 2;
-export const MAX_PIECES_NORMAL_CELL = 4;
+export const MAX_PIECES_NORMAL_CELL = 2;
 
 /** Máximo de fichas en una casilla de salida tras sacar ficha. */
 export const MAX_PIECES_ON_EXIT = 2;

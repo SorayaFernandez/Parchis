@@ -79,7 +79,8 @@ export type MoveError =
   | "BLOCKADE_IN_PATH"
   | "SAFE_CELL_FULL"
   | "CELL_FULL"
-  | "MUST_BREAK_BLOCKADE";
+  | "MUST_BREAK_BLOCKADE"
+  | "MUST_EXIT_HOME";
 
 export type EngineError =
   | MoveError
