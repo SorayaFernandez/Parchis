@@ -7,7 +7,20 @@ import type { Utterance } from "../../director";
 import { drainChat, type ChatDeps } from "../../service";
 import { createLocalWriter, type ChatWriteRequest } from "../../writer";
 import { createMemoryChatStore } from "../../__tests__/memoryChatStore";
-import { ChatLlmError, cleanLlmText, createGatewayWriter, createImportantOnlyWriter, createLlmBreaker, type LlmBreaker } from "../gatewayWriter";
+import { logChatError } from "../../log";
+import {
+  ChatLlmError,
+  cleanLlmText,
+  createGatewayWriter,
+  createImportantOnlyWriter,
+  createLlmBreaker,
+  describeHttpError,
+  redactSecrets,
+  type LlmBreaker,
+} from "../gatewayWriter";
+
+// `log.ts` importa el almacén del chat (solo servidor).
+vi.mock("server-only", () => ({}));
 
 const KEY = "clave-secreta-de-prueba-123";
 const MODEL = "nvidia/nemotron-3.5-lightning-free";
@@ -152,6 +165,108 @@ describe("errores HTTP y corte temporal", () => {
     const text = JSON.stringify({ message: t.failures[0].message, kind: t.failures[0].kind, status: t.failures[0].status });
     expect(text).not.toContain(KEY);
     expect(text).not.toMatch(/Eres|Situación/);
+  });
+});
+
+describe("diagnóstico de errores HTTP (resumen saneado)", () => {
+  const VERCEL_ID = "cdg1::iad1::abcde-1731400000000-0123456789ab";
+  const TOKEN = "vck_1A2b3C4d5E6f7G8h9I0jKlMnOp";
+  const jsonError = (status: number, error: unknown, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json; charset=utf-8", "x-vercel-id": VERCEL_ID, ...headers } });
+  const failWith = async (response: Response) => {
+    const t = writerWith(() => response);
+    const error = await t.writer.write(request()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ChatLlmError);
+    return { error: error as ChatLlmError, t };
+  };
+
+  it("JSON con `error`: content-type, x-vercel-id, type, code y message", async () => {
+    const { error, t } = await failWith(jsonError(403, { type: "forbidden", code: "customer_verification_required", message: "Access denied for this team." }));
+    expect(error).toMatchObject({ kind: "http", status: 403, message: "AI Gateway respondió 403" }); // el mensaje no cambia
+    expect(error.detail).toBe(
+      `content-type=application/json x-vercel-id=${VERCEL_ID} error.type=forbidden error.code=customer_verification_required error.message=Access denied for this team.`,
+    );
+    expect(t.failures[0].detail).toBe(error.detail);
+  });
+
+  it("JSON con `error` de texto, sin `error` o con campos que no son texto", async () => {
+    expect((await failWith(jsonError(403, "No autorizado"))).error.detail).toContain("error.message=No autorizado");
+    expect((await failWith(new Response('{"ok":false}', { status: 403, headers: { "content-type": "application/json" } }))).error.detail).toBe(
+      "content-type=application/json cuerpo=json-sin-error",
+    );
+    const odd = (await failWith(jsonError(403, { type: { a: 1 }, code: 42, message: ["x"] }))).error.detail;
+    expect(odd).toBe(`content-type=application/json x-vercel-id=${VERCEL_ID} error.code=42`);
+  });
+
+  it("HTML u otro texto: solo el tipo de contenido, nunca el cuerpo", async () => {
+    const html = `<html><body>Forbidden. Bearer ${KEY} ${TOKEN}</body></html>`;
+    const { error } = await failWith(new Response(html, { status: 403, headers: { "content-type": "text/html; charset=utf-8" } }));
+    expect(error.detail).toBe("content-type=text/html cuerpo=no-json");
+    const plain = await failWith(new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain" } }));
+    expect(plain.error.detail).toBe("content-type=text/plain cuerpo=no-json");
+  });
+
+  it("cuerpo vacío, ilegible o enorme (lee como mucho 2 KB) y cabeceras con formato no válido", async () => {
+    expect((await failWith(new Response(null, { status: 403 }))).error.detail).toBe("content-type=? cuerpo=vacío");
+    const broken = new ReadableStream<Uint8Array>({ pull: (c) => c.error(new Error("roto")) });
+    expect((await failWith(new Response(broken, { status: 403 }))).error.detail).toBe("content-type=? cuerpo=ilegible");
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({ pull: (c) => { pulls++; c.enqueue(new TextEncoder().encode(`{"error":"${"x".repeat(1000)}`)); } });
+    expect((await failWith(new Response(endless, { status: 403 }))).error.detail).toBe("content-type=? cuerpo=no-json");
+    expect(pulls).toBeLessThanOrEqual(4);
+    const weird = await failWith(jsonError(403, { type: "x" }, { "content-type": "<script>", "x-vercel-id": `Bearer ${KEY}` }));
+    expect(weird.error.detail).toBe("content-type=? x-vercel-id=[no válido] error.type=x");
+  });
+
+  it("enmascara Bearer, la clave y cadenas con aspecto de token; recorta y deja una línea", async () => {
+    const message = `Invalid key ${KEY}. Header: Bearer abc.def-ghi\nToken ${TOKEN} code customer_verification_required`;
+    const { error } = await failWith(jsonError(401, { type: "authentication_error", message }));
+    expect(error.detail).toContain("error.message=Invalid key [oculto]. Header: Bearer [oculto] Token [oculto] code customer_verification_required");
+    expect(error.detail).not.toContain(KEY);
+    expect(error.detail).not.toContain(TOKEN);
+    expect(error.detail).not.toContain("abc.def");
+    expect(redactSecrets("ABCDEFGHIJKLMNOPQRSTUVWXyz", 100)).toBe("[oculto]"); // mayúsculas y minúsculas
+    expect(redactSecrets("model_not_found_for_this_team", 100)).toBe("model_not_found_for_this_team");
+    expect(redactSecrets("a".repeat(300), 200)).toBe(`${"a".repeat(200)}…`);
+    expect(redactSecrets("short-secret-1", 100, "short-secret-1")).toBe("[oculto]");
+    expect(await describeHttpError(jsonError(403, { message: `x ${TOKEN}` }))).not.toContain(TOKEN);
+  });
+
+  it("el registro incluye el resumen sin secretos ni prompt, y sigue limitado a uno por minuto por tipo", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stage = "escritor LLM (prueba de diagnóstico)";
+      const first = (await failWith(jsonError(403, { type: "forbidden", message: `Bearer ${KEY} ${TOKEN}` }))).error;
+      logChatError(stage, first, 5_000_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const line = String(spy.mock.calls[0][0]);
+      expect(line).toBe(`[chat] ${stage}: LLM http (403) content-type=application/json x-vercel-id=${VERCEL_ID} error.type=forbidden error.message=Bearer [oculto] [oculto]`);
+      expect(line).not.toContain(KEY);
+      expect(line).not.toContain(TOKEN);
+      expect(line).not.toMatch(/Eres|Situación|Authorization/);
+      // Otro identificador de petición dentro del mismo minuto: no se registra otra vez.
+      const second = (await failWith(jsonError(403, { type: "forbidden" }, { "x-vercel-id": "cdg1::iad1::otro-1731400000001-ffff" }))).error;
+      logChatError(stage, second, 5_030_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      logChatError(stage, second, 5_061_000);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("se mantiene el corte temporal y la reserva local aunque el cuerpo no se pueda leer", async () => {
+    let now = 1_000_000;
+    const broken = () => new Response(new ReadableStream<Uint8Array>({ pull: (c) => c.error(new Error("roto")) }), { status: 403 });
+    const t = writerWith(broken, { now: () => now });
+    await expect(t.writer.write(request())).rejects.toMatchObject({ kind: "http", status: 403, detail: "content-type=? cuerpo=ilegible" });
+    expect(t.breaker.blockedUntil).toBe(1_000_000 + CHAT_LLM.configErrorCooldownMs);
+    now += 1;
+    await expect(t.writer.write(request())).rejects.toMatchObject({ kind: "cooldown" });
+    expect(t.calls).toHaveLength(1);
+    const html = writerWith(() => new Response("<html>x</html>", { status: 500, headers: { "content-type": "text/html" } }), { now: () => 0 });
+    await expect(html.writer.write(request())).rejects.toMatchObject({ kind: "http", status: 500 });
+    expect(html.breaker.blockedUntil).toBe(CHAT_LLM.serverErrorCooldownMs);
   });
 });
 

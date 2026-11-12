@@ -5,7 +5,8 @@
 // - Cualquier problema LANZA un `ChatLlmError`: el servicio usa entonces el escritor local, una vez.
 // - Corte temporal (en memoria del proceso) ante errores de configuración o cuota (401/402/403/404),
 //   429 (con `Retry-After`) y 5xx: mientras dura, falla al instante sin llamar.
-// Nunca registra la clave, el prompt ni la respuesta.
+// Nunca registra la clave, el prompt ni la respuesta del modelo. De una respuesta HTTP de error solo
+// guarda un resumen saneado (`describeHttpError`): content-type, x-vercel-id y error.type/code/message.
 
 import { CHARACTER_NAMES } from "@/lib/game/characters";
 import { CHAT_LIMITS, CHAT_LLM } from "../config";
@@ -32,6 +33,8 @@ export class ChatLlmError extends Error {
     /** Solo para el registro: nunca contiene la clave, el prompt ni la respuesta. */
     message: string,
     readonly status?: number,
+    /** Solo en `http`: resumen saneado de la respuesta de error (ver `describeHttpError`). */
+    readonly detail?: string,
   ) {
     super(message);
   }
@@ -66,6 +69,100 @@ function cooldownFor(status: number, retryAfter: string | null): number {
   if ([401, 402, 403, 404].includes(status)) return CHAT_LLM.configErrorCooldownMs;
   if (status >= 500) return CHAT_LLM.serverErrorCooldownMs;
   return 0; // 400 u otros: error de esta petición, sin corte
+}
+
+/** Bytes del cuerpo de una respuesta de error que se leen como máximo. */
+const ERROR_BODY_MAX_BYTES = 2048;
+
+/** Lee como mucho `maxBytes` del cuerpo y cancela el resto. */
+async function readLimited(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+  const bytes = new Uint8Array(Math.min(size, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const part = chunk.subarray(0, bytes.length - offset);
+    bytes.set(part, offset);
+    offset += part.length;
+    if (offset >= bytes.length) break;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Oculta secretos en un texto que viene de fuera antes de registrarlo: la propia clave (si la
+ * conocemos), `Bearer <algo>` y cualquier cadena con aspecto de token (24+ caracteres alfanuméricos,
+ * `_` o `-`, con algún dígito o con mayúsculas y minúsculas). Además lo deja en una línea y lo recorta.
+ */
+export function redactSecrets(value: string, maxLength: number, apiKey?: string): string {
+  let text = value;
+  if (apiKey) text = text.split(apiKey).join("[oculto]");
+  text = text
+    .replace(/Bearer\s+\S+/gi, "Bearer [oculto]")
+    // Con un dígito o con mayúsculas y minúsculas: así no se ocultan códigos como `model_not_found_for_team`.
+    .replace(/[A-Za-z0-9_-]{24,}/g, (m) => (/\d/.test(m) || (/[a-z]/.test(m) && /[A-Z]/.test(m)) ? "[oculto]" : m))
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
+/**
+ * Resumen saneado de una respuesta HTTP de error, para el registro: `content-type` (solo el tipo),
+ * `x-vercel-id` (solo si tiene su formato) y, si el cuerpo es JSON con `error`, sus campos `type`,
+ * `code` y `message`, enmascarados y recortados. Nunca el cuerpo completo (p. ej., una página HTML).
+ * Nunca lanza.
+ */
+export async function describeHttpError(response: Response, apiKey?: string): Promise<string> {
+  const parts: string[] = [];
+  const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  parts.push(`content-type=${/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(contentType) && contentType.length <= 100 ? contentType : "?"}`);
+  const vercelId = (response.headers.get("x-vercel-id") ?? "").trim();
+  if (vercelId !== "") parts.push(`x-vercel-id=${/^[A-Za-z0-9:_-]{1,128}$/.test(vercelId) && vercelId.includes("::") ? vercelId : "[no válido]"}`);
+
+  let raw: string;
+  try {
+    raw = await readLimited(response, ERROR_BODY_MAX_BYTES);
+  } catch {
+    parts.push("cuerpo=ilegible");
+    return parts.join(" ");
+  }
+  if (raw.trim() === "") {
+    parts.push("cuerpo=vacío");
+    return parts.join(" ");
+  }
+  let error: unknown;
+  try {
+    error = (JSON.parse(raw) as { error?: unknown } | null)?.error;
+  } catch {
+    parts.push("cuerpo=no-json");
+    return parts.join(" ");
+  }
+  if (typeof error === "string") {
+    parts.push(`error.message=${redactSecrets(error, 200, apiKey)}`);
+    return parts.join(" ");
+  }
+  if (typeof error !== "object" || error === null) {
+    parts.push("cuerpo=json-sin-error");
+    return parts.join(" ");
+  }
+  const fields = error as Record<string, unknown>;
+  for (const [name, max] of [["type", 60], ["code", 60], ["message", 200]] as const) {
+    const value = fields[name];
+    if (typeof value === "string" || typeof value === "number") parts.push(`error.${name}=${redactSecrets(String(value), max, apiKey)}`);
+  }
+  return parts.join(" ");
 }
 
 const ALL_NAMES = Object.values(CHARACTER_NAMES);
@@ -143,8 +240,9 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       if (!response.ok) {
         const cooldown = cooldownFor(response.status, response.headers.get("Retry-After"));
         if (cooldown > 0) deps.breaker.blockedUntil = Math.max(deps.breaker.blockedUntil, now() + cooldown);
-        void response.body?.cancel().catch(() => {});
-        fail(new ChatLlmError("http", `AI Gateway respondió ${response.status}`, response.status));
+        // Corte temporal ya aplicado. Se lee un resumen saneado del error (limitado) para el registro.
+        const detail = await describeHttpError(response, deps.config.apiKey).catch(() => "cuerpo=ilegible");
+        fail(new ChatLlmError("http", `AI Gateway respondió ${response.status}`, response.status, detail));
       }
 
       let payload: unknown;
