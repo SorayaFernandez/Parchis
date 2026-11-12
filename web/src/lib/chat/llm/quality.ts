@@ -23,6 +23,7 @@ export const QUALITY_REASONS = [
   "expresión característica repetida",
   "expresión ajena al parchís",
   "afirmación no respaldada",
+  "habla de sí mismo en tercera persona",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -151,10 +152,13 @@ function checkUsted(text: string, speaker: string): QualityIssue | null {
 
 // ── 5. Coletillas repetidas ────────────────────────────────────────────────────────────────────────
 
-/** La coletilla como frase propia: entre el inicio o un signo y el final o un signo («¡A casa, …!»). */
+/**
+ * La coletilla al inicio de una frase (tras el inicio o un signo), siga o no con más palabras:
+ * «¡A casa!», «¡A casa, Chispa!» y «¡A casa con eso!» son la misma expresión; «Vuelve a casa», no.
+ */
 const clauseRe = (phrase: string) => {
   const words = normalize(phrase).replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).map(escape).join("\\s+");
-  return new RegExp(`(?:^|[¡!¿?.,;:…—«»"“”-])\\s*${words}\\s*(?=$|[¡!¿?.,;:…—«»"“”-])`, "u");
+  return new RegExp(`(?:^|[¡!¿?.,;:…—«»"“”-])\\s*${words}(?![\\p{L}\\p{N}])`, "u");
 };
 
 function checkRepeatedCatchphrase(text: string, request: ChatWriteRequest): QualityIssue | null {
@@ -206,7 +210,7 @@ const STATE_CLAIMS: readonly RegExp[] = [
 const RESULT_CLAIM =
   /(?<![\p{L}])(?:he|has|ha|hemos|habeis|han)\s+(?:ganado(?:\s+la\s+partida)?(?=\s*(?:$|[!.?,;…])|\s+la\s+partida)|perdido\s+la\s+partida)/u;
 /** Hablar de rachas o de capturas seguidas: solo en las intervenciones de racha. */
-const STREAK_CLAIM = /(?<![\p{L}])(?:racha|rachas|seguidas|seguidos)(?![\p{L}])/u;
+const STREAK_CLAIM = /(?<![\p{L}])(?:racha|rachas|seguidas|seguidos|consecutivas|consecutivos)(?![\p{L}])/u;
 
 function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | null {
   const t = normalize(text);
@@ -225,6 +229,141 @@ function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | 
   return null;
 }
 
+// ── Hablar de sí mismo en tercera persona ──────────────────────────────────────────────────────────
+
+/**
+ * Nombres y alias con los que un personaje podría nombrarse a sí mismo. «la abuela» no está para Pilar:
+ * hablar de sí misma como «la abuela» es parte de su personaje (sus frases locales lo usan: «La abuela
+ * también sabe», «a la abuela se la respeta»).
+ */
+const SELF_NAMES: Readonly<Record<string, readonly string[]>> = {
+  "ai-pink": ["brava"],
+  "ai-purple": ["don ernesto", "ernesto"],
+  "ai-green": ["abuela pilar", "pilar"],
+  "ai-blue": ["chispa"],
+};
+/**
+ * Verbos y partículas en tercera persona que, justo después del propio nombre, forman una frase sobre
+ * sí mismo («Chispa ha caído», «Brava nunca falla»). Solo construcciones inequívocas.
+ */
+const THIRD_PERSON =
+  "(?:ha|va|esta|es|sigue|gana|pierde|se|no|nunca|siempre|tiene|puede|vuelve|lleva|manda|captura|cae|falla|sabe|quiere|juega|avanza|viene|dice|presume|celebra|lamenta)";
+
+/**
+ * El personaje se nombra a sí mismo en tercera persona:
+ * - Con artículo o contracción: «la Chispa», «al Ernesto», «la Pilar».
+ * - Su nombre seguido de un verbo en tercera persona: «Chispa ha caído», «Don Ernesto nunca se equivoca».
+ * Se permite su nombre en otras construcciones («¡Gol de Chispa!», «Soy Brava») y nombrar a los rivales.
+ */
+function checkSelfThirdPerson(text: string, speaker: string): QualityIssue | null {
+  const t = normalize(text);
+  for (const name of SELF_NAMES[speaker] ?? []) {
+    const words = name.split(/\s+/).map(escape).join("\\s+");
+    // Artículo o contracción («al», «del»); «de» no («¡Gol de Chispa!»).
+    const withArticle = new RegExp(`(?<![${LETTER}])(?:el|la|al|del)\\s+${words}(?![${LETTER}])`, "u");
+    if (withArticle.test(t)) return { reason: "habla de sí mismo en tercera persona", term: `artículo+${name}` };
+    const withVerb = new RegExp(`(?<![${LETTER}])${words}\\s+${THIRD_PERSON}(?![${LETTER}])`, "u");
+    if (withVerb.test(t)) return { reason: "habla de sí mismo en tercera persona", term: `${name}+verbo` };
+  }
+  return null;
+}
+
+// ── Cifras de capturas ─────────────────────────────────────────────────────────────────────────────
+
+const NUMBER_WORDS: Readonly<Record<string, number>> = {
+  un: 1, una: 1, uno: 1, dos: 2, "un par de": 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
+  diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+};
+/** Ordinales (sin tildes, tras `normalize`): «la tercera captura», «por segunda vez». */
+const ORDINALS: Readonly<Record<string, number>> = {
+  primera: 1, primer: 1, primero: 1, segunda: 2, segundo: 2, tercera: 3, tercer: 3, tercero: 3, cuarta: 4, cuarto: 4,
+  quinta: 5, quinto: 5, sexta: 6, sexto: 6, septima: 7, setima: 7, octava: 8, novena: 9, decima: 10,
+};
+const NUMBER = "\\d+|un par de|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince";
+const STREAK_WORDS = "seguidas|seguidos|consecutivas|consecutivos";
+/** Palabras de tiempo o turno: «en dos turnos capturas otra» usa «capturas» como verbo, no como cifra. */
+const TIME_WORDS = new Set(["turnos", "tiradas", "rondas", "jugadas", "minutos", "segundos", "movimientos", "vueltas", "partidas"]);
+/** Tras el verbo «capturas» suele venir su complemento («capturas otra», «capturas mi ficha»). */
+const VERB_OBJECT = "otra|otras|una|uno|esa|esas|esta|estas|mi|mis|tu|tus|su|sus|la|las|el|los";
+
+/**
+ * Señales léxicas de que una frase habla de capturas (palabras completas). Hacen falta para que «veces»
+ * o «vez» cuenten como cifra de capturas: «Me has pillado dos veces» sí, «Piénsalo dos veces» no.
+ */
+const CAPTURE_CONTEXT = new RegExp(
+  "(?<![\\p{L}])(?:captur(?:a|as|o|e|es|ado|ada|ados|adas|ar|aste|amos|an)|pill(?:a|as|o|e|es|ado|ada|ados|adas|ar|aste)|" +
+    "caz(?:a|as|o|ado|ada|ados|adas|ar|aste)|comidos?|a\\s+casa|en\\s+poco\\s+tiempo|rachas?|" +
+    STREAK_WORDS +
+    ")(?![\\p{L}])",
+  "u",
+);
+
+/**
+ * Afirmaciones sobre cuántas capturas lleva alguien, dentro de una frase:
+ * - Cifra (en número o en palabra) seguida de «captura(s)», «veces», «seguidas/os» o «consecutivas/os».
+ *   Con «capturas» se admite una palabra en medio («tres buenas capturas»), salvo que sea de tiempo o
+ *   turno, o que «capturas» lleve complemento (entonces es el verbo: «en dos turnos capturas otra»).
+ * - «doble captura» (2) y «triple captura» (3).
+ * - Ordinal en palabra o en cifra («la tercera captura», «por segunda vez», «2ª captura», «3º captura»).
+ * «veces» y «vez» solo cuentan si la frase tiene una señal de captura (`CAPTURE_CONTEXT`).
+ */
+const CARDINAL = new RegExp(`(?<![\\p{L}\\p{N}])(${NUMBER})\\s+(capturas?|veces|${STREAK_WORDS})(?![\\p{L}])`, "gu");
+const CARDINAL_GAP = new RegExp(
+  `(?<![\\p{L}\\p{N}])(${NUMBER})\\s+(\\p{L}+)\\s+(capturas)(?![\\p{L}])(?!\\s+(?:${VERB_OBJECT})(?![\\p{L}]))`,
+  "gu",
+);
+const MULTIPLE = /(?<![\p{L}])(doble|triple)\s+(capturas?)(?![\p{L}])/gu;
+const ORDINAL_WORD = new RegExp(`(?<![\\p{L}])(${Object.keys(ORDINALS).join("|")})\\s+(captura|vez)(?![\\p{L}])`, "gu");
+const ORDINAL_DIGIT = /(?<![\p{L}\p{N}])(\d+)(?:ª|º|°|era|er|ero|a|o)\s+(captura|vez)(?![\p{L}])/gu;
+const STREAK_WORD = new RegExp(`(?<![\\p{L}])(${STREAK_WORDS})(?![\\p{L}])`, "u");
+/** Disparadores en los que acaba de haber una captura (no la victoria). */
+const CAPTURE_TRIGGERS: ReadonlySet<ChatTrigger> = new Set(["capture", "capture_streak", "bad_streak"]);
+
+/** Cifras de capturas de una frase (sin signos de fin de frase). */
+function countClaimsIn(sentence: string): { n: number; noun: string }[] {
+  const claims: { n: number; noun: string }[] = [];
+  const value = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : NUMBER_WORDS[raw]);
+  for (const m of sentence.matchAll(CARDINAL)) claims.push({ n: value(m[1]), noun: m[2] });
+  for (const m of sentence.matchAll(CARDINAL_GAP)) if (!TIME_WORDS.has(m[2])) claims.push({ n: value(m[1]), noun: m[3] });
+  for (const m of sentence.matchAll(MULTIPLE)) claims.push({ n: m[1] === "doble" ? 2 : 3, noun: m[2] });
+  for (const m of sentence.matchAll(ORDINAL_WORD)) claims.push({ n: ORDINALS[m[1]], noun: m[2] });
+  for (const m of sentence.matchAll(ORDINAL_DIGIT)) claims.push({ n: Number(m[1]), noun: m[2] });
+  // «veces» / «vez» sin señal de captura en la frase: no hablan de capturas («Piénsalo dos veces»).
+  const aboutCaptures = CAPTURE_CONTEXT.test(sentence);
+  return claims.filter((c) => aboutCaptures || (c.noun !== "veces" && c.noun !== "vez"));
+}
+
+/**
+ * Las cifras de capturas deben coincidir con el recuento real de la racha (`utterance.streak.count`).
+ * - «una captura» / «la primera captura» se admite en cualquier captura, también en las rachas y en las
+ *   réplicas: habla de la captura que acaba de ocurrir. En la victoria, no. «la primera vez», siempre.
+ * - Cualquier otra cifra exige una racha en la intervención y que coincida con su recuento. Las capturas
+ *   simples y las réplicas no llevan recuento, así que en ellas no está respaldada.
+ * - «seguidas/os» y «consecutivas/os», con cifra o sin ella, solo si hay una racha de capturas
+ *   consecutivas (`streak.consecutive`). En las réplicas (sin datos de racha) no están respaldadas.
+ */
+function checkCountClaims(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const t = normalize(text);
+  const streak = request.utterance.streak ?? null;
+  const real = streak?.count ?? null;
+  const unsupported = (term: string): QualityIssue => ({ reason: "afirmación no respaldada", term });
+  // «la primera vez» no cuenta capturas (se admite siempre); «una captura», solo cuando acaba de haberla.
+  const isThisCapture = (n: number, noun: string) => n === 1 && (noun === "vez" || (noun === "captura" && CAPTURE_TRIGGERS.has(request.utterance.trigger)));
+  const notConsecutive = (word: string) => unsupported(`${word} (${streak ? "real en poco tiempo" : "sin racha"})`);
+
+  for (const sentence of t.split(/[.!?;:…]+/)) {
+    for (const { n, noun } of countClaimsIn(sentence)) {
+      if (isThisCapture(n, noun)) continue;
+      if (real === null || n !== real) return unsupported(`cifra ${n} (real ${real ?? "sin racha"})`);
+      if (STREAK_WORD.test(noun) && !streak?.consecutive) return notConsecutive(noun);
+    }
+  }
+  // «seguidas» / «consecutivas» sin cifra: solo con una racha consecutiva respaldada.
+  const word = STREAK_WORD.exec(t);
+  if (word && !streak?.consecutive) return notConsecutive(word[1]);
+  return null;
+}
+
 // ── Conjunto ───────────────────────────────────────────────────────────────────────────────────────
 
 /** Comprobaciones nuevas de calidad, en orden. Devuelve el primer problema o `null`. */
@@ -233,7 +372,9 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkLanguage(text) ??
     crossedName(text) ??
     checkUsted(text, request.utterance.speaker) ??
+    checkSelfThirdPerson(text, request.utterance.speaker) ??
     checkRepeatedCatchphrase(text, request) ??
+    checkCountClaims(text, request) ??
     checkGameTalk(text, request)
   );
 }

@@ -150,7 +150,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Gané! Y ni me he despeinado.",
           "¡Eso es! Al podio, por la puerta grande.",
           "¡Victoria! Apuntad cómo se hace.",
-          "¡Lo dije desde el principio: esto era mío!",
+          "¡Gané!",
         ],
         victory_reply: [
           "Disfrútalo, {rival}. La próxima es mía.",
@@ -529,7 +529,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Hoy es mi día! O eso dice mi amuleto.",
         ],
         ambient_behind: [
-          "{rival} va lanzado. Pero aquí hay partido.",
+          "{rival} va a toda máquina. Pero aquí hay partido.",
           "Voy perdiendo, pero en las remontadas soy un experto.",
           "¡Que no decaiga! {rival}, te estoy vigilando.",
           "Esto se arregla con un par de seises. Ni uno más.",
