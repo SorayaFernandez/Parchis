@@ -300,8 +300,9 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
         temperature: CHAT_LLM.temperature,
         stream: false,
         // Sin razonamiento (Nemotron): si no, gasta los `max_tokens` razonando y devuelve `content` vacío
-        // (visto en Preview: finish_reason=length, reasoning_tokens=60). En la raíz del cuerpo.
-        chat_template_kwargs: { enable_thinking: false },
+        // (visto en Preview: finish_reason=length, reasoning_tokens=60). Parámetro de AI Gateway en la raíz
+        // del cuerpo; `chat_template_kwargs.enable_thinking` no tuvo efecto a través de AI Gateway.
+        reasoning_effort: "none",
         // Sin `models`: AI Gateway no cambia a otro modelo. Con proveedor fijado, tampoco de proveedor.
         ...(deps.config.provider ? { providerOptions: { gateway: { only: [deps.config.provider] } } } : {}),
       };
