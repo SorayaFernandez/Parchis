@@ -322,4 +322,68 @@ describe("ambiente: liderazgo y posiciones reales", () => {
     expect(kinds.some((u) => u!.kind === "ambient_lead")).toBe(true);
     for (const u of kinds) if (u!.kind === "ambient_lead") expect(u!.speaker).toBe(PILAR);
   });
+
+  // ── Después de la primera victoria (alternativa A, partida 88d4e4f8…) ──
+  const finished = (state: GameState, ranking: string[]): GameState => ({ ...state, ranking });
+  /** Los activos conservan su `talkativeness` completo; quien ya terminó no tiene candidatos. */
+  const activeWeights = (state: GameState) => {
+    for (const id of CHARACTER_IDS) {
+      const total = ambientCandidates(state).filter((c) => c.speaker === id).reduce((n, c) => n + c.weight, 0);
+      expect(total, id).toBeCloseTo(state.ranking.includes(id) ? 0 : talkOf(id));
+    }
+  };
+
+  it("sin nadie terminado, el primero en solitario sigue recibiendo `ambient_lead`", () => {
+    const state = withSteps({ [ERNESTO]: 40, [BRAVA]: 30, [PILAR]: 20, [CHISPA]: 10 });
+    expect(byPlayer(state)[ERNESTO]).toEqual([`ambient_lead:${CHISPA}`]);
+  });
+
+  it("con Chispa ya ganadora: Don Ernesto, primero entre los activos, no lidera y usa `ambient_ahead` (el resto, igual)", () => {
+    const state = finished(withSteps({ [ERNESTO]: 40, [BRAVA]: 30, [PILAR]: 20, [CHISPA]: 75 }), [CHISPA]);
+    expect(byPlayer(state)).toEqual({
+      [ERNESTO]: [`ambient_ahead:${PILAR}`],
+      [BRAVA]: [`ambient_ahead:${PILAR}`, `ambient_behind:${ERNESTO}`],
+      [PILAR]: ["ambient_ahead:-", `ambient_behind:${ERNESTO}`],
+    });
+    activeWeights(state);
+  });
+
+  it("con un ganador, los empates entre los activos se comportan igual que antes", () => {
+    // Empate en cabeza entre Brava y Pilar (Chispa ya ganó): nadie es primero ni último en solitario... salvo Ernesto, último.
+    const tieTop = finished(withSteps({ [BRAVA]: 40, [PILAR]: 40, [ERNESTO]: 10 }), [CHISPA]);
+    expect(byPlayer(tieTop)).toEqual({
+      [BRAVA]: [`ambient_ahead:${ERNESTO}`],
+      [PILAR]: [`ambient_ahead:${ERNESTO}`],
+      [ERNESTO]: ["ambient_ahead:-", "ambient_behind:-"],
+    });
+    activeWeights(tieTop);
+    // Empate total entre los activos: solo frases neutrales, sin rival.
+    const allTied = finished(game(), [CHISPA]);
+    expect(ambientCandidates(allTied).every((c) => c.kind === "ambient_ahead" && c.rival === null)).toBe(true);
+    activeWeights(allTied);
+  });
+
+  it("tras cualquier victoria, nadie recibe `ambient_lead` (gane quien gane, y también con varios terminados)", () => {
+    for (const winner of CHARACTER_IDS) {
+      const others = CHARACTER_IDS.filter((id) => id !== winner);
+      const steps = { [others[0]]: 40, [others[1]]: 20, [others[2]]: 10 };
+      const state = finished(withSteps(steps), [winner]);
+      expect(ambientCandidates(state).some((c) => c.kind === "ambient_lead"), winner).toBe(false);
+      expect(byPlayer(state)[others[0]], winner).toEqual([`ambient_ahead:${others[2]}`]);
+      activeWeights(state);
+      // Con dos terminados, tampoco.
+      const two = finished(withSteps(steps), [winner, others[2]]);
+      expect(ambientCandidates(two).some((c) => c.kind === "ambient_lead"), `${winner} y otro`).toBe(false);
+      activeWeights(two);
+    }
+  });
+
+  it("a través del director: con un ganador, ningún comentario de ambiente es de liderazgo", () => {
+    const state = finished(withSteps({ [ERNESTO]: 40, [BRAVA]: 30, [PILAR]: 20 }), [CHISPA]);
+    const quiet = { lastMessageVersion: 10, lastSpokeAt: {} };
+    const spoken = Array.from({ length: 200 }, (_, s) => plan(routine, { version: 100, state, director: quiet, random: createSeededRandom(s) }).utterances[0]).filter(Boolean);
+    expect(spoken.length).toBeGreaterThan(0);
+    expect(spoken.some((u) => u!.kind === "ambient_lead")).toBe(false);
+    expect(spoken.some((u) => u!.speaker === ERNESTO && u!.kind === "ambient_ahead")).toBe(true);
+  });
 });
