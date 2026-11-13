@@ -187,7 +187,8 @@ async function processItem(
     utterances = plan.utterances;
   }
 
-  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective);
+  const gameStatus = state.success ? state.data.status : undefined;
+  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective, gameStatus);
   next = recordPublished(
     next,
     item.version,
@@ -207,6 +208,7 @@ async function writeUtterances(
   deps: ChatDeps,
   lease: LeaseClock,
   minimal: boolean,
+  gameStatus: GameState["status"] | undefined,
 ): Promise<{ message: QueuedMessage; lineId?: string }[]> {
   const recent: RecentText[] = [...director.recent];
   const messages: QueuedMessage[] = [];
@@ -221,6 +223,7 @@ async function writeUtterances(
       replyToText: replyToSeq === null ? null : messages[replyToSeq].text,
       usedLines: director.usedLines[utterance.speaker] ?? [],
       usedCatchphrases: director.usedCatchphrases[utterance.speaker] ?? [],
+      ...(gameStatus ? { gameStatus } : {}),
     };
     let written = minimal ? await deps.fallbackWriter.write(request) : await writeWithFallback(request, deps, lease);
     let text = written ? validateChatText(written.text, recent) : null;

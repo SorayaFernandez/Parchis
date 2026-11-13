@@ -94,6 +94,11 @@ export interface Character {
   id: PlayerId;
   /** Nombre visible. */
   name: string;
+  /**
+   * Género gramatical con el que se habla de este personaje y con el que él habla de sí mismo
+   * (concordancia de apelativos y adjetivos: «hijita» a Brava, «hijito» a Chispa).
+   */
+  gender: "f" | "m";
   /** Color que le asigna `createGame()` por su posición en el catálogo. */
   color: Color;
   /** Arquetipo en pocas palabras. */
@@ -136,6 +141,7 @@ export const CHARACTERS: readonly Character[] = [
   {
     id: "ai-pink",
     name: "Brava",
+    gender: "f",
     color: "pink",
     title: "La agresiva",
     personality:
@@ -249,6 +255,7 @@ export const CHARACTERS: readonly Character[] = [
   {
     id: "ai-purple",
     name: "Don Ernesto",
+    gender: "m",
     color: "purple",
     title: "El estratega",
     personality:
@@ -357,6 +364,7 @@ export const CHARACTERS: readonly Character[] = [
   {
     id: "ai-green",
     name: "Abuela Pilar",
+    gender: "f",
     color: "green",
     title: "La prudente",
     personality:
@@ -468,6 +476,7 @@ export const CHARACTERS: readonly Character[] = [
   {
     id: "ai-blue",
     name: "Chispa",
+    gender: "m",
     color: "blue",
     title: "El imprevisible",
     personality:

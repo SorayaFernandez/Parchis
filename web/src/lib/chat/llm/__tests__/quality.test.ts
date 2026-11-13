@@ -103,7 +103,13 @@ describe("mensajes naturales que se siguen aceptando", () => {
 
   it("los demás mensajes del LLM de esa partida pasan (rachas en intervenciones de racha, coletilla la primera vez)", () => {
     const badStreak = { kind: "streak_lament" as const, trigger: "bad_streak" as const, streak: { count: 2, consecutive: true } };
-    ok("Ay, mi niña, con dos seguidas ya es castigo divino. Quien mucho abarca, poco aprieta.", say("ai-green", "ai-blue", badStreak));
+    // Pilar llamaba «mi niña» a Chispa (masculino): ahora se rechaza por el género del destinatario. Con
+    // el apelativo que le corresponde, el mismo mensaje se acepta.
+    expect(checkQuality("Ay, mi niña, con dos seguidas ya es castigo divino. Quien mucho abarca, poco aprieta.", say("ai-green", "ai-blue", badStreak))).toEqual({
+      reason: "no concuerda el género del destinatario",
+      term: "niña (Chispa: masculino)",
+    });
+    ok("Ay, mi niño, con dos seguidas ya es castigo divino. Quien mucho abarca, poco aprieta.", say("ai-green", "ai-blue", badStreak));
     // Réplica (capture_lament) dentro de una racha: «racha» está respaldada por el disparador.
     ok("¡Chas! Me has pillado con la racha mala.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }));
     // Con tres frases, ahora se rechaza por longitud (regla de como mucho dos frases).
@@ -927,5 +933,132 @@ describe("cada regla nueva por separado", () => {
   it("los motivos nuevos están en la lista cerrada que se registra", () => {
     expect(QUALITY_REASONS).toContain("demasiadas frases");
     for (const reason of QUALITY_REASONS) expect(INVALID_RESPONSE_REASONS).toContain(reason);
+  });
+});
+
+describe("género del destinatario (apelativos en vocativo)", () => {
+  const GENDER = "no concuerda el género del destinatario";
+
+  it("regresión: Pilar llamaba «hijito» a Brava y «hijita» a Chispa (flujo completo de cleanLlmText)", () => {
+    expect(reject("Pues eso es lo que tiene jugar con las que más quieres, hijito", say("ai-green", "ai-pink"))).toEqual({
+      reason: GENDER,
+      detail: "termino=hijito (Brava: femenino)",
+    });
+    expect(reject("La vida son juegos, hijita, y las fichas se van.", say("ai-green", "ai-blue"))).toEqual({
+      reason: GENDER,
+      detail: "termino=hijita (Chispa: masculino)",
+    });
+    // Con el género que corresponde a cada destinataria o destinatario, las mismas frases se aceptan.
+    expect(reject("Pues eso es lo que tiene jugar con las que más quieres, hijita", say("ai-green", "ai-pink"))).toBeNull();
+    expect(reject("La vida son juegos, hijito, y las fichas se van.", say("ai-green", "ai-blue"))).toBeNull();
+  });
+
+  it("los dos sentidos con los cuatro destinatarios, también Don Ernesto", () => {
+    for (const [speaker, rival, text, ok] of [
+      ["ai-green", "ai-pink", "Ay, hijita, a casita.", true],
+      ["ai-green", "ai-pink", "Ay, hijito, a casita.", false],
+      ["ai-green", "ai-blue", "Ay, hijito, a casita.", true],
+      ["ai-green", "ai-blue", "Ay, hijita, a casita.", false],
+      ["ai-green", "ai-purple", "Ay, hijo mío, a casita.", true],
+      ["ai-green", "ai-purple", "Ay, hija mía, a casita.", false],
+      ["ai-green", "ai-purple", "¡Mi niño, qué suerte!", true],
+      ["ai-green", "ai-purple", "¡Mi niña, qué suerte!", false],
+      ["ai-purple", "ai-green", "Lo siento, querida. Su ficha vuelve a casa.", true],
+      ["ai-purple", "ai-green", "Lo siento, querido. Su ficha vuelve a casa.", false],
+      ["ai-pink", "ai-blue", "¡A casa, guapo!", true],
+      ["ai-pink", "ai-blue", "¡A casa, guapa!", false],
+      ["ai-blue", "ai-pink", "¡Oye, maja, qué puntería!", true],
+      ["ai-blue", "ai-pink", "¡Oye, majo, qué puntería!", false],
+      ["ai-blue", "ai-purple", "¡Toma ya, campeón!", true],
+      ["ai-blue", "ai-purple", "¡Toma ya, campeona!", false],
+    ] as const) {
+      const issue = checkQuality(text, say(speaker, rival));
+      if (ok) expect(issue, `${speaker} → ${rival}: ${text}`).toBeNull();
+      else expect(issue, `${speaker} → ${rival}: ${text}`).toMatchObject({ reason: GENDER });
+    }
+  });
+
+  it("en una réplica, el destinatario es quien dijo el mensaje (el rival de la réplica)", () => {
+    const reply = { kind: "capture_lament" as const, replyTo: 0 };
+    expect(checkQuality("Ay, hijita, qué poca vergüenza.", say("ai-green", "ai-pink", reply))).toBeNull();
+    expect(checkQuality("Ay, hijita, qué poca vergüenza.", say("ai-green", "ai-blue", reply))).toMatchObject({ reason: GENDER, term: "hijita (Chispa: masculino)" });
+  });
+
+  it("no cuentan los plurales, los apelativos neutros, los usos que no son vocativos ni la victoria sin rival", () => {
+    for (const rival of ["ai-pink", "ai-blue", "ai-purple"]) {
+      for (const text of ["Despacito, hijos, que esto es largo.", "Ay, cariño, a casita.", "Perdona, cielo, es el juego.", "El dado te ha querido hoy.", "Qué bonita jugada.", "Mi nieta juega así.", "Una hija de la suerte, eso es lo que eres."]) {
+        expect(checkQuality(text, say("ai-green", rival)), `${rival}: ${text}`).toBeNull();
+      }
+    }
+    // Sin rival no hay destinatario con el que comparar: «Ay, hijo» es una interjección.
+    expect(checkQuality("¡Gané, hijita! Despacito se llega lejos.", say("ai-green", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
+  });
+
+  it("el motivo nuevo está en la lista que se registra", () => {
+    expect(INVALID_RESPONSE_REASONS).toContain(GENDER);
+  });
+});
+
+describe("final de la partida (con el estado real)", () => {
+  const FIN = { reason: "afirmación no respaldada", term: "fin de la partida" };
+  const victoryReply = (gameStatus?: "playing" | "finished") => ({
+    ...say("ai-pink", "ai-blue", { kind: "victory_reply", trigger: "victory", replyTo: 0 }),
+    ...(gameStatus ? { gameStatus } : {}),
+  });
+  const victoryWin = (gameStatus?: "playing" | "finished") => ({
+    ...say("ai-blue", null, { kind: "victory_win", trigger: "victory" }),
+    ...(gameStatus ? { gameStatus } : {}),
+  });
+
+  it("regresión 010c5ace (v745): «No esperaba la partida terminada así» con la partida en juego se rechaza", () => {
+    expect(reject("¡Chispa, qué jugada más dura! No esperaba la partida terminada así.", victoryReply("playing"))).toEqual({
+      reason: "afirmación no respaldada",
+      detail: "termino=fin de la partida",
+    });
+  });
+
+  it("con el estado real «playing» se rechaza afirmar que la partida ha terminado, en sus distintas formas", () => {
+    for (const text of [
+      "La partida ha terminado, Chispa.",
+      "Se acabó la partida, Chispa.",
+      "Ya se ha terminado la partida.",
+      "Pues nada, se terminó la partida.",
+      "¡Fin de la partida!",
+      "Esta partida ya terminó, Chispa.",
+      "Partida acabada, qué le vamos a hacer.",
+      "Juego terminado, Chispa.",
+    ]) {
+      expect(checkQuality(text, victoryReply("playing")), text).toEqual(FIN);
+    }
+  });
+
+  it("se acepta la victoria individual aunque los demás sigan jugando", () => {
+    for (const text of ["¡He ganado la partida!", "¡Gané! La partida es mía.", "¡Meta! El dado me quiere y la partida ya es mía.", "¡Primero en llegar!"]) {
+      expect(checkQuality(text, victoryWin("playing")), text).toBeNull();
+    }
+    expect(checkQuality("¡Enhorabuena, Chispa! Has ganado la partida.", victoryReply("playing"))).toBeNull();
+  });
+
+  it("se aceptan jugadas, movimientos, turnos o fichas terminados, la negación y el final para uno mismo", () => {
+    for (const text of [
+      "Mi jugada ha terminado, Chispa.",
+      "Movimiento terminado y ficha en la meta.",
+      "Se acabó mi turno, Chispa.",
+      "Ficha en la meta: esa ya ha terminado.",
+      "La partida no ha terminado, Chispa.",
+      "Todavía no se ha acabado la partida.",
+      "Esto aún no se ha acabado, Chispa.",
+      "Antes de que acabe la partida, te pillo.",
+      "Se acabó la partida para mí, pero no para ti.",
+    ]) {
+      expect(checkQuality(text, victoryReply("playing")), text).toBeNull();
+    }
+  });
+
+  it("sin estado, o con la partida terminada de verdad, no se concluye nada", () => {
+    for (const text of ["Se acabó la partida, Chispa.", "No esperaba la partida terminada así."]) {
+      expect(checkQuality(text, victoryReply()), `sin estado: ${text}`).toBeNull();
+      expect(checkQuality(text, victoryReply("finished")), `terminada: ${text}`).toBeNull();
+    }
   });
 });

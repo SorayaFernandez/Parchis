@@ -887,3 +887,42 @@ describe("etiquetas, comillas y respuestas truncadas (auditoría de la v382)", (
     expect(memory.queue).toEqual([]);
   });
 });
+
+describe("final de la partida: el servicio pasa el estado real al validador", () => {
+  it("victoria con la partida en juego: «se acabó la partida» se rechaza y se usa la frase local una vez; el escritor recibe gameStatus", async () => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Se acabó la partida, qué jugada más dura." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Chispa termina el primero; el estado sigue en juego (los demás juegan por los otros puestos).
+    const state = createGame([...CHARACTER_IDS]);
+    expect(state.status).toBe("playing");
+    memory.enqueue(GAME, 4, [{ type: "player_finished", playerId: "ai-blue", place: 1 } satisfies GameEvent], state);
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && r.trigger === "victory")).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    for (const failure of failures) expect(failure).toMatchObject({ kind: "invalid_response", message: "afirmación no respaldada", detail: expect.stringMatching(/^termino=fin de la partida /) });
+    for (const [req] of localWrite.mock.calls) expect(req.gameStatus).toBe("playing");
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("con un estado no válido (victoria en modo mínimo) no hay gameStatus: no se inventa el estado", async () => {
+    const memory = createMemoryChatStore();
+    const local = { write: vi.fn(createLocalWriter(createSeededRandom(1)).write) };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: local, fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [{ type: "player_finished", playerId: "ai-blue", place: 1 }], { roto: true });
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    expect(memory.rows).toHaveLength(1);
+    expect(local.write).toHaveBeenCalledTimes(1);
+    expect(local.write.mock.calls[0][0]).not.toHaveProperty("gameStatus");
+  });
+});

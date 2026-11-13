@@ -136,6 +136,10 @@ describe("buildChatPrompt", () => {
     expect(hunted.content).toContain("Te han capturado dos veces seguidas. Tú pierdes la ficha y Chispa la captura");
     const [, reply] = buildChatPrompt(request(utterance("ai-purple", "victory_reply", { rival: "ai-pink" })));
     expect(reply.content).toContain("Brava acaba de ganar la partida, no tú.");
+    // La victoria es del primero en llegar: la partida sigue por los demás puestos (partida 010c5ace…).
+    expect(reply.content).toContain("La partida no ha terminado: los demás seguís jugando por los otros puestos.");
+    const [, win] = buildChatPrompt(request(utterance("ai-blue", "victory_win", { rival: null, trigger: "victory" })));
+    expect(win.content).toContain("los demás siguen jugando por los otros puestos");
   });
 
   it("incluye sus propios textos recientes (los dos últimos) para que no repita coletillas", () => {
@@ -290,5 +294,31 @@ describe("buildChatPrompt", () => {
     const [, main] = buildChatPrompt(request(utterance("ai-pink", "streak_boast", { rival: "ai-blue", trigger: "capture_streak", streak: { count: 3, consecutive: true }, captures: facts(hunt, "ai-pink") })));
     expect(main.content).toContain("Llevas tres capturas seguidas.");
     expect(main.content).not.toContain("tu racha sigue");
+  });
+});
+
+describe("concordancia de género en el prompt", () => {
+  const system = (speaker: string, rival: string | null) =>
+    buildChatPrompt(request(utterance(speaker, rival ? "capture_boast" : "victory_win", { rival, trigger: rival ? "capture" : "victory" })))[0].content;
+
+  it("indica el género de quien habla y el de su rival, en los dos sentidos", () => {
+    expect(system("ai-green", "ai-blue")).toContain("- Concuerda el género: habla de ti en femenino y de Chispa en masculino.");
+    expect(system("ai-green", "ai-pink")).toContain("- Concuerda el género: habla de ti en femenino y de Brava en femenino.");
+    expect(system("ai-green", "ai-purple")).toContain("- Concuerda el género: habla de ti en femenino y de Don Ernesto en masculino.");
+    expect(system("ai-blue", "ai-green")).toContain("- Concuerda el género: habla de ti en masculino y de Abuela Pilar en femenino.");
+    expect(system("ai-purple", "ai-pink")).toContain("- Concuerda el género: habla de ti en masculino y de Brava en femenino.");
+    expect(system("ai-pink", "ai-blue")).toContain("- Concuerda el género: habla de ti en femenino y de Chispa en masculino.");
+  });
+
+  it("sin rival (victoria propia), solo el género de quien habla", () => {
+    for (const [speaker, word] of [["ai-pink", "femenino"], ["ai-purple", "masculino"], ["ai-green", "femenino"], ["ai-blue", "masculino"]] as const) {
+      const content = system(speaker, null);
+      expect(content).toContain(`- Concuerda el género: habla de ti en ${word}.`);
+      expect(content).not.toMatch(/Concuerda el género: habla de ti en \w+ y de/);
+    }
+  });
+
+  it("el prompt no sugiere apelativos concretos (de eso se encarga el validador)", () => {
+    for (const c of CHARACTERS) expect(system(c.id, c.id === "ai-blue" ? "ai-pink" : "ai-blue")).not.toMatch(/hijit|hija|hijo|guap|maj[oa]/i);
   });
 });

@@ -27,6 +27,7 @@ export const QUALITY_REASONS = [
   "afirmación no respaldada",
   "habla de sí mismo en tercera persona",
   "demasiadas frases",
+  "no concuerda el género del destinatario",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -789,6 +790,73 @@ function hasStreakContext(request: ChatWriteRequest): boolean {
   return Boolean(c?.history === "complete" && [c.self.streak, c.self.badStreak, c.rival.streak, c.rival.badStreak].some((s) => s !== null));
 }
 
+// ── Género del destinatario ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Apelativos con género (sin tildes, tras `normalize`): masculino y femenino. Solo los inequívocos como
+ * vocativo; no los que también son adjetivos de uso frecuente («bonito», «pequeño») ni los neutros
+ * («cariño», «cielo», «tesoro»). El plural («hijos») se dirige a todos y no cuenta.
+ */
+const GENDERED_VOCATIVES: Readonly<Record<string, "f" | "m">> = {
+  hijo: "m", hija: "f", hijito: "m", hijita: "f", niño: "m", niña: "f", niñito: "m", niñita: "f",
+  guapo: "m", guapa: "f", majo: "m", maja: "f", chiquillo: "m", chiquilla: "f", querido: "m", querida: "f",
+  chaval: "m", chavala: "f", campeon: "m", campeona: "f", rey: "m", reina: "f",
+};
+/**
+ * Vocativo: al principio, tras un signo o tras una interjección («ay», «oye», «mira», «venga», «anda»,
+ * «uy»), con «mi» delante o «mío/mía» detrás, y seguido de un signo o del final.
+ */
+const VOCATIVE = new RegExp(
+  `(?:^|[¡!¿?.,;:…(—-]\\s*|(?<![${LETTER}])(?:ay|oye|mira|venga|anda|uy|hala)\\s+)(?:mi\\s+)?(${Object.keys(GENDERED_VOCATIVES).join("|")})(?:\\s+mi[oa])?\\s*(?=$|[!?.,;:…)—])`,
+  "gu",
+);
+
+/**
+ * Un apelativo con género en vocativo se dirige a la otra parte de la intervención (el rival; en una
+ * réplica, quien dijo el mensaje): su género debe ser el de ese personaje (Pilar llamaba «hijita» a Chispa
+ * y «hijito» a Brava). Sin rival (victoria propia) no hay destinatario con el que comparar y no se
+ * comprueba: «Ay, hijo, qué partida más larga» es ahí una interjección.
+ */
+function checkAddresseeGender(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const rival = request.utterance.rival ? getCharacter(request.utterance.rival) : undefined;
+  if (!rival) return null;
+  for (const match of normalize(text).matchAll(VOCATIVE)) {
+    const word = match[1];
+    if (GENDERED_VOCATIVES[word] !== rival.gender) {
+      return { reason: "no concuerda el género del destinatario", term: `${word} (${rival.name}: ${rival.gender === "f" ? "femenino" : "masculino"})` };
+    }
+  }
+  return null;
+}
+
+// ── Final de la partida ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Afirmar que la partida ha terminado (sin tildes, tras `normalize`): «la partida ha terminado», «se
+ * acabó la partida», «partida terminada», «fin de la partida», «juego terminado»… Solo con «partida» o
+ * «juego»: una jugada, un movimiento, un turno o una ficha terminados no cuentan. Ni la negación («la
+ * partida no ha terminado») ni el final para uno mismo («se acabó la partida para mí»).
+ */
+const NOT = `(?<!(?<![${LETTER}])no\\s+(?:se\\s+|ha\\s+|ya\\s+|aun\\s+|todavia\\s+)*)`;
+const ENDED = "(?:terminado|acabado|terminada|acabada|finalizado|finalizada|concluido|concluida)";
+const END_VERB = "(?:se\\s+(?:ha\\s+)?(?:acabo|termino|acaba|termina|acabado|terminado)|ha\\s+(?:terminado|acabado|finalizado|concluido)|termino|acabo|finalizo|concluyo)";
+const GAME = "(?:la\\s+|esta\\s+)?(?:partida|juego)";
+const GAME_OVER = new RegExp(
+  `(?<![${LETTER}])(?:${GAME}\\s+(?:ya\\s+)?${NOT}${END_VERB}|${NOT}${END_VERB}\\s+(?:ya\\s+)?${GAME}|${GAME}\\s+${ENDED}|fin\\s+(?:de\\s+la\\s+partida|del\\s+juego))(?![${LETTER}])(?!\\s+para\\s)`,
+  "u",
+);
+
+/**
+ * Con el estado real de la partida en juego (`gameStatus: "playing"`), no se puede decir que ha terminado:
+ * la victoria es del primero en llegar, pero los demás siguen jugando por los otros puestos (la réplica de
+ * Brava «No esperaba la partida terminada así» en la partida 010c5ace…). Con la partida terminada o sin
+ * estado (no se sabe), no se comprueba.
+ */
+function checkGameOverClaim(text: string, request: ChatWriteRequest): QualityIssue | null {
+  if (request.gameStatus !== "playing") return null;
+  return GAME_OVER.test(normalize(text)) ? { reason: "afirmación no respaldada", term: "fin de la partida" } : null;
+}
+
 // ── Conjunto ───────────────────────────────────────────────────────────────────────────────────────
 
 /** Comprobaciones nuevas de calidad, en orden. Devuelve el primer problema o `null`. */
@@ -801,6 +869,8 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     pilarCallsOthersAbuela(text, request.utterance.speaker) ??
     checkUsted(text, request.utterance.speaker) ??
     checkSelfThirdPerson(text, request.utterance.speaker) ??
+    checkAddresseeGender(text, request) ??
+    checkGameOverClaim(text, request) ??
     checkRepeatedCatchphrase(text, request) ??
     checkCountClaims(text, request) ??
     checkStreakEnd(text, request) ??
