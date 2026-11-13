@@ -14,6 +14,7 @@ export interface PromptMessage {
 }
 
 const nameOf = (id: PlayerId | null) => (id ? (CHARACTER_NAMES[id] ?? id) : "");
+const PILAR_ID = "ai-green";
 
 /** Papeles explícitos de una captura: quién gana la ficha y quién la pierde (evita contradicciones). */
 const youWin = (rival: string) => `Tú capturas y ${rival} pierde la ficha: no te lamentes ni digas que la mala suerte es tuya.`;
@@ -119,6 +120,9 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   if (!character) throw new Error("Personaje desconocido");
 
   const names = utterance.rival ? `a ti (${character.name}) y a ${nameOf(utterance.rival)}` : `a ti (${character.name})`;
+  // «Abuela» es la misma jugadora que Abuela Pilar: los demás pueden llamarla así (el validador lo
+  // admite cuando participa). A la propia Pilar no se le dice: su vocativo «abuela» a otro se rechaza.
+  const grandma = utterance.rival === PILAR_ID ? ` A ${nameOf(PILAR_ID)} también puedes llamarla «Abuela».` : "";
   // Prompt corto y sin contradicciones: el carácter en una línea (`chat.voice`) y pocas reglas en positivo.
   // Sin ejemplos de lo que no debe decir (nombrarlos se lo sugiere al modelo); de eso se encarga el validador.
   const system = [
@@ -126,8 +130,9 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     `Tu carácter: ${character.chat.voice}`,
     "Reglas:",
     `- Una sola frase corta en español: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres. Sin saludos, explicaciones ni resumen de la jugada.`,
-    "- Palabras sencillas de una partida de parchís (fichas, dado, casa, meta, turno), como en una conversación real. Sin metáforas ni comparaciones.",
-    `- Habla en primera persona y nombra solo ${names}, siempre con el nombre completo. Sin comillas, emojis ni tu nombre delante.`,
+    "- Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones ni frases solemnes; no hace falta ser gracioso.",
+    "- Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.",
+    `- Habla en primera persona y nombra solo ${names}, siempre con el nombre completo.${grandma} Sin comillas, emojis ni tu nombre delante.`,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
     "- Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.",
     "- No repitas frases ni muletillas que ya hayas dicho. Puedes picar o bromear, pero sin insultos ni comentarios sobre que eres una IA.",

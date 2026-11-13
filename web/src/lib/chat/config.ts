@@ -144,8 +144,8 @@ export const CHAT_LLM = {
    * caso corto; con las reglas de calidad (idioma, nombres, usted, coletillas, vocabulario y
    * afirmaciones) se llegó a 2698. Con el prompt simplificado (un carácter por personaje y pocas
    * reglas), el peor caso medido es de 1752 (Don Ernesto, por su regla de usted); con todos los hechos
-   * de captura de una intervención a la vez (rachas activas, interrumpidas o reiniciadas y parejas), 2112, unos 600
-   * tokens de entrada. El límite configurado de 2800 no cambia (modelo gratuito y `max_tokens: 60`).
+   * de captura de una intervención a la vez (rachas activas, interrumpidas o reiniciadas y parejas), 2112; con
+   * las reglas de estilo y Abuela Pilar como rival, 2476, unos 700 tokens de entrada. El límite configurado de 2800 no cambia (modelo gratuito y `max_tokens: 60`).
    */
   maxPromptChars: 2800,
   /** Corte temporal ante errores de configuración, autenticación, cuota o modelo (401, 402, 403, 404). */
