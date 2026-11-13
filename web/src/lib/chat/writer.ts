@@ -2,7 +2,7 @@
 // `ChatWriter` es el punto de extensión de la fase 8.2b: un escritor con LLM implementará la misma
 // interfaz (y usará `createLocalWriter` como reserva). El director y la persistencia no cambian.
 
-import type { PlayerId } from "@/lib/engine";
+import type { GameState, PlayerId } from "@/lib/engine";
 import { CHARACTER_NAMES, getCharacter } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "./config";
 import type { Random, Utterance } from "./director";
@@ -37,6 +37,11 @@ export interface ChatWriteRequest {
   signal?: AbortSignal;
   /** Tiempo máximo de esta llamada (ms), ya ajustado a lo que queda de reserva. */
   timeoutMs?: number;
+  /**
+   * Estado real de la partida en esta versión (`state.status` de la cola, validado). Sin él (estado no
+   * válido, victoria en modo mínimo) no se sabe si la partida sigue: el validador no concluye nada.
+   */
+  gameStatus?: GameState["status"];
 }
 
 export interface WrittenText {

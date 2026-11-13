@@ -209,6 +209,29 @@ describe("frases locales: las que también puede escribir el LLM pasan el valida
   });
 });
 
+describe("frases locales: el género de los apelativos concuerda con el destinatario", () => {
+  it("ninguna frase de ningún personaje, con ningún rival, usa un apelativo del género contrario al del destinatario", () => {
+    const streak = { count: 2, consecutive: true };
+    let checked = 0;
+    for (const { c, kind, line } of everyLine()) {
+      for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+        const u = { speaker: c.id, kind, rival: rival.id, trigger: "capture", replyTo: null, important: true, streak } as Utterance;
+        const text = renderLine(line, u);
+        if (text === null) continue;
+        checked++;
+        expect(checkQuality(text, { utterance: u, recent: [], replyToText: null })?.reason, `${c.name} → ${rival.name} (${kind}): ${text}`).not.toBe(
+          "no concuerda el género del destinatario",
+        );
+      }
+    }
+    expect(checked).toBeGreaterThan(600); // 690 combinaciones de frase y rival con el catálogo actual
+  });
+
+  it("todos los personajes tienen género, y el de cada uno es el previsto", () => {
+    expect(Object.fromEntries(CHARACTERS.map((c) => [c.name, c.gender]))).toEqual({ Brava: "f", "Don Ernesto": "m", "Abuela Pilar": "f", Chispa: "m" });
+  });
+});
+
 describe("prompt: registro de España, la situación real y el nombre «Abuela»", () => {
   const request = (speaker: string, rival: string | null, kind: ChatLineKind = "capture_boast") => ({
     utterance: { speaker, kind, rival, trigger: "capture", replyTo: null, important: true } as Utterance,

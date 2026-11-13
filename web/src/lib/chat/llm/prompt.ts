@@ -94,7 +94,7 @@ function situation(utterance: Utterance): string {
   const facts = captureContext(utterance, rival);
   const byKind: Record<ChatLineKind, string> = {
     victory_win: "Acabas de terminar el primero: has ganado la partida (los demás siguen jugando por los otros puestos).",
-    victory_reply: `${rival} acaba de ganar la partida, no tú. Reaccionas a su victoria.`,
+    victory_reply: `${rival} acaba de ganar la partida, no tú. La partida no ha terminado: los demás seguís jugando por los otros puestos. Reaccionas a su victoria.`,
     capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival)}${facts}`,
     capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival)}${facts}`,
     streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival)}${facts}`,
@@ -123,6 +123,13 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   // «Abuela» es la misma jugadora que Abuela Pilar: los demás pueden llamarla así (el validador lo
   // admite cuando participa). A la propia Pilar no se le dice: su vocativo «abuela» a otro se rechaza.
   const grandma = utterance.rival === PILAR_ID ? ` A ${nameOf(PILAR_ID)} también puedes llamarla «Abuela».` : "";
+  // Concordancia de género (apelativos y adjetivos): el modelo la adivinaba y Pilar llamaba «hijita» a
+  // Chispa y «hijito» a Brava. El validador rechaza los apelativos que no concuerdan con el destinatario.
+  const genderWord = (gender: "f" | "m" | undefined) => (gender === "m" ? "masculino" : "femenino");
+  const rivalCharacter = utterance.rival ? getCharacter(utterance.rival) : undefined;
+  const gender = rivalCharacter
+    ? `- Concuerda el género: habla de ti en ${genderWord(character.gender)} y de ${rivalCharacter.name} en ${genderWord(rivalCharacter.gender)}.`
+    : `- Concuerda el género: habla de ti en ${genderWord(character.gender)}.`;
   // Prompt corto y sin contradicciones: el carácter en una línea (`chat.voice`) y pocas reglas en positivo.
   // Sin ejemplos de lo que no debe decir (nombrarlos se lo sugiere al modelo); de eso se encarga el validador.
   const system = [
@@ -133,6 +140,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     "- Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones ni frases solemnes; no hace falta ser gracioso.",
     "- Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.",
     `- Habla en primera persona y nombra solo ${names}, siempre con el nombre completo.${grandma} Sin comillas, emojis ni tu nombre delante.`,
+    gender,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
     "- Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.",
     "- No repitas frases ni muletillas que ya hayas dicho. Puedes picar o bromear, pero sin insultos ni comentarios sobre que eres una IA.",
