@@ -766,3 +766,146 @@ describe("registro de coletillas: persistencia, reintentos y confirmaciones parc
     expect(state.recent[0]).toEqual({ speaker: "ai-green", text: "Hola, cariño." });
   });
 });
+
+describe("P4: continuidad del historial de punta a punta (procesador real, sin cambios en service.ts)", () => {
+  const directorOf = (t: ReturnType<typeof setup>) => t.memory.chats.get(GAME)!.directorState as { observedThrough: number | null; historyGapThrough: number | null };
+  const consecutive = (t: ReturnType<typeof setup>, from: number, to: number, skip: number[] = [], events: (v: number) => GameEvent[] = () => [roll]) => {
+    for (let v = from; v <= to; v++) if (!skip.includes(v)) t.enqueue(v, events(v));
+  };
+
+  it("todas las versiones encoladas: historial completo (el comportamiento normal no cambia)", async () => {
+    const t = setup();
+    consecutive(t, 2, 80, [], (v) => (v % 10 === 4 ? [capture(CHARACTER_IDS[v % 4], CHARACTER_IDS[(v + 2) % 4])] : [roll]));
+    while ((await t.drain()).kind === "more");
+    expect(directorOf(t)).toMatchObject({ observedThrough: 80, historyGapThrough: null });
+  });
+
+  it("una versión que el trigger no encoló: hueco detectado en la siguiente y guardado con chat_commit", async () => {
+    const t = setup();
+    consecutive(t, 2, 10, [6]);
+    await t.drain();
+    expect(directorOf(t)).toMatchObject({ observedThrough: 10, historyGapThrough: 6 });
+    // Las versiones posteriores no recuperan la confianza por sí solas.
+    consecutive(t, 11, 65);
+    while ((await t.drain()).kind === "more");
+    expect(directorOf(t)).toMatchObject({ observedThrough: 65, historyGapThrough: 6 });
+  });
+
+  it("versiones defectuosas (eventos inválidos o más de 3 intentos): `service.ts` las salta y el hueco se detecta igual", async () => {
+    const t = setup();
+    consecutive(t, 2, 5);
+    t.memory.enqueue(GAME, 6, { basura: true }, STATE); // eventos no válidos
+    consecutive(t, 7, 9);
+    await t.drain();
+    expect(directorOf(t)).toMatchObject({ observedThrough: 9, historyGapThrough: 6 });
+
+    const u = setup();
+    consecutive(u, 2, 9);
+    u.memory.queue.find((q) => q.version === 2)!.attempts = CHAT_LIMITS.maxAttempts; // la reserva suma 1 → defectuosa
+    await u.drain();
+    expect(directorOf(u)).toMatchObject({ observedThrough: 9, historyGapThrough: 2 });
+  });
+
+  it("estado del director inválido: el procesador empieza de cero y el historial queda incompleto", async () => {
+    const t = setup();
+    t.memory.chats.set(GAME, { lastVersion: 29, messageCount: 0, directorState: { basura: true }, lockToken: null, lockedUntil: null, lockedThrough: null });
+    consecutive(t, 30, 35);
+    await t.drain();
+    expect(directorOf(t)).toMatchObject({ observedThrough: 35, historyGapThrough: 29 });
+  });
+
+  it("estado guardado antiguo (sin los campos): incompleto si la partida ya había avanzado", async () => {
+    const t = setup();
+    const legacy = { lastMessageVersion: null, lastSpokeAt: {}, captures: [{ v: 20, by: "ai-pink", victim: "ai-blue" }], recent: [] };
+    t.memory.chats.set(GAME, { lastVersion: 29, messageCount: 0, directorState: legacy, lockToken: null, lockedUntil: null, lockedThrough: null });
+    consecutive(t, 30, 31);
+    await t.drain();
+    expect(directorOf(t)).toMatchObject({ observedThrough: 31, historyGapThrough: 29 });
+  });
+
+  it("versión defectuosa como última del lote: el cursor avanza, `observedThrough` se queda atrás y el hueco se registra al observar la siguiente", async () => {
+    const t = setup();
+    consecutive(t, 2, 5);
+    t.memory.enqueue(GAME, 6, { basura: true }, STATE); // última del lote, eventos no válidos
+    expect(await t.drain()).toMatchObject({ kind: "done", batches: 1, published: 0 });
+    // Confirmado (chat_commit) sin mensajes: el cursor pasa la 6, pero el director no la ha observado.
+    expect(t.memory.chats.get(GAME)).toMatchObject({ lastVersion: 6, messageCount: 0, lockToken: null });
+    expect(directorOf(t)).toMatchObject({ observedThrough: 5, historyGapThrough: null });
+    expect(t.memory.queue).toEqual([]);
+    // Siguiente drain: la v7 se observa, `trackCaptures` ve el salto (7 > 5 + 1) antes de calcular nada.
+    t.enqueue(7, [roll]);
+    expect(await t.drain()).toMatchObject({ kind: "done", batches: 1 });
+    expect(t.memory.chats.get(GAME)).toMatchObject({ lastVersion: 7 });
+    expect(directorOf(t)).toMatchObject({ observedThrough: 7, historyGapThrough: 6 });
+  });
+
+  it("más de tres intentos en mitad de la partida: la versión defectuosa abre el lote siguiente y el hueco se detecta por el salto", async () => {
+    const t = setup();
+    consecutive(t, 2, 5);
+    await t.drain();
+    expect(directorOf(t)).toMatchObject({ observedThrough: 5, historyGapThrough: null });
+    consecutive(t, 6, 9);
+    // Primera del lote siguiente: `chat_claim` le suma un intento (3 → 4 > maxAttempts) y es defectuosa.
+    t.memory.queue.find((q) => q.version === 6)!.attempts = CHAT_LIMITS.maxAttempts;
+    await t.drain();
+    expect(t.memory.chats.get(GAME)).toMatchObject({ lastVersion: 9 });
+    expect(directorOf(t)).toMatchObject({ observedThrough: 9, historyGapThrough: 6 }); // salto 5 → 7
+  });
+
+  it("dos versiones defectuosas seguidas: el hueco es la última no observada y la recuperación cuenta desde ella", async () => {
+    // Registra, para cada intervención de captura, si el director dio hechos completos o incompletos.
+    const run = async (captureAt: number) => {
+      const seen: (string | undefined)[] = [];
+      const local = createLocalWriter(createSeededRandom(1));
+      const recorder: ChatWriter = {
+        write: (request) => {
+          if (["capture", "capture_streak", "bad_streak"].includes(request.utterance.trigger)) seen.push(request.utterance.captures?.history);
+          return local.write(request);
+        },
+      };
+      const t = setup(recorder, recorder);
+      consecutive(t, 2, 5);
+      t.memory.enqueue(GAME, 6, { basura: true }, STATE);
+      t.memory.enqueue(GAME, 7, { basura: true }, STATE);
+      consecutive(t, 8, captureAt, [], (v) => (v === captureAt ? [capture("ai-pink", "ai-blue")] : [roll]));
+      while ((await t.drain()).kind === "more");
+      return { t, seen };
+    };
+    // En v66: 66 − 7 = 59 → incompleto (si contara desde la 6, serían 60 y ya sería completo).
+    const at66 = await run(66);
+    expect(directorOf(at66.t)).toMatchObject({ observedThrough: 66, historyGapThrough: 7 });
+    expect(at66.seen.length).toBeGreaterThan(0);
+    expect(at66.seen.every((h) => h === "incomplete")).toBe(true);
+    // En v67: 67 − 7 = 60 → completo.
+    const at67 = await run(67);
+    expect(directorOf(at67.t)).toMatchObject({ observedThrough: 67, historyGapThrough: 7 });
+    expect(at67.seen.length).toBeGreaterThan(0);
+    expect(at67.seen.every((h) => h === "complete")).toBe(true);
+  });
+
+  it("con el historial incompleto, ningún mensaje (frases locales) afirma cifras, «seguidas» ni rachas", async () => {
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const t = setup();
+      t.deps.writer = createLocalWriter(createSeededRandom(seed));
+      t.deps.fallbackWriter = t.deps.writer;
+      // Hueco en v3 y muchas capturas (rachas y malas rachas) dentro de la ventana afectada (v4…v62).
+      const players = CHARACTER_IDS;
+      const eventsAt = new Map<number, GameEvent[]>();
+      for (let v = 2; v <= 62; v++) {
+        if (v === 3) continue;
+        const events = v % 3 === 0 ? [capture(players[(v + seed) % 2], players[2 + ((v + seed) % 2)])] : [roll];
+        eventsAt.set(v, events);
+        t.enqueue(v, events);
+      }
+      while ((await t.drain()).kind === "more");
+      expect(directorOf(t)).toMatchObject({ observedThrough: 62, historyGapThrough: 3 });
+      const streakRows = t.memory.rows.filter((r) => r.trigger === "capture_streak" || r.trigger === "bad_streak");
+      expect(t.memory.rows.length).toBeGreaterThan(0);
+      for (const row of t.memory.rows) {
+        expect(row.text, row.text).not.toMatch(/\d|racha|seguid|consecutiv|\b(dos|tres|cuatro|cinco|seis)\b/i);
+      }
+      // Los disparadores de racha siguen ocurriendo (no cambian), con frases sin datos.
+      if (seed === 1) expect(streakRows.length).toBeGreaterThan(0);
+    }
+  });
+});

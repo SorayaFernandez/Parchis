@@ -532,6 +532,24 @@ describe("integración con drainChat", () => {
     expect(t.calls).toHaveLength(2);
   });
 
+  it("P4: con un hueco en el historial, la misma respuesta con cifras y «seguidas» se rechaza (frase local); sin hueco, se publica", async () => {
+    // Brava captura a Chispa en v4, v8 y v12 (tres seguidas): en v12 hay `capture_streak` y Brava habla.
+    const run = async (skip: number | null) => {
+      const t = setup(() => completion("¡Tres capturas seguidas!"));
+      for (let v = 2; v <= 12; v++) {
+        if (v === skip) continue;
+        t.memory.enqueue(GAME, v, v % 4 === 0 ? [capture("ai-pink", "ai-blue")] : [], createGame([...CHARACTER_IDS]));
+      }
+      while ((await drainChat(GAME, t.deps)).kind === "more");
+      return t.memory.rows.filter((r) => r.version === 12 && r.seq === 0);
+    };
+    const complete = await run(null);
+    expect(complete.map((r) => [r.trigger, r.character_id, r.source, r.text])).toEqual([["capture_streak", "ai-pink", "llm", "¡Tres capturas seguidas!"]]);
+    const gapped = await run(3);
+    expect(gapped.map((r) => [r.trigger, r.character_id, r.source])).toEqual([["capture_streak", "ai-pink", "local"]]);
+    expect(gapped[0].text).not.toMatch(/\d|racha|seguid|\b(dos|tres|cuatro)\b/i);
+  });
+
   it("si el LLM falla (cuota, 500, red o respuesta inválida), se usa la frase local y la cola sigue intacta", async () => {
     for (const respond of [() => new Response("{}", { status: 402 }), () => new Response("{}", { status: 500 }), () => "network" as const, () => completion("Abuela Pilar: hola")]) {
       const t = setup(respond as () => Response);

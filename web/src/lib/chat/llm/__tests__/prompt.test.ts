@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { CHARACTERS, CHAT_LINE_KINDS } from "@/lib/game/characters";
 import { CHAT_LIMITS, CHAT_LLM } from "../../config";
-import type { Utterance } from "../../director";
+import { captureFacts, type Utterance } from "../../director";
 import type { ChatWriteRequest } from "../../writer";
-import { buildChatPrompt } from "../prompt";
+import { buildChatPrompt, INCOMPLETE_HISTORY } from "../prompt";
 
 const utterance = (speaker: string, kind: Utterance["kind"], extra: Partial<Utterance> = {}): Utterance => ({
   speaker, kind, rival: "ai-blue", trigger: "capture", replyTo: null, important: true, ...extra,
@@ -16,14 +16,13 @@ describe("buildChatPrompt", () => {
       const [system, user] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
       expect(system.role).toBe("system");
       expect(system.content).toContain(`Eres ${c.name}`);
-      expect(system.content).toContain(c.personality);
-      expect(system.content).toContain(c.chat.register);
+      expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);
       expect(system.content).toContain(
-        `UNA sola frase corta: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres`,
+        `Una sola frase corta en español: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres`,
       );
       expect(system.content).not.toContain("una o dos frases");
       expect(system.content).not.toContain(String(CHAT_LLM.maxChars)); // se pide menos que el límite de validación
-      expect(system.content).toMatch(/No inventes/);
+      expect(system.content).toMatch(/no inventes jugadas, cifras, posiciones ni rachas/);
       expect(user.role).toBe("user");
       expect(user.content).toMatch(/^Situación: Acabas de capturar una ficha de (Chispa|Brava)/);
     }
@@ -39,14 +38,13 @@ describe("buildChatPrompt", () => {
   it("sin relleno y con recordatorio final de longitud y estilo", () => {
     for (const c of CHARACTERS) {
       const [system, user] = buildChatPrompt(request(utterance(c.id, "capture_lament", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
-      expect(system.content).toContain(
-        "- Ve directo a tu reacción, como si lo dijeras en voz alta en la mesa: sin saludos, introducciones, explicaciones ni resumen de la jugada.",
-      );
-      // Las demás reglas y el estilo del personaje se mantienen.
-      expect(system.content).toContain("sin comillas, sin tu nombre delante, sin emojis, sin listas");
-      expect(system.content).toMatch(/No inventes números/);
-      expect(system.content).toContain(`Forma de hablar: ${c.chat.register}`);
-      expect(user.content.split("\n").at(-1)).toBe("Tu frase (una sola, corta y con tu estilo):");
+      expect(system.content).toContain("comentas en voz alta lo que acaba de pasar, como una persona más sentada a la mesa");
+      expect(system.content).toContain("Sin saludos, explicaciones ni resumen de la jugada.");
+      // Las demás reglas y el carácter del personaje se mantienen.
+      expect(system.content).toContain("Sin comillas, emojis ni tu nombre delante.");
+      expect(system.content).toMatch(/no inventes jugadas, cifras, posiciones ni rachas/);
+      expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);
+      expect(user.content.split("\n").at(-1)).toBe("Tu frase (una sola y corta):");
     }
   });
 
@@ -88,33 +86,37 @@ describe("buildChatPrompt", () => {
     for (const c of CHARACTERS) {
       const rival = c.id === "ai-blue" ? "ai-pink" : "ai-blue";
       const [system] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival })));
-      expect(system.content).toContain("Responde solo en español: ni palabras ni frases en otros idiomas.");
-      expect(system.content).toContain("en primera persona");
-      expect(system.content).toContain(`Solo puedes nombrar a ti (${c.name}) y ${CHARACTERS.find((x) => x.id === rival)!.name}; a nadie más, tampoco con parte del nombre ni con apodos.`);
-      expect(system.content).toContain("No uses frases hechas fijas ni muletillas, y nunca repitas lo que acabas de decir");
-      expect(system.content).toContain("- Habla de parchís (fichas, dado, casa, meta, seguros, barreras)");
-      expect(system.content).toContain("ni hables de rachas, salvo que la situación lo diga. Sí puedes picar y retar.");
-      // La personalidad no cambia.
-      expect(system.content).toContain(c.personality);
-      expect(system.content).toContain(c.chat.register);
+      expect(system.content).toContain("Una sola frase corta en español");
+      expect(system.content).toContain("Habla en primera persona");
+      expect(system.content).toContain(`nombra solo a ti (${c.name}) y a ${CHARACTERS.find((x) => x.id === rival)!.name}, siempre con el nombre completo.`);
+      expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
+      expect(system.content).toContain("Palabras sencillas de una partida de parchís (fichas, dado, casa, meta, turno), como en una conversación real. Sin metáforas ni comparaciones.");
+      expect(system.content).toContain("Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.");
+      expect(system.content).toContain("Puedes picar o bromear, pero sin insultos");
+      // El carácter de cada personaje va en una sola línea (`chat.voice`), sin descripciones duplicadas.
+      expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);
+      expect(system.content).not.toContain("Personalidad:");
+      expect(system.content).not.toContain("Forma de hablar:");
     }
     // Sin rival (victoria), solo su propio nombre.
     const [win] = buildChatPrompt(request(utterance("ai-green", "victory_win", { rival: null })));
-    expect(win.content).toContain("Solo puedes nombrar a ti (Abuela Pilar); a nadie más");
+    expect(win.content).toContain("nombra solo a ti (Abuela Pilar), siempre con el nombre completo.");
   });
 
-  it("metáforas deportivas solo para Chispa; otros juegos (reglas o situaciones) prohibidos para los cuatro", () => {
+  it("sin contradicciones: nadie es comentarista ni recibe deportes, retransmisiones, otros juegos ni «cree en las rachas»", () => {
+    // Ni permisos ni ejemplos de lo que el validador rechaza: nombrarlos se lo sugiere al modelo.
+    const FORBIDDEN = /comentarista|metáforas deportivas|deport|fútbol|futbol|retransmi|golazo|¡gol|tres en raya|jaque|fuera de juego|penalti|bingo|cree en las rachas|teatral|juegos de palabras/i;
     for (const c of CHARACTERS) {
-      const [system] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
-      if (c.id === "ai-blue") {
-        expect(system.content).toContain("Como comentarista puedes usar metáforas deportivas (¡gol!, ¡golazo!)");
-        expect(system.content).toContain("pero nunca reglas o situaciones de otros juegos (tres en raya, jaque, fuera de juego, penalti…).");
-        expect(system.content).not.toContain("no de otros juegos ni deportes");
-      } else {
-        expect(system.content, c.name).toContain("no de otros juegos ni deportes.");
-        expect(system.content, c.name).not.toContain("metáforas deportivas");
+      for (const kind of ["capture_boast", "capture_lament", "streak_boast", "victory_win"] as const) {
+        const u = utterance(c.id, kind, { rival: kind === "victory_win" ? null : c.id === "ai-blue" ? "ai-pink" : "ai-blue", streak: { count: 2, consecutive: true } });
+        const [system, user] = buildChatPrompt(request(u));
+        expect(FORBIDDEN.test(system.content), `${c.name}/${kind}: ${system.content.match(FORBIDDEN)?.[0]}`).toBe(false);
+        expect(FORBIDDEN.test(user.content), `${c.name}/${kind}`).toBe(false);
       }
+      expect(c.chat.voice, c.name).not.toMatch(/racha|comentarista/i);
     }
+    // Chispa conserva su carácter: espontáneo, divertido y supersticioso con el dado.
+    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.voice).toMatch(/espontáneo, divertido e imprevisible.*supersticioso con el dado/i);
   });
 
   it("solo Don Ernesto recibe la regla de tratar de usted", () => {
@@ -158,15 +160,34 @@ describe("buildChatPrompt", () => {
       for (const kind of kinds) {
         const recent = Array.from({ length: CHAT_LIMITS.recentTexts }, (_, i) => ({ speaker: i % 2 ? c.id : rival, text: long(i) }));
         const streak = kind.startsWith("streak") ? { streak: { count: 3, consecutive: false } } : {};
-        const u = utterance(c.id, kind, { rival: kind === "victory_win" ? null : rival, replyTo: kind === "victory_win" ? null : 0, ...streak });
-        const messages = buildChatPrompt(request(u, { recent, replyToText: long(99) }));
-        const size = messages.reduce((n, m) => n + m.content.length, 0);
-        max = Math.max(max, size);
-        expect(size, `${c.name} ${kind}`).toBeLessThan(CHAT_LLM.maxPromptChars);
+        // P4: todos los hechos de captura a la vez (más de los que pueden darse juntos), con cifras largas,
+        // y la variante de reinicio (varias capturas en poco tiempo sin racha viva) en los dos disparadores.
+        const f = (status: "active" | "ended") => ({ status, count: 12, consecutive: false });
+        const n12 = { count: 12, consecutive: false };
+        const n11 = { count: 11, consecutive: false };
+        const all = { made: n12, received: n12, madeSinceBreak: n11, receivedSinceBreak: n11, streak: f("active"), badStreak: f("ended") };
+        const variants: Partial<Utterance>[] = kind.startsWith("victory")
+          ? [{}]
+          : [
+              { captures: { history: "complete", selfRole: "by", self: all, rival: { ...all, streak: f("ended"), badStreak: f("active") }, selfOnRival: n12, rivalOnSelf: n12 } },
+              ...(["capture_streak", "bad_streak"] as const).map((trigger) => ({
+                trigger,
+                captures: { history: "complete" as const, selfRole: "by" as const, self: { ...all, streak: null, badStreak: f("ended") }, rival: { ...all, streak: f("ended"), badStreak: null }, selfOnRival: n12, rivalOnSelf: n12 },
+              })),
+            ];
+        for (const extra of variants) {
+          const u = utterance(c.id, kind, { rival: kind === "victory_win" ? null : rival, replyTo: kind === "victory_win" ? null : 0, ...streak, ...extra });
+          const messages = buildChatPrompt(request(u, { recent, replyToText: long(99) }));
+          const size = messages.reduce((n, m) => n + m.content.length, 0);
+          max = Math.max(max, size);
+          expect(size, `${c.name} ${kind}`).toBeLessThan(CHAT_LLM.maxPromptChars);
+        }
       }
     }
-    // El peor caso medido ronda los 2600 caracteres (ver CHAT_LLM.maxPromptChars).
-    expect(max).toBeGreaterThan(2000);
+    // El escenario es realista (no un caso corto) y, aun con todos los hechos de captura de P4, el prompt
+    // simplificado mide menos que el anterior (2698 caracteres en el peor caso medido antes).
+    expect(max).toBeGreaterThan(1500);
+    expect(max).toBeLessThan(2698);
   });
 
   it("sin coletillas literales: el estilo se describe con `voice` y se mantienen personalidad y forma de hablar", () => {
@@ -176,18 +197,17 @@ describe("buildChatPrompt", () => {
       const [system, user] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
       for (const phrase of c.catchphrases) expect(plain(system.content + user.content), `${c.name}: ${phrase}`).not.toContain(plain(phrase));
       expect(system.content).not.toContain("Expresiones tuyas");
-      expect(system.content).toContain(`Tu estilo: ${c.chat.voice}`);
-      expect(system.content).toContain(c.personality);
-      expect(system.content).toContain(c.chat.register);
+      expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);
       voices.add(c.chat.voice);
     }
     expect(voices.size).toBe(CHARACTERS.length);
-    // Estilos pedidos: Brava desafiante; Ernesto, cálculo y usted; Pilar, refranes sin repetir; Chispa, comentarista supersticioso con el dado.
+    // Caracteres pedidos: Brava competitiva y directa; Ernesto sereno, formal y de usted; Pilar prudente y
+    // cariñosa, con refranes o diminutivos sin repetirlos; Chispa espontáneo y supersticioso con el dado.
     const voiceOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.voice;
-    expect(voiceOf("ai-pink")).toMatch(/desafiante, competitiva y contundente/i);
-    expect(voiceOf("ai-purple")).toMatch(/cálculo y probabilidad.*usted/i);
-    expect(voiceOf("ai-green")).toMatch(/refranes.*diminutivos.*sin repetir siempre el mismo refrán/i);
-    expect(voiceOf("ai-blue")).toMatch(/comentarista imprevisible.*supersticioso con el dado/i);
+    expect(voiceOf("ai-pink")).toMatch(/competitiva, directa e impulsiva.*pica a sus rivales.*sin pasarse ni insultar/i);
+    expect(voiceOf("ai-purple")).toMatch(/estratega sereno y formal.*precisión.*cálculo y probabilidad.*usted/i);
+    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente.*refrán o un diminutivo, sin repetirlos/i);
+    expect(voiceOf("ai-blue")).toMatch(/espontáneo, divertido e imprevisible, algo travieso y supersticioso con el dado/i);
   });
 
   it("situaciones de ambiente: liderar solo en `ambient_lead`; `ambient_ahead` no afirma ir en cabeza", () => {
@@ -195,5 +215,78 @@ describe("buildChatPrompt", () => {
     expect(lead.content).toContain("Vas el primero de la partida, en solitario; Chispa va el último.");
     const [, ahead] = buildChatPrompt(request(utterance("ai-pink", "ambient_ahead", { rival: null, trigger: "ambient", important: false })));
     expect(ahead.content).toContain("La partida sigue abierta y no vas en cabeza.");
+  });
+
+  it("P4: hechos de racha y de pareja desde quien habla (mensajes y réplicas), sin heredar el recuento ajeno", () => {
+    const c = (v: number, by: string, victim: string) => ({ v, by, victim });
+    const facts = (log: ReturnType<typeof c>[], speaker: string) => {
+      const last = log[log.length - 1];
+      return captureFacts(log, last.v, last.by, last.victim, speaker);
+    };
+    // Racha de Brava (3 capturas, solo 1 contra Chispa): responde Chispa, la víctima.
+    const hunt = [c(10, "ai-pink", "ai-green"), c(20, "ai-pink", "ai-purple"), c(30, "ai-pink", "ai-blue")];
+    const huntReply = utterance("ai-blue", "capture_lament", { rival: "ai-pink", trigger: "capture_streak", replyTo: 0, captures: facts(hunt, "ai-blue") });
+    const [, h] = buildChatPrompt(request(huntReply, { replyToText: "¡Otra más!" }));
+    expect(h.content).toContain("Brava lleva tres capturas seguidas: su racha sigue.");
+    expect(h.content).not.toMatch(/te ha capturado|se acaba de cortar/); // la pareja es 1: no se menciona
+    // Mala racha de Chispa (Pilar y Brava): responde Brava, que solo la ha capturado una vez.
+    const bad = [c(10, "ai-green", "ai-blue"), c(20, "ai-pink", "ai-blue")];
+    const badReply = utterance("ai-pink", "capture_boast", { rival: "ai-blue", trigger: "bad_streak", replyTo: 0, captures: facts(bad, "ai-pink") });
+    const [, b] = buildChatPrompt(request(badReply, { replyToText: "¡Otra vez yo!" }));
+    expect(b.content).toContain("A Chispa le han capturado dos veces seguidas: su mala racha sigue.");
+    expect(b.content).not.toMatch(/has capturado a Chispa/);
+    // Pareja de verdad: Brava ha capturado dos veces seguidas a Chispa.
+    const pair = [c(10, "ai-pink", "ai-blue"), c(20, "ai-pink", "ai-blue")];
+    const [, p2] = buildChatPrompt(request(utterance("ai-blue", "capture_lament", { rival: "ai-pink", trigger: "capture_streak", replyTo: 0, captures: facts(pair, "ai-blue") })));
+    expect(p2.content).toContain("Brava te ha capturado dos veces seguidas.");
+    // Racha interrumpida: Brava llevaba 3 y Chispa la captura. Cada uno lo ve desde su lado.
+    const cut = [...hunt.slice(0, 2), c(30, "ai-pink", "ai-green"), c(40, "ai-blue", "ai-pink")];
+    const [, cutter] = buildChatPrompt(request(utterance("ai-blue", "capture_boast", { rival: "ai-pink", captures: facts(cut, "ai-blue") })));
+    expect(cutter.content).toContain("La racha de Brava (tres capturas) se acaba de cortar.");
+    expect(cutter.content).not.toContain("su racha sigue");
+    const [, cutReply] = buildChatPrompt(request(utterance("ai-pink", "capture_lament", { rival: "ai-blue", replyTo: 0, captures: facts(cut, "ai-pink") })));
+    expect(cutReply.content).toContain("Tu racha de tres capturas se acaba de cortar.");
+    // Mala racha interrumpida: a Chispa la capturaron dos veces seguidas y ahora captura ella.
+    const turn = [c(10, "ai-pink", "ai-blue"), c(20, "ai-green", "ai-blue"), c(30, "ai-blue", "ai-purple")];
+    const [, t] = buildChatPrompt(request(utterance("ai-blue", "capture_boast", { rival: "ai-purple", captures: facts(turn, "ai-blue") })));
+    expect(t.content).toContain("Tu mala racha se acaba de cortar (te habían capturado dos veces).");
+    // Sin racha: no se habla de rachas ni de cifras.
+    const [, plain] = buildChatPrompt(request(utterance("ai-purple", "capture_boast", { rival: "ai-blue", replyTo: 0, captures: facts([c(10, "ai-purple", "ai-blue")], "ai-purple") })));
+    expect(plain.content).not.toMatch(/racha|veces|lleva|llevas/i);
+    // R1: Brava v10, v20, v30; Chispa la corta en v40; Brava captura a Pilar en v50. Cuatro capturas en poco
+    // tiempo, pero no está de racha: la secuencia nueva solo tiene una.
+    const r1 = [c(10, "ai-pink", "ai-green"), c(20, "ai-pink", "ai-purple"), c(30, "ai-pink", "ai-green"), c(40, "ai-blue", "ai-pink"), c(50, "ai-pink", "ai-green")];
+    const [, r1Reply] = buildChatPrompt(request(utterance("ai-green", "capture_lament", { rival: "ai-pink", trigger: "capture_streak", replyTo: 0, captures: facts(r1, "ai-green") })));
+    expect(r1Reply.content).toContain("Brava lleva cuatro capturas en poco tiempo, pero le capturaron entre medias: no está de racha, desde entonces lleva una.");
+    expect(r1Reply.content).not.toMatch(/Brava lleva cuatro capturas[^.]*: su racha sigue/);
+    const [, r1Main] = buildChatPrompt(
+      request(utterance("ai-pink", "streak_boast", { rival: "ai-green", trigger: "capture_streak", streak: { count: 4, consecutive: false }, captures: facts(r1, "ai-pink") })),
+    );
+    expect(r1Main.content).toContain("Llevas cuatro capturas en poco tiempo.");
+    expect(r1Main.content).toContain("Pero te capturaron entre medias: no estás de racha, desde entonces llevas una.");
+    expect(r1Main.content.match(/Llevas cuatro capturas/g)).toHaveLength(1);
+    expect(r1Main.content).not.toContain("tu racha sigue");
+    // R2: a Chispa la capturan en v10, v20, v30; captura ella en v40; la vuelven a capturar en v50.
+    const r2 = [c(10, "ai-pink", "ai-blue"), c(20, "ai-green", "ai-blue"), c(30, "ai-purple", "ai-blue"), c(40, "ai-blue", "ai-purple"), c(50, "ai-pink", "ai-blue")];
+    const [, r2Reply] = buildChatPrompt(request(utterance("ai-pink", "capture_boast", { rival: "ai-blue", trigger: "bad_streak", replyTo: 0, captures: facts(r2, "ai-pink") })));
+    expect(r2Reply.content).toContain("A Chispa le han capturado cuatro veces en poco tiempo, pero capturó entre medias: no está de mala racha, desde entonces le han capturado una vez.");
+    expect(r2Reply.content).not.toContain("su mala racha sigue");
+    const [, r2Main] = buildChatPrompt(
+      request(utterance("ai-blue", "streak_lament", { rival: "ai-pink", trigger: "bad_streak", streak: { count: 4, consecutive: false }, captures: facts(r2, "ai-blue") })),
+    );
+    expect(r2Main.content).toContain("Te han capturado cuatro veces en poco tiempo.");
+    expect(r2Main.content).toContain("Pero capturaste entre medias: no estás de mala racha, desde entonces te han capturado una vez.");
+    expect(r2Main.content).not.toContain("tu mala racha sigue");
+    // Historial incompleto: ni cifras ni rachas (tampoco el `streak` del mensaje principal), solo esta captura.
+    for (const [speaker, kind, selfRole] of [["ai-pink", "streak_boast", "by"], ["ai-blue", "capture_lament", "victim"], ["ai-blue", "streak_lament", "victim"]] as const) {
+      const u = utterance(speaker, kind, { rival: speaker === "ai-pink" ? "ai-blue" : "ai-pink", trigger: "capture_streak", streak: { count: 3, consecutive: true }, captures: { history: "incomplete", selfRole } });
+      const [, inc] = buildChatPrompt(request(u));
+      expect(inc.content, kind).toContain(INCOMPLETE_HISTORY);
+      expect(inc.content.replace(INCOMPLETE_HISTORY, ""), kind).not.toMatch(/racha|llevas|lleva |te han capturado [a-z]+ veces|seguidas|en poco tiempo|sigue\.|se acaba de cortar|\b(dos|tres|cuatro)\b/i);
+    }
+    // El mensaje principal de una racha mantiene su situación propia, sin repetirla.
+    const [, main] = buildChatPrompt(request(utterance("ai-pink", "streak_boast", { rival: "ai-blue", trigger: "capture_streak", streak: { count: 3, consecutive: true }, captures: facts(hunt, "ai-pink") })));
+    expect(main.content).toContain("Llevas tres capturas seguidas.");
+    expect(main.content).not.toContain("tu racha sigue");
   });
 });

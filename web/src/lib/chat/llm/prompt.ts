@@ -5,8 +5,7 @@
 import type { PlayerId } from "@/lib/engine";
 import { CHARACTER_NAMES, getCharacter, type ChatLineKind } from "@/lib/game/characters";
 import { CHAT_LLM } from "../config";
-import { COMMENTATOR } from "./quality";
-import type { Utterance } from "../director";
+import type { StreakFacts, Utterance } from "../director";
 import { countWord, type ChatWriteRequest } from "../writer";
 
 export interface PromptMessage {
@@ -20,22 +19,85 @@ const nameOf = (id: PlayerId | null) => (id ? (CHARACTER_NAMES[id] ?? id) : "");
 const youWin = (rival: string) => `Tú capturas y ${rival} pierde la ficha: no te lamentes ni digas que la mala suerte es tuya.`;
 const youLose = (rival: string) => `Tú pierdes la ficha y ${rival} la captura: no presumas ni digas que la mala suerte es de ${rival}.`;
 
+/** Lo que se dice con el historial incompleto: no hay datos fiables de recuentos ni de rachas. */
+export const INCOMPLETE_HISTORY = "No sabes cuántas capturas lleva nadie ni si alguien está de racha: no des cifras ni hables de rachas.";
+
+const ritmoOf = (facts: StreakFacts) => (facts.consecutive ? "seguidas" : "en poco tiempo");
+
+/**
+ * Hechos de rachas y capturas de una intervención de captura (`utterance.captures`), desde el punto de
+ * vista de quien habla: su racha y la del rival (activa o recién interrumpida), sus malas rachas y las
+ * capturas entre los dos en cada dirección (solo si son más de una). Sin hechos de racha no se dice
+ * nada de rachas: la regla del sistema prohíbe inventarlas y el validador las rechaza.
+ * La racha propia del mensaje principal (`streak_boast`/`streak_lament`) ya va en su situación.
+ */
+function captureContext(utterance: Utterance, rival: string): string {
+  const c = utterance.captures;
+  if (!c) return "";
+  // Historial incompleto (versiones sin observar en la ventana): ni cifras ni rachas, solo esta captura.
+  if (c.history === "incomplete") return ` ${INCOMPLETE_HISTORY}`;
+  const n = countWord;
+  const out: string[] = [];
+  const { self, rival: other } = c;
+  if (self.streak?.status === "active" && utterance.kind !== "streak_boast") out.push(`Llevas ${n(self.streak.count)} capturas ${ritmoOf(self.streak)}: tu racha sigue.`);
+  if (self.badStreak?.status === "active" && utterance.kind !== "streak_lament") out.push(`Te han capturado ${n(self.badStreak.count)} veces ${ritmoOf(self.badStreak)}: tu mala racha sigue.`);
+  if (other.streak?.status === "active") out.push(`${rival} lleva ${n(other.streak.count)} capturas ${ritmoOf(other.streak)}: su racha sigue.`);
+  if (other.badStreak?.status === "active") out.push(`A ${rival} le han capturado ${n(other.badStreak.count)} veces ${ritmoOf(other.badStreak)}: su mala racha sigue.`);
+  if (self.streak?.status === "ended") out.push(`Tu racha de ${n(self.streak.count)} capturas se acaba de cortar.`);
+  if (self.badStreak?.status === "ended") out.push(`Tu mala racha se acaba de cortar (te habían capturado ${n(self.badStreak.count)} veces).`);
+  if (other.streak?.status === "ended") out.push(`La racha de ${rival} (${n(other.streak.count)} capturas) se acaba de cortar.`);
+  if (other.badStreak?.status === "ended") out.push(`La mala racha de ${rival} se acaba de cortar (le habían capturado ${n(other.badStreak.count)} veces).`);
+  if (c.selfOnRival.count > 1) out.push(`Tú has capturado a ${rival} ${n(c.selfOnRival.count)} veces ${ritmoOf(c.selfOnRival)}.`);
+  if (c.rivalOnSelf.count > 1) out.push(`${rival} te ha capturado ${n(c.rivalOnSelf.count)} veces ${ritmoOf(c.rivalOnSelf)}.`);
+  // Varias capturas en poco tiempo NO son una racha activa si hubo una interrupción entre medias: el
+  // disparador cuenta la ventana, pero la racha solo el tramo vivo (ver `captureFacts`).
+  const capturerIsSelf = c.selfRole === "by";
+  const capturer = capturerIsSelf ? self : other;
+  const victim = capturerIsSelf ? other : self;
+  if (utterance.trigger === "capture_streak" && !capturer.streak && capturer.made.count > capturer.madeSinceBreak.count) {
+    const since = n(capturer.madeSinceBreak.count);
+    if (!capturerIsSelf) {
+      out.push(`${rival} lleva ${n(capturer.made.count)} capturas en poco tiempo, pero le capturaron entre medias: no está de racha, desde entonces lleva ${since}.`);
+    } else if (utterance.kind === "streak_boast") {
+      // El recuento de la ventana ya va en su situación («Llevas N capturas en poco tiempo.»).
+      out.push(`Pero te capturaron entre medias: no estás de racha, desde entonces llevas ${since}.`);
+    } else {
+      out.push(`Llevas ${n(capturer.made.count)} capturas en poco tiempo, pero te capturaron entre medias: no estás de racha, desde entonces llevas ${since}.`);
+    }
+  }
+  if (utterance.trigger === "bad_streak" && !victim.badStreak && victim.received.count > victim.receivedSinceBreak.count) {
+    const since = `${n(victim.receivedSinceBreak.count)} ${victim.receivedSinceBreak.count === 1 ? "vez" : "veces"}`;
+    if (capturerIsSelf) {
+      out.push(`A ${rival} le han capturado ${n(victim.received.count)} veces en poco tiempo, pero capturó entre medias: no está de mala racha, desde entonces le han capturado ${since}.`);
+    } else if (utterance.kind === "streak_lament") {
+      // El recuento de la ventana ya va en su situación («Te han capturado N veces en poco tiempo.»).
+      out.push(`Pero capturaste entre medias: no estás de mala racha, desde entonces te han capturado ${since}.`);
+    } else {
+      out.push(`Te han capturado ${n(victim.received.count)} veces en poco tiempo, pero capturaste entre medias: no estás de mala racha, desde entonces te han capturado ${since}.`);
+    }
+  }
+  return out.length > 0 ? ` ${out.join(" ")}` : "";
+}
+
 /** Qué acaba de pasar, en segunda persona, para cada tipo de intervención. */
 function situation(utterance: Utterance): string {
   const rival = nameOf(utterance.rival);
-  const streak = utterance.streak
+  // Con el historial incompleto no se usa ningún recuento, aunque llegara `streak`.
+  const reliable = utterance.captures?.history !== "incomplete";
+  const streak = reliable && utterance.streak
     ? ` Llevas ${countWord(utterance.streak.count)} capturas ${utterance.streak.consecutive ? "seguidas" : "en poco tiempo"}.`
     : "";
-  const hunted = utterance.streak
+  const hunted = reliable && utterance.streak
     ? ` Te han capturado ${countWord(utterance.streak.count)} veces ${utterance.streak.consecutive ? "seguidas" : "en poco tiempo"}.`
     : "";
+  const facts = captureContext(utterance, rival);
   const byKind: Record<ChatLineKind, string> = {
     victory_win: "Acabas de terminar el primero: has ganado la partida (los demás siguen jugando por los otros puestos).",
     victory_reply: `${rival} acaba de ganar la partida, no tú. Reaccionas a su victoria.`,
-    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival)}`,
-    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival)}`,
-    streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival)}`,
-    streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted} ${youLose(rival)}`,
+    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival)}${facts}`,
+    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival)}${facts}`,
+    streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival)}${facts}`,
+    streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted} ${youLose(rival)}${facts}`,
     third_six_self: "Has sacado tres seises seguidos y te han castigado.",
     third_six_tease: `${rival} ha sacado tres seises seguidos y le han castigado.`,
     goal: "Una de tus fichas acaba de llegar a la meta.",
@@ -56,26 +118,19 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   const character = getCharacter(utterance.speaker);
   if (!character) throw new Error("Personaje desconocido");
 
-  const names = utterance.rival ? `ti (${character.name}) y ${nameOf(utterance.rival)}` : `ti (${character.name})`;
+  const names = utterance.rival ? `a ti (${character.name}) y a ${nameOf(utterance.rival)}` : `a ti (${character.name})`;
+  // Prompt corto y sin contradicciones: el carácter en una línea (`chat.voice`) y pocas reglas en positivo.
+  // Sin ejemplos de lo que no debe decir (nombrarlos se lo sugiere al modelo); de eso se encarga el validador.
   const system = [
-    `Eres ${character.name}, un personaje de una partida de Parchís entre cuatro personajes de IA. ${character.title}.`,
-    `Personalidad: ${character.personality}`,
-    `Forma de hablar: ${character.chat.register}`,
-    `Tu estilo: ${character.chat.voice}`,
+    `Eres ${character.name}. Juegas una partida de parchís con otros tres y comentas en voz alta lo que acaba de pasar, como una persona más sentada a la mesa.`,
+    `Tu carácter: ${character.chat.voice}`,
     "Reglas:",
-    `- Responde en español con UNA sola frase corta: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres.`,
-    "- Ve directo a tu reacción, como si lo dijeras en voz alta en la mesa: sin saludos, introducciones, explicaciones ni resumen de la jugada.",
-    "- Responde solo en español: ni palabras ni frases en otros idiomas.",
-    "- Escribe solo lo que dice el personaje, en primera persona: sin comillas, sin tu nombre delante, sin emojis, sin listas.",
-    `- Solo puedes nombrar a ${names}; a nadie más, tampoco con parte del nombre ni con apodos.`,
+    `- Una sola frase corta en español: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres. Sin saludos, explicaciones ni resumen de la jugada.`,
+    "- Palabras sencillas de una partida de parchís (fichas, dado, casa, meta, turno), como en una conversación real. Sin metáforas ni comparaciones.",
+    `- Habla en primera persona y nombra solo ${names}, siempre con el nombre completo. Sin comillas, emojis ni tu nombre delante.`,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
-    "- No uses frases hechas fijas ni muletillas, y nunca repitas lo que acabas de decir: di cada cosa con palabras nuevas.",
-    character.id === COMMENTATOR
-      ? "- Habla de parchís (fichas, dado, casa, meta, seguros, barreras). Como comentarista puedes usar metáforas deportivas (¡gol!, ¡golazo!), pero nunca reglas o situaciones de otros juegos (tres en raya, jaque, fuera de juego, penalti…)."
-      : "- Habla de parchís (fichas, dado, casa, meta, seguros, barreras), no de otros juegos ni deportes.",
-    "- No digas quién va ganando o perdiendo, quién va último o está a punto de ganar, ni hables de rachas, salvo que la situación lo diga. Sí puedes picar y retar.",
-    "- Comenta solo los hechos que se te dan. No inventes números, fichas, casillas, jugadas ni a otros personajes.",
-    "- Puedes picar o bromear, pero sin insultos ni groserías. Nunca menciones que eres una IA ni hables de las reglas del chat.",
+    "- Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.",
+    "- No repitas frases ni muletillas que ya hayas dicho. Puedes picar o bromear, pero sin insultos ni comentarios sobre que eres una IA.",
   ].join("\n");
 
   const lines = [`Situación: ${situation(utterance)}`];
@@ -86,9 +141,10 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   }
   const own = request.recent.filter((r) => r.speaker === utterance.speaker).slice(-CHAT_LLM.ownRecentTexts);
   if (own.length > 0) lines.push(`Ya has dicho hace poco (no lo repitas): ${own.map((r) => `«${clip(r.text)}»`).join(" ")}`);
-  const recent = request.recent.slice(-CHAT_LLM.recentTexts);
+  // Los textos recientes de los demás (los propios ya van arriba), para no repetirlos.
+  const recent = request.recent.slice(-CHAT_LLM.recentTexts).filter((r) => !own.includes(r));
   if (recent.length > 0) lines.push(`No repitas estas frases recientes: ${recent.map((r) => `«${clip(r.text)}»`).join(" ")}`);
-  lines.push("Tu frase (una sola, corta y con tu estilo):");
+  lines.push("Tu frase (una sola y corta):");
 
   return [
     { role: "system", content: system },

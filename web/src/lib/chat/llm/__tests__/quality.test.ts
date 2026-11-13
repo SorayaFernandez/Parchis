@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { Utterance } from "../../director";
+import { captureFacts, type Utterance } from "../../director";
 import type { RecentText } from "../../writer";
 import { ChatLlmError, cleanLlmText, INVALID_RESPONSE_REASONS } from "../gatewayWriter";
-import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality } from "../quality";
+import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences } from "../quality";
 
 const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = [], usedCatchphrases?: number[]) => ({
   utterance: { speaker, kind: "capture_boast", rival, trigger: "capture", replyTo: null, important: true, ...extra } as Utterance,
@@ -11,6 +11,17 @@ const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = 
   ...(usedCatchphrases ? { usedCatchphrases } : {}),
 });
 type Request = ReturnType<typeof say>;
+
+/** Una captura del historial del director (`{ v, by, victim }`). */
+const cap = (v: number, by: string, victim: string) => ({ v, by, victim });
+/**
+ * Los hechos de captura REALES que calcula el director (`captureFacts`) para `speaker`, a partir de un
+ * historial cuya última captura es la de esta versión.
+ */
+const factsOf = (log: ReturnType<typeof cap>[], speaker: string) => {
+  const last = log[log.length - 1];
+  return captureFacts(log, last.v, last.by, last.victim, speaker);
+};
 
 /** Motivo y diagnóstico del rechazo, o `null` si se acepta. */
 function reject(text: string, request: Request): { reason: string; detail?: string } | null {
@@ -94,9 +105,14 @@ describe("mensajes naturales que se siguen aceptando", () => {
     const badStreak = { kind: "streak_lament" as const, trigger: "bad_streak" as const, streak: { count: 2, consecutive: true } };
     ok("Ay, mi niña, con dos seguidas ya es castigo divino. Quien mucho abarca, poco aprieta.", say("ai-green", "ai-blue", badStreak));
     // Réplica (capture_lament) dentro de una racha: «racha» está respaldada por el disparador.
-    ok("¡Chas! Me has pillado con la racha mala. Un paso atrás para mí.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }));
+    ok("¡Chas! Me has pillado con la racha mala.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }));
+    // Con tres frases, ahora se rechaza por longitud (regla de como mucho dos frases).
+    expect(reject("¡Chas! Me has pillado con la racha mala. Un paso atrás para mí.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }))?.reason).toBe(
+      "demasiadas frases",
+    );
     // El original («… para la Chispa») habla de sí misma en tercera persona: ahora se rechaza (regla B).
-    expect(reject("¡Chas! Me has pillado con la racha mala. Un paso atrás para la Chispa.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }))?.reason).toBe(
+    // (En dos frases, para que lo rechace la regla B y no la de longitud.)
+    expect(reject("¡Chas! Un paso atrás para la Chispa.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }))?.reason).toBe(
       "habla de sí mismo en tercera persona",
     );
     ok("Estadísticamente era inevitable.", say("ai-purple", "ai-green", { replyTo: 0 }));
@@ -285,7 +301,8 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("¡5 capturas, Chispa!", say("ai-pink", "ai-blue", streakOf(3)))).toEqual({ reason: "afirmación no respaldada", term: "cifra 5 (real 3)" });
     const lament = { kind: "streak_lament" as const, trigger: "bad_streak" as const, streak: { count: 2, consecutive: true } };
     expect(checkQuality("Ay, dos veces seguidas, cariño.", say("ai-green", "ai-blue", lament))).toBeNull();
-    expect(checkQuality("Ay, me has pillado tres veces ya, cariño.", say("ai-green", "ai-blue", lament))).toEqual({ reason: "afirmación no respaldada", term: "cifra 3 (real 2)" });
+    // «me has pillado» habla de la pareja (Chispa → Pilar), no de la mala racha: sin ese dato, no verificable.
+    expect(checkQuality("Ay, me has pillado tres veces ya, cariño.", say("ai-green", "ai-blue", lament))).toEqual({ reason: "afirmación no respaldada", term: "cifra 3 (sin datos, del rival a quien habla)" });
     // Sin señal de captura en la frase, «veces» no se interpreta como cifra de capturas (límite asumido).
     expect(checkQuality("Ay, tres veces ya, cariño.", say("ai-green", "ai-blue", lament))).toBeNull();
   });
@@ -295,7 +312,7 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("¡Dos capturas, Chispa!", say("ai-pink", "ai-blue"))).toEqual({ reason: "afirmación no respaldada", term: "cifra 2 (real sin racha)" });
     expect(checkQuality("Me has pillado tres veces, Brava.", say("ai-blue", "ai-pink", { kind: "capture_lament" }))).toEqual({
       reason: "afirmación no respaldada",
-      term: "cifra 3 (real sin racha)",
+      term: "cifra 3 (sin datos, del rival a quien habla)",
     });
     // Réplica dentro de una racha: no lleva el recuento, así que no puede dar cifras.
     const reply = { kind: "capture_lament" as const, trigger: "capture_streak" as const, replyTo: 0 };
@@ -326,8 +343,8 @@ describe("cada regla nueva por separado", () => {
   it("D (auditoría): ordinales, números mayores que diez, «un par de» y un adjetivo intercalado", () => {
     // Ordinales: deben coincidir con el recuento real.
     expect(checkQuality("¡Mi tercera captura, Chispa!", say("ai-pink", "ai-blue", streakOf(3)))).toBeNull();
-    expect(checkQuality("¡Mi tercera captura, Chispa!", say("ai-pink", "ai-blue", streakOf(2, true)))?.term).toBe("cifra 3 (real 2)");
-    expect(checkQuality("¡Mi tercera captura, Chispa!", say("ai-pink", "ai-blue"))?.term).toBe("cifra 3 (real sin racha)");
+    expect(checkQuality("¡Mi tercera captura, Chispa!", say("ai-pink", "ai-blue", streakOf(2, true)))?.term).toBe("cifra 3 (real 2, hechas por quien habla)");
+    expect(checkQuality("¡Mi tercera captura, Chispa!", say("ai-pink", "ai-blue"))?.term).toBe("cifra 3 (sin datos, hechas por quien habla)");
     const hunted2 = { kind: "streak_lament" as const, trigger: "bad_streak" as const, streak: { count: 2, consecutive: true } };
     expect(checkQuality("Por segunda vez, Chispa. Me la apunto.", say("ai-pink", "ai-blue", hunted2))).toBeNull();
     // Números mayores que diez y «un par de».
@@ -354,13 +371,22 @@ describe("cada regla nueva por separado", () => {
     ]) {
       expect(checkQuality(text, say("ai-pink", "ai-blue", simple)), text).toBeNull();
     }
-    // Con señal: son cifras de capturas y, sin racha, no están respaldadas.
-    for (const text of ["Me has pillado dos veces, Chispa.", "Me has mandado a casa dos veces, Chispa.", "Por segunda vez me pillas, Chispa."]) {
-      expect(checkQuality(text, say("ai-blue", "ai-pink", replyIn("capture"))), text).toEqual({ reason: "afirmación no respaldada", term: "cifra 2 (real sin racha)" });
+    // Con señal: son cifras de capturas de la pareja (Chispa → Brava) y, sin ese dato, no están respaldadas.
+    const pairTexts = ["Me has pillado dos veces, Chispa.", "Me has mandado a casa dos veces, Chispa.", "Por segunda vez me pillas, Chispa."];
+    for (const text of pairTexts) {
+      expect(checkQuality(text, say("ai-pink", "ai-blue", replyIn("capture"))), text).toEqual({ reason: "afirmación no respaldada", term: "cifra 2 (sin datos, del rival a quien habla)" });
     }
-    // Y con una mala racha de 2 que lo respalda, se aceptan.
-    expect(checkQuality("Me has pillado dos veces, Chispa.", say("ai-pink", "ai-blue", hunted(2, false)))).toBeNull();
-    expect(checkQuality("Por segunda vez me pillas, Chispa.", say("ai-pink", "ai-blue", hunted(2, true)))).toBeNull();
+    // Una mala racha de 2 (de cualquiera) ya NO las respalda (auditoría de P4): la pareja es 1.
+    const badMixed = factsOf([cap(10, "ai-green", "ai-pink"), cap(20, "ai-blue", "ai-pink")], "ai-pink");
+    for (const text of pairTexts) {
+      expect(checkQuality(text, say("ai-pink", "ai-blue", { ...hunted(2, true), captures: badMixed })), text).toEqual({
+        reason: "afirmación no respaldada",
+        term: "cifra 2 (real 1, del rival a quien habla)",
+      });
+    }
+    // Con el recuento real de la pareja (Chispa ha capturado dos veces a Brava), se aceptan.
+    const badPair = factsOf([cap(10, "ai-blue", "ai-pink"), cap(20, "ai-blue", "ai-pink")], "ai-pink");
+    for (const text of pairTexts) expect(checkQuality(text, say("ai-pink", "ai-blue", { ...hunted(2, true), captures: badPair })), text).toBeNull();
   });
 
   it("D: la señal de captura es léxica y por frase (sin coincidencias accidentales)", () => {
@@ -371,7 +397,10 @@ describe("cada regla nueva por separado", () => {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toBeNull();
     }
     // Señales válidas: «capturado», «cazado», «comido», «en poco tiempo», «racha», «seguidas».
-    for (const text of ["Dos veces me has capturado, Chispa.", "Dos veces me has cazado, Chispa.", "Dos veces me has comido, Chispa.", "Dos veces en poco tiempo, Chispa.", "Dos veces, qué racha, Chispa."]) {
+    for (const text of ["Dos veces me has capturado, Chispa.", "Dos veces me has cazado, Chispa.", "Dos veces me has comido, Chispa."]) {
+      expect(checkQuality(text, say("ai-pink", "ai-blue"))?.term, text).toBe("cifra 2 (sin datos, del rival a quien habla)");
+    }
+    for (const text of ["Dos veces en poco tiempo, Chispa.", "Dos veces, qué racha, Chispa."]) {
       expect(checkQuality(text, say("ai-pink", "ai-blue"))?.term, text).toBe("cifra 2 (real sin racha)");
     }
   });
@@ -406,10 +435,16 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("¡Doble captura, Chispa!", say("ai-pink", "ai-blue"))?.term).toBe("cifra 2 (real sin racha)");
     expect(checkQuality("¡Doble captura, Chispa!", say("ai-pink", "ai-blue", streakOf(2, true)))).toBeNull();
     expect(checkQuality("¡Triple captura, Chispa!", say("ai-pink", "ai-blue", streakOf(2, true)))?.term).toBe("cifra 3 (real 2)");
-    for (const text of ["¡2ª captura, Chispa!", "¡2º captura, Chispa!", "¡2a captura, Chispa!", "Por 2ª vez me pillas, Chispa."]) {
+    for (const text of ["¡2ª captura, Chispa!", "¡2º captura, Chispa!", "¡2a captura, Chispa!"]) {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toEqual({ reason: "afirmación no respaldada", term: "cifra 2 (real sin racha)" });
       expect(checkQuality(text, say("ai-pink", "ai-blue", hunted(2, true))), text).toBeNull();
     }
+    // «Por 2ª vez me pillas» es de la pareja: la mala racha no basta; el recuento de la pareja, sí.
+    const pairText = "Por 2ª vez me pillas, Chispa.";
+    expect(checkQuality(pairText, say("ai-pink", "ai-blue"))?.term).toBe("cifra 2 (sin datos, del rival a quien habla)");
+    expect(checkQuality(pairText, say("ai-pink", "ai-blue", hunted(2, true)))?.term).toBe("cifra 2 (sin datos, del rival a quien habla)");
+    const twice = factsOf([cap(10, "ai-blue", "ai-pink"), cap(20, "ai-blue", "ai-pink")], "ai-pink");
+    expect(checkQuality(pairText, say("ai-pink", "ai-blue", { ...hunted(2, true), captures: twice }))).toBeNull();
     expect(checkQuality("¡3er captura, Chispa!", say("ai-pink", "ai-blue", streakOf(2, true)))?.term).toBe("cifra 3 (real 2)");
     // Cifras que no son ordinales: «2 a casa», «de 1 a 3 casillas», «3 o 4 casillas», «la 2 de la meta».
     for (const text of ["Con un 5 salgo y 2 a casa, Chispa.", "De 1 a 3 casillas me separan, Chispa.", "Me faltan 3 o 4 casillas, Chispa.", "La casilla 2 de la meta es mía, Chispa."]) {
@@ -422,8 +457,13 @@ describe("cada regla nueva por separado", () => {
   it("D tabla C: los casos que ya funcionaban siguen igual", () => {
     expect(checkQuality("Una captura limpia, Chispa.", say("ai-pink", "ai-blue"))).toBeNull();
     expect(checkQuality("Una captura limpia, Chispa.", say("ai-pink", null, { kind: "victory_win", trigger: "victory" }))?.term).toBe("cifra 1 (real sin racha)");
-    expect(checkQuality("Me has pillado dos veces seguidas, Chispa.", say("ai-pink", "ai-blue", hunted(2, true)))).toBeNull();
-    expect(checkQuality("Me has pillado dos veces seguidas, Chispa.", say("ai-pink", "ai-blue", hunted(3, false)))?.term).toBe("cifra 2 (real 3)");
+    // «Me has pillado dos veces seguidas» es de la pareja: se comprueba con su recuento y su ritmo reales.
+    const seguidas = "Me has pillado dos veces seguidas, Chispa.";
+    const pair2 = factsOf([cap(10, "ai-blue", "ai-pink"), cap(20, "ai-blue", "ai-pink")], "ai-pink");
+    expect(checkQuality(seguidas, say("ai-pink", "ai-blue", { ...hunted(2, true), captures: pair2 }))).toBeNull();
+    const pair3 = factsOf([cap(10, "ai-blue", "ai-pink"), cap(15, "ai-green", "ai-purple"), cap(17, "ai-blue", "ai-pink"), cap(20, "ai-blue", "ai-pink")], "ai-pink");
+    expect(checkQuality(seguidas, say("ai-pink", "ai-blue", { ...hunted(3, false), captures: pair3 }))?.term).toBe("cifra 2 (real 3, del rival a quien habla)");
+    expect(checkQuality(seguidas, say("ai-pink", "ai-blue", hunted(2, true)))?.term).toBe("cifra 2 (sin datos, del rival a quien habla)");
     expect(checkQuality("Tres veces en poco tiempo, cariño.", say("ai-green", "ai-blue", hunted(3, false)))).toBeNull();
     expect(checkQuality("¡Tres seguidas, qué barbaridad!", say("ai-blue", "ai-pink", replyIn("capture_streak")))?.term).toBe("cifra 3 (real sin racha)");
     expect(checkQuality("A veces pasa, Chispa.", say("ai-pink", "ai-blue"))).toBeNull();
@@ -471,7 +511,400 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("¡A casa, Brava!", say("ai-blue", "ai-pink", {}, [], []))).toBeNull();
   });
 
+  // ── P2: longitud en frases, «Don» truncado y Pilar llamando «abuela» a otro ──
+  it("P2: como mucho dos frases; puntos suspensivos, abreviaturas y signos no cortan frases de más", () => {
+    expect(countSentences("¡A casa, Chispa!")).toBe(1);
+    expect(countSentences("¡Toma! A casa, Chispa.")).toBe(2);
+    expect(countSentences("Ay… ya veremos al final, cariño.")).toBe(1);
+    expect(countSentences("Quien ríe el último… Ya veremos.")).toBe(2);
+    expect(countSentences("Sra. Pilar, su ficha vuelve a casa.")).toBe(1);
+    expect(countSentences("¿¡Otra vez!? Pues vale.")).toBe(2);
+    expect(checkQuality("¡Toma! A casa, Chispa.", say("ai-pink", "ai-blue"))).toBeNull();
+    expect(checkQuality("¡Toma! A casa, Chispa. ¡Y no vuelvas!", say("ai-pink", "ai-blue"))).toEqual({ reason: "demasiadas frases", term: "frases=3" });
+  });
+
+  it("P2: «Don»/«Dón» suelto como nombre se rechaza; «Don Ernesto» y el nombre común «un don», no", () => {
+    for (const text of ["¡Dón, te vas a quedar sin fichas!", "Venga, Don, que te toca.", "¡Ya verás, Don!"]) {
+      expect(checkQuality(text, say("ai-pink", "ai-purple")), text).toEqual({ reason: "mezcla nombres de personajes", term: "don" });
+    }
+    for (const text of ["¡A casa, Don Ernesto!", "Chispa, tienes un don para el dado.", "¡Qué don tienes, Chispa!"]) {
+      expect(checkQuality(text, say("ai-pink", text.includes("Ernesto") ? "ai-purple" : "ai-blue")), text).toBeNull();
+    }
+  });
+
+  it("P2: Pilar no llama «abuela» a otro; hablar de sí misma como «la abuela» sigue permitido", () => {
+    for (const text of ["Con paciencia se llega, abuela.", "Abuela, qué prisas tienes.", "¡Ay, abuela! Qué jugada."]) {
+      expect(checkQuality(text, say("ai-green", "ai-blue")), text).toEqual({ reason: "mezcla nombres de personajes", term: "abuela (vocativo)" });
+    }
+    for (const text of ["Ay, la abuela no corre tanto, Chispa.", "Esta abuela todavía tiene mucho que decir.", "Mi abuela decía que sin prisa."]) {
+      expect(checkQuality(text, say("ai-green", "ai-blue")), text).toBeNull();
+    }
+    // La regla es solo para Pilar: otro personaje que la llama «¡Abuela!» siendo ella el rival, se acepta.
+    expect(reject("¡Abuela! Esa ficha vuelve a casa.", say("ai-blue", "ai-green"))).toBeNull();
+  });
+
+  // ── P4: rachas en las réplicas ──
+  describe("P4: rachas y cifras con el estado real (hechos del director, también en las réplicas)", () => {
+    const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+    const unsupported = (term: string) => ({ reason: "afirmación no respaldada", term });
+    const at = (speaker: string, rival: string, log: ReturnType<typeof cap>[], extra: Partial<Utterance>) =>
+      say(speaker, rival, { ...extra, captures: factsOf(log, speaker) });
+
+    // Historiales (la última captura es la de esta versión).
+    /** Brava: 3 capturas seguidas a tres rivales distintos (solo 1 a Chispa). */
+    const HUNT = [cap(10, BRAVA, PILAR), cap(20, BRAVA, ERNESTO), cap(30, BRAVA, CHISPA)];
+    /** Chispa: capturada por Pilar y después por Brava (2 seguidas, solo 1 de Brava). */
+    const BAD = [cap(10, PILAR, CHISPA), cap(20, BRAVA, CHISPA)];
+    /** Brava llevaba 3 y Chispa la captura: la racha de Brava se interrumpe. */
+    const CUT = [cap(10, BRAVA, PILAR), cap(20, BRAVA, ERNESTO), cap(30, BRAVA, PILAR), cap(40, CHISPA, BRAVA)];
+    /** A Chispa la capturaron dos veces seguidas y ahora captura ella: su mala racha se interrumpe. */
+    const TURN = [cap(10, BRAVA, CHISPA), cap(20, PILAR, CHISPA), cap(30, CHISPA, ERNESTO)];
+    /** Brava ha capturado a Chispa dos veces seguidas (pareja real). */
+    const PAIR = [cap(10, BRAVA, CHISPA), cap(20, BRAVA, CHISPA)];
+    /** Una captura suelta: ninguna racha. */
+    const LONE = [cap(10, BRAVA, CHISPA)];
+
+    // Réplicas de cada disparador (el mensaje principal lo dijo el otro).
+    const huntReply = { kind: "capture_lament" as const, trigger: "capture_streak" as const, replyTo: 0 };
+    const badReply = { kind: "capture_boast" as const, trigger: "bad_streak" as const, replyTo: 0 };
+
+    it("auditoría: Chispa (réplica en capture_streak) «me has capturado tres veces» con 3 globales de Brava, pero 1 contra Chispa", () => {
+      expect(checkQuality("Brava, me has capturado tres veces.", at(CHISPA, BRAVA, HUNT, huntReply))).toEqual(unsupported("cifra 3 (real 1, del rival a quien habla)"));
+      // El recuento global sí es correcto atribuido a Brava, en la réplica.
+      expect(checkQuality("Brava, llevas tres capturas seguidas.", at(CHISPA, BRAVA, HUNT, huntReply))).toBeNull();
+      expect(checkQuality("Tres capturas ya, Brava. Me la apunto.", at(CHISPA, BRAVA, HUNT, huntReply))).toBeNull();
+    });
+
+    it("auditoría: Brava (réplica en bad_streak) «te he capturado dos veces seguidas» sin dos capturas seguidas suyas a Chispa", () => {
+      expect(checkQuality("Te he capturado dos veces seguidas, Chispa.", at(BRAVA, CHISPA, BAD, badReply))).toEqual(unsupported("cifra 2 (real 1, de quien habla al rival)"));
+      // Lo que sí es verdad: a Chispa le han capturado dos veces seguidas.
+      expect(checkQuality("Te han capturado dos veces seguidas, Chispa.", at(BRAVA, CHISPA, BAD, badReply))).toBeNull();
+    });
+
+    it("1. racha de capturas que continúa: cifra y ritmo reales; decir que termina se rechaza", () => {
+      const main = { kind: "streak_boast" as const, trigger: "capture_streak" as const, streak: { count: 3, consecutive: true } };
+      expect(checkQuality("¡Tres capturas seguidas, Chispa!", at(BRAVA, CHISPA, HUNT, main))).toBeNull();
+      expect(checkQuality("¡Mi racha sigue, Chispa!", at(BRAVA, CHISPA, HUNT, main))).toBeNull();
+      expect(checkQuality("¡Cuatro capturas, Chispa!", at(BRAVA, CHISPA, HUNT, main))).toEqual(unsupported("cifra 4 (real 3)"));
+      expect(checkQuality("Se acabó mi racha, Chispa.", at(BRAVA, CHISPA, HUNT, main))).toEqual(unsupported("fin de racha"));
+    });
+
+    it("2. mala racha que continúa: la víctima y su rival la cuentan con datos reales; decir que termina se rechaza", () => {
+      const main = { kind: "streak_lament" as const, trigger: "bad_streak" as const, streak: { count: 2, consecutive: true } };
+      expect(checkQuality("Me han capturado dos veces seguidas, Brava.", at(CHISPA, BRAVA, BAD, main))).toBeNull();
+      expect(checkQuality("Mi mala racha sigue, Brava.", at(CHISPA, BRAVA, BAD, main))).toBeNull();
+      expect(checkQuality("Me han capturado tres veces, Brava.", at(CHISPA, BRAVA, BAD, main))).toEqual(unsupported("cifra 3 (real 2, recibidas por quien habla)"));
+      expect(checkQuality("Tu mala racha se acaba aquí, Chispa.", at(BRAVA, CHISPA, BAD, badReply))).toEqual(unsupported("fin de racha"));
+    });
+
+    it("3. racha de capturas interrumpida de verdad: se puede decir, desde los dos lados; que sigue, no", () => {
+      expect(checkQuality("Se acabó tu racha, Brava.", at(CHISPA, BRAVA, CUT, {}))).toBeNull();
+      expect(checkQuality("¡Fin de tu racha, Brava!", at(CHISPA, BRAVA, CUT, {}))).toBeNull();
+      expect(checkQuality("Tu racha de tres capturas se ha terminado, Brava.", at(CHISPA, BRAVA, CUT, {}))).toBeNull();
+      expect(checkQuality("Tu racha de cuatro capturas se ha terminado, Brava.", at(CHISPA, BRAVA, CUT, {}))).toEqual(unsupported("cifra 4 (real 3, racha del rival)"));
+      expect(checkQuality("Se me ha acabado la racha, Chispa.", at(BRAVA, CHISPA, CUT, { kind: "capture_lament", replyTo: 0 }))).toBeNull();
+      expect(checkQuality("Tu racha sigue, Brava.", at(CHISPA, BRAVA, CUT, {}))).toEqual(unsupported("racha que sigue"));
+    });
+
+    it("4. mala racha interrumpida de verdad: se puede decir; la mala racha de otro, no", () => {
+      expect(checkQuality("¡Se acabó mi mala racha, Don Ernesto!", at(CHISPA, ERNESTO, TURN, {}))).toBeNull();
+      expect(checkQuality("Su mala racha ha terminado, Chispa.", at(ERNESTO, CHISPA, TURN, { kind: "capture_lament", replyTo: 0 }))).toBeNull();
+      // Quien recibe no tenía mala racha: afirmar que se le acabó no está respaldado.
+      expect(checkQuality("Se acabó mi mala racha, Chispa.", at(ERNESTO, CHISPA, TURN, { kind: "capture_lament", replyTo: 0 }))).toEqual(unsupported("fin de racha"));
+    });
+
+    it("5 y 12. sin racha ni datos: ni rachas ni cifras", () => {
+      expect(checkQuality("Se acabó tu racha, Chispa.", at(BRAVA, CHISPA, LONE, {}))).toEqual(unsupported("fin de racha"));
+      expect(checkQuality("Vaya racha llevo, Chispa.", at(BRAVA, CHISPA, LONE, {}))).toEqual(unsupported("racha"));
+      expect(checkQuality("Te he capturado dos veces, Chispa.", at(BRAVA, CHISPA, LONE, {}))).toEqual(unsupported("cifra 2 (real 1, de quien habla al rival)"));
+      expect(checkQuality("¡Tres capturas, Chispa!", at(BRAVA, CHISPA, LONE, {}))).toEqual(unsupported("cifra 3 (real sin racha)"));
+      expect(checkQuality("¡Dos seguidas, Chispa!", at(BRAVA, CHISPA, LONE, {}))).toEqual(unsupported("cifra 2 (real sin racha)"));
+      // Sin hechos de captura (victoria): nada verificable.
+      expect(checkQuality("Te he capturado tres veces, Chispa.", say(BRAVA, CHISPA, { kind: "victory_reply", trigger: "victory", replyTo: 0 }))).toEqual(
+        unsupported("cifra 3 (sin datos, de quien habla al rival)"),
+      );
+      // «una captura» sigue siendo la de este momento.
+      expect(checkQuality("Una captura limpia, Chispa.", at(BRAVA, CHISPA, LONE, {}))).toBeNull();
+    });
+
+    it("6 y 7. réplicas que afirman que una racha terminó: falso si sigue, correcto si se interrumpió", () => {
+      for (const text of ["Tu racha se acaba, Brava.", "Se te acabó la racha, Brava.", "Tu racha ha llegado a su fin, Brava.", "Adiós a tu racha, Brava.", "Sí, se acabó tu racha, Brava."]) {
+        expect(checkQuality(text, at(CHISPA, BRAVA, HUNT, huntReply)), text).toEqual(unsupported("fin de racha"));
+      }
+      for (const text of ["Se te acabó la racha, Brava.", "Tu racha ha llegado a su fin, Brava.", "Adiós a tu racha, Brava."]) {
+        expect(checkQuality(text, at(CHISPA, BRAVA, CUT, { kind: "capture_boast", replyTo: 0 })), text).toBeNull();
+      }
+      // #17 (84d066b1) con datos reales: la mala racha de Chispa sigue.
+      expect(checkQuality("Su mala racha se acaba. Su ficha vuelve a casa.", at(ERNESTO, CHISPA, [cap(10, PILAR, CHISPA), cap(20, ERNESTO, CHISPA)], badReply))).toEqual(unsupported("fin de racha"));
+    });
+
+    it("preguntas, deseos e hipótesis no afirman nada; las negaciones son continuidad", () => {
+      for (const text of [
+        "¿Se acabó tu racha, Brava?",
+        "A ver si se acaba tu racha, Brava.",
+        "Ojalá se acaba pronto tu racha, Brava.",
+        "Que se te acabe la racha, Brava.",
+        "Si se rompe tu racha, me alegro, Brava.",
+        "Tu racha se acabará, Brava.",
+      ]) {
+        expect(checkQuality(text, at(CHISPA, BRAVA, HUNT, huntReply)), text).toBeNull();
+      }
+      expect(checkQuality("Tu racha no se acaba nunca, Brava.", at(CHISPA, BRAVA, HUNT, huntReply))).toBeNull();
+      expect(checkQuality("No se acabó tu racha, Brava.", at(CHISPA, BRAVA, CUT, {}))).toEqual(unsupported("racha que sigue"));
+    });
+
+    it("8, 9 y 10. recuento global frente a recuento de la pareja, en cada dirección", () => {
+      // 8. Global correcto, atribución incorrecta: Brava lleva 3, pero solo 1 contra Chispa.
+      expect(checkQuality("Ya me has pillado tres veces, Brava.", at(CHISPA, BRAVA, HUNT, huntReply))).toEqual(unsupported("cifra 3 (real 1, del rival a quien habla)"));
+      expect(checkQuality("Te he capturado tres veces, Chispa.", at(BRAVA, CHISPA, HUNT, { kind: "streak_boast", trigger: "capture_streak", streak: { count: 3, consecutive: true } }))).toEqual(
+        unsupported("cifra 3 (real 1, de quien habla al rival)"),
+      );
+      // 9. Pareja correcta, desde los dos lados.
+      expect(checkQuality("Me has capturado dos veces seguidas, Brava.", at(CHISPA, BRAVA, PAIR, huntReply))).toBeNull();
+      expect(checkQuality("Te he capturado dos veces seguidas, Chispa.", at(BRAVA, CHISPA, PAIR, { kind: "streak_boast", trigger: "capture_streak", streak: { count: 2, consecutive: true } }))).toBeNull();
+      expect(checkQuality("Es la segunda vez que me pillas, Brava.", at(CHISPA, BRAVA, PAIR, huntReply))).toBeNull();
+      // 10. Pareja incorrecta (cifra o ritmo) y dirección cambiada.
+      expect(checkQuality("Me has capturado tres veces, Brava.", at(CHISPA, BRAVA, PAIR, huntReply))).toEqual(unsupported("cifra 3 (real 2, del rival a quien habla)"));
+      const mixed = [cap(10, BRAVA, CHISPA), cap(15, PILAR, ERNESTO), cap(20, BRAVA, CHISPA)];
+      expect(checkQuality("Me has capturado dos veces seguidas, Brava.", at(CHISPA, BRAVA, mixed, { kind: "capture_lament", replyTo: 0 }))).toEqual(
+        unsupported("seguidas (no seguidas, del rival a quien habla)"),
+      );
+      expect(checkQuality("Te he capturado dos veces, Brava.", at(CHISPA, BRAVA, PAIR, huntReply))).toEqual(unsupported("cifra 2 (real 0, de quien habla al rival)"));
+      // Con dos cifras en la frase, cada una con su sujeto (la señal más cercana).
+      expect(checkQuality("Llevas tres capturas y a mí me has pillado una vez, Brava.", at(CHISPA, BRAVA, HUNT, huntReply))).toBeNull();
+      expect(checkQuality("Llevas tres capturas y me has pillado dos veces, Brava.", at(CHISPA, BRAVA, HUNT, huntReply))).toEqual(unsupported("cifra 2 (real 1, del rival a quien habla)"));
+    });
+
+    it("11. réplicas de capture_streak y bad_streak: cada una con su propio punto de vista", () => {
+      // capture_streak: responde la víctima (Chispa). Puede contar la racha de Brava, no la suya.
+      expect(checkQuality("Tu racha sigue, Brava, pero ya te pillaré.", at(CHISPA, BRAVA, HUNT, huntReply))).toBeNull();
+      expect(checkQuality("Mi racha sigue, Brava.", at(CHISPA, BRAVA, HUNT, huntReply))).toEqual(unsupported("racha que sigue"));
+      expect(checkQuality("Mi mala racha empieza hoy, Brava.", at(CHISPA, BRAVA, HUNT, huntReply))).toEqual(unsupported("racha"));
+      // bad_streak: responde quien captura (Brava). Puede contar la mala racha de Chispa, no una suya.
+      expect(checkQuality("Tu mala racha sigue, Chispa.", at(BRAVA, CHISPA, BAD, badReply))).toBeNull();
+      expect(checkQuality("A ti te han capturado dos veces, Chispa.", at(BRAVA, CHISPA, BAD, badReply))).toBeNull();
+      expect(checkQuality("Llevo dos capturas, Chispa.", at(BRAVA, CHISPA, BAD, badReply))).toEqual(unsupported("cifra 2 (real 1, hechas por quien habla)"));
+      // Sin sujeto, la cifra es la de la racha que provocó la intervención (la mala racha de Chispa).
+      expect(checkQuality("¡Dos seguidas, Chispa!", at(BRAVA, CHISPA, BAD, badReply))).toBeNull();
+    });
+  });
+
+  describe("P4, auditoría final: hipótesis por cláusula, «una vez», reinicios, fichas y cifras sin sustantivo", () => {
+    const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+    const unsupported = (term: string) => ({ reason: "afirmación no respaldada", term });
+    const at = (speaker: string, rival: string, log: ReturnType<typeof cap>[], extra: Partial<Utterance>) =>
+      say(speaker, rival, { ...extra, captures: factsOf(log, speaker) });
+    /** Racha ACTIVA de Brava (3 seguidas); responde Chispa, la víctima. */
+    const active = () => at(CHISPA, BRAVA, [cap(10, BRAVA, PILAR), cap(20, BRAVA, ERNESTO), cap(30, BRAVA, CHISPA)], { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 });
+    /** Racha de Brava INTERRUMPIDA: Chispa acaba de capturarla. */
+    const ended = () => at(CHISPA, BRAVA, [cap(10, BRAVA, PILAR), cap(20, BRAVA, ERNESTO), cap(30, BRAVA, PILAR), cap(40, CHISPA, BRAVA)], {});
+
+    it("afirmaciones con otra cláusula hipotética delante o detrás: se validan (falsas con la racha activa)", () => {
+      for (const text of [
+        "Si quieres, se acabó tu racha, Brava.",
+        "Quizá mañana gane, pero se acabó tu racha, Brava.",
+        "Si me preguntas, tu racha ya se acabó, Brava.",
+        "Si, se acabó tu racha, Brava.",
+        "Sí, se acabó tu racha, Brava.",
+        "Se acabó tu racha, ¿verdad, Brava?",
+        "Se te acaba la racha, Brava.",
+      ]) {
+        expect(checkQuality(text, active()), text).toEqual(unsupported("fin de racha"));
+        expect(checkQuality(text, ended()), text).toBeNull();
+      }
+    });
+
+    it("hipótesis, deseos y preguntas en la MISMA cláusula: no son hechos (ni con la racha activa ni interrumpida)", () => {
+      for (const text of [
+        "Si se acaba tu racha, lo celebraré, Brava.",
+        "Tu racha se acaba si te pillo, Brava.",
+        "Ojalá se acabe tu racha, Brava.",
+        "A ver si se acaba tu racha, Brava.",
+        "Puede que se haya terminado tu racha, Brava.",
+        "¿Se te ha acabado la racha, Brava?",
+        "Brava, ¿se acabó tu racha?",
+      ]) {
+        expect(checkQuality(text, active()), text).toBeNull();
+        expect(checkQuality(text, ended()), text).toBeNull();
+      }
+    });
+
+    it("negación: «tu racha no se ha terminado» afirma que sigue", () => {
+      expect(checkQuality("Tu racha no se ha terminado, Brava.", active())).toBeNull();
+      expect(checkQuality("Tu racha no se ha terminado, Brava.", ended())).toEqual(unsupported("racha que sigue"));
+      expect(checkQuality("No se te acaba la racha, Brava.", ended())).toEqual(unsupported("racha que sigue"));
+    });
+
+    it("«una vez» y «la primera vez» son recuentos: pareja con 0, 1 y 3 capturas, en las dos direcciones", () => {
+      const zero = [cap(10, CHISPA, BRAVA)]; // Brava nunca ha capturado a Chispa
+      const one = [cap(10, BRAVA, CHISPA)];
+      const three = [cap(10, BRAVA, CHISPA), cap(20, BRAVA, CHISPA), cap(30, BRAVA, CHISPA)];
+      for (const text of ["Me has capturado una vez, Brava.", "Es la primera vez que me pillas, Brava."]) {
+        expect(checkQuality(text, at(CHISPA, BRAVA, zero, {})), text).toEqual(unsupported("cifra 1 (real 0, del rival a quien habla)"));
+        expect(checkQuality(text, at(CHISPA, BRAVA, one, { kind: "capture_lament" })), text).toBeNull();
+        expect(checkQuality(text, at(CHISPA, BRAVA, three, { kind: "capture_lament", trigger: "capture_streak" })), text).toEqual(unsupported("cifra 1 (real 3, del rival a quien habla)"));
+      }
+      // Dirección contraria: de quien habla al rival.
+      expect(checkQuality("Te he capturado una vez, Chispa.", at(BRAVA, CHISPA, one, {}))).toBeNull();
+      expect(checkQuality("Te he capturado una vez, Chispa.", at(BRAVA, CHISPA, three, { kind: "streak_boast", trigger: "capture_streak" }))).toEqual(unsupported("cifra 1 (real 3, de quien habla al rival)"));
+      expect(checkQuality("Te he capturado una vez, Brava.", at(CHISPA, BRAVA, three, { kind: "capture_lament", trigger: "capture_streak" }))).toEqual(unsupported("cifra 1 (real 0, de quien habla al rival)"));
+      // Sin datos (victoria): no es un hecho.
+      expect(checkQuality("Te he capturado una vez, Chispa.", say(BRAVA, CHISPA, { kind: "victory_reply", trigger: "victory", replyTo: 0 }))).toEqual(unsupported("cifra 1 (sin datos, de quien habla al rival)"));
+    });
+
+    it("expresiones hechas con «vez» y la captura de ahora («una captura», «una ficha») no son recuentos", () => {
+      const three = [cap(10, BRAVA, CHISPA), cap(20, BRAVA, CHISPA), cap(30, BRAVA, CHISPA)];
+      const req = at(CHISPA, BRAVA, three, { kind: "capture_lament", trigger: "capture_streak" });
+      for (const text of [
+        "Una vez más me has pillado, Brava.",
+        "Me pillas de una vez, Brava.",
+        "Por una vez me has pillado, Brava.",
+        "Una vez que me pillas, no paras, Brava.",
+        "Otra vez me has pillado, Brava.",
+        "¿Alguna vez me has pillado tú, Brava?",
+        "Me has comido una ficha, Brava.",
+        "Una captura más, Brava.",
+      ]) {
+        expect(checkQuality(text, req), text).toBeNull();
+      }
+      // «una ficha» con el papel cambiado no es la captura de ahora: Chispa no ha capturado a Brava.
+      expect(checkQuality("Te he comido una ficha, Brava.", req)).toEqual(unsupported("cifra 1 (real 0, de quien habla al rival)"));
+    });
+
+    it("fichas regidas por un verbo de captura son cifras; las demás fichas, no", () => {
+      const one = at(CHISPA, BRAVA, [cap(10, BRAVA, PILAR), cap(20, BRAVA, ERNESTO), cap(30, BRAVA, CHISPA)], { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 });
+      expect(checkQuality("Me has comido tres fichas, Brava.", one)).toEqual(unsupported("cifra 3 (real 1, del rival a quien habla)"));
+      expect(checkQuality("Me has mandado tres fichas a casa, Brava.", one)).toEqual(unsupported("cifra 3 (real 1, del rival a quien habla)"));
+      expect(checkQuality("Me has mandado dos de mis fichas a casa, Brava.", one)).toEqual(unsupported("cifra 2 (real 1, del rival a quien habla)"));
+      const three = at(CHISPA, BRAVA, [cap(10, BRAVA, CHISPA), cap(20, BRAVA, CHISPA), cap(30, BRAVA, CHISPA)], { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 });
+      expect(checkQuality("Me has comido tres fichas, Brava.", three)).toBeNull();
+      for (const text of ["Me quedan dos fichas en casa, Brava.", "Llevo dos fichas en la meta, Brava.", "Tengo tres fichas fuera, Brava."]) {
+        expect(checkQuality(text, one), text).toBeNull();
+      }
+    });
+
+    it("números en palabra a partir de dieciséis", () => {
+      const req = active();
+      expect(checkQuality("Dieciséis capturas, Brava.", req)).toEqual(unsupported("cifra 16 (real 3)"));
+      expect(checkQuality("Me has capturado veintidós veces, Brava.", req)).toEqual(unsupported("cifra 22 (real 1, del rival a quien habla)"));
+      expect(checkQuality("Llevas treinta capturas, Brava.", req)).toEqual(unsupported("cifra 30 (real 3, hechas por el rival)"));
+    });
+
+    it("cifras sin sustantivo: se validan si el contexto dice qué se cuenta; si no, no son un hecho", () => {
+      expect(checkQuality("Ya van tres, Brava.", active())).toBeNull();
+      expect(checkQuality("Ya van cuatro, Brava.", active())).toEqual(unsupported("cifra 4 (real 3)"));
+      expect(checkQuality("Llevas tres, Brava.", active())).toBeNull();
+      expect(checkQuality("Llevas cinco y no paras, Brava.", active())).toEqual(unsupported("cifra 5 (real 3, hechas por el rival)"));
+      expect(checkQuality("Ya van dos, Chispa.", say(BRAVA, CHISPA, { kind: "victory_reply", trigger: "victory", replyTo: 0 }))).toEqual(unsupported("cifra 2 (real sin racha)"));
+      // Números incidentales: con sustantivo detrás, otras cosas u otras horas, no son cifras de capturas.
+      for (const text of ["Llevo dos fichas en la meta, Brava.", "Van dos fichas en casa, Brava.", "Ya son las tres, Brava.", "Con un 5 salgo, Brava."]) {
+        expect(checkQuality(text, active()), text).toBeNull();
+      }
+    });
+
+    it("R1 y R2: varias capturas en poco tiempo sin racha viva tras una interrupción", () => {
+      // R1: Brava v10, v20, v30; Chispa la corta en v40; Brava captura a Pilar en v50. Responde Pilar.
+      const r1 = [cap(10, BRAVA, PILAR), cap(20, BRAVA, ERNESTO), cap(30, BRAVA, PILAR), cap(40, CHISPA, BRAVA), cap(50, BRAVA, PILAR)];
+      const pilar = at(PILAR, BRAVA, r1, { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 });
+      expect(checkQuality("Tu racha sigue, Brava.", pilar)).toEqual(unsupported("racha que sigue"));
+      expect(checkQuality("Tu racha de cuatro capturas, Brava.", pilar)).toEqual(unsupported("cifra 4 (sin datos, racha del rival)"));
+      expect(checkQuality("Ya van cuatro, Brava.", pilar)).toEqual(unsupported("cifra 4 (real sin racha)"));
+      expect(checkQuality("Llevas cuatro capturas en poco tiempo, Brava.", pilar)).toBeNull();
+      expect(checkQuality("Desde entonces solo llevas una, Brava.", pilar)).toBeNull();
+      expect(checkQuality("Desde entonces llevas dos, Brava.", pilar)).toEqual(unsupported("cifra 2 (real 1, hechas por el rival desde que le capturaron)"));
+      // Brava (mensaje principal): sus cuatro capturas son un hecho; su racha activa, no.
+      const brava = at(BRAVA, PILAR, r1, { kind: "streak_boast", trigger: "capture_streak", streak: { count: 4, consecutive: false } });
+      expect(checkQuality("¡Cuatro capturas en poco tiempo, Abuela Pilar!", brava)).toBeNull();
+      expect(checkQuality("¡Mi racha sigue, Abuela Pilar!", brava)).toEqual(unsupported("racha que sigue"));
+      // R2: a Chispa la capturan en v10, v20, v30; captura ella en v40; la vuelven a capturar en v50.
+      const r2 = [cap(10, BRAVA, CHISPA), cap(20, PILAR, CHISPA), cap(30, ERNESTO, CHISPA), cap(40, CHISPA, ERNESTO), cap(50, BRAVA, CHISPA)];
+      const reply = at(BRAVA, CHISPA, r2, { kind: "capture_boast", trigger: "bad_streak", replyTo: 0 });
+      expect(checkQuality("Tu mala racha sigue, Chispa.", reply)).toEqual(unsupported("racha que sigue"));
+      expect(checkQuality("Te han capturado cuatro veces en poco tiempo, Chispa.", reply)).toBeNull();
+      expect(checkQuality("Desde entonces te han capturado una vez, Chispa.", reply)).toBeNull();
+      const chispa = at(CHISPA, BRAVA, r2, { kind: "streak_lament", trigger: "bad_streak", streak: { count: 4, consecutive: false } });
+      expect(checkQuality("Mi mala racha sigue, Brava.", chispa)).toEqual(unsupported("racha que sigue"));
+      expect(checkQuality("Me han capturado cuatro veces en poco tiempo, Brava.", chispa)).toBeNull();
+    });
+
+    it("«seguidas» con historial completo y con un hueco no observado (historial incompleto)", () => {
+      const complete = at(BRAVA, CHISPA, [cap(10, BRAVA, CHISPA), cap(15, PILAR, ERNESTO), cap(20, BRAVA, CHISPA)], {});
+      expect(checkQuality("Te he capturado dos veces seguidas, Chispa.", complete)).toEqual(unsupported("seguidas (no seguidas, de quien habla al rival)"));
+      expect(checkQuality("Te he capturado dos veces, Chispa.", complete)).toBeNull();
+      // Si la versión 15 no llegó al chat, el director lo detecta (continuidad) y los hechos son incompletos:
+      // ni «seguidas» ni la cifra se pueden afirmar.
+      const gap = say(BRAVA, CHISPA, { captures: { history: "incomplete", selfRole: "by" } });
+      expect(checkQuality("Te he capturado dos veces seguidas, Chispa.", gap)).toEqual(unsupported("cifra 2 (historial incompleto)"));
+      expect(checkQuality("¡Seguidas, Chispa!", gap)).toEqual(unsupported("seguidas (historial incompleto)"));
+    });
+
+    describe("historial incompleto: solo la captura de esta versión es un hecho", () => {
+      const byReq = (extra: Partial<Utterance> = {}) => say(BRAVA, CHISPA, { ...extra, captures: { history: "incomplete", selfRole: "by" } });
+      const victimReq = (extra: Partial<Utterance> = {}) => say(CHISPA, BRAVA, { kind: "capture_lament", ...extra, captures: { history: "incomplete", selfRole: "victim" } });
+
+      it("rechaza cifras (también «una vez», ordinales, fichas y cifras sin sustantivo) y «seguidas»", () => {
+        for (const [text, n] of [
+          ["¡Tres capturas, Chispa!", 3],
+          ["Te he capturado dos veces, Chispa.", 2],
+          ["Te he capturado una vez, Chispa.", 1],
+          ["¡Mi tercera captura, Chispa!", 3],
+          ["Te he comido dos fichas, Chispa.", 2],
+          ["¡Ya van tres, Chispa!", 3],
+        ] as const) {
+          expect(checkQuality(text, byReq({ trigger: "capture_streak", kind: "streak_boast" })), text).toEqual(unsupported(`cifra ${n} (historial incompleto)`));
+        }
+        expect(checkQuality("Me has pillado una vez más, Brava.", victimReq())).toBeNull(); // expresión hecha
+        expect(checkQuality("¡Capturas seguidas, Chispa!", byReq())).toEqual(unsupported("seguidas (historial incompleto)"));
+      });
+
+      it("ignora el `streak` del mensaje principal aunque llegue (no es verificable)", () => {
+        const req = byReq({ kind: "streak_boast", trigger: "capture_streak", streak: { count: 3, consecutive: true } });
+        expect(checkQuality("¡Tres capturas seguidas, Chispa!", req)).toEqual(unsupported("cifra 3 (historial incompleto)"));
+      });
+
+      it("rechaza cualquier mención de racha: continuidad, fin, mención, deseo o pregunta", () => {
+        for (const text of ["Mi racha sigue, Chispa.", "Se acabó tu racha, Brava.", "¡Vaya racha, Chispa!", "Ojalá se acabe tu racha, Brava.", "¿Se te ha acabado la racha, Brava?"]) {
+          const req = text.endsWith("Brava.") || text.endsWith("Brava?") ? victimReq({ trigger: "capture_streak" }) : byReq({ trigger: "capture_streak" });
+          expect(checkQuality(text, req), text).toEqual(unsupported("racha (historial incompleto)"));
+        }
+      });
+
+      it("acepta la captura de esta versión con el papel correcto, y lo que no son cifras", () => {
+        for (const text of ["¡Una captura más, Chispa!", "Te he comido una ficha, Chispa.", "¡Otra más! Lo siento, Chispa.", "Otra vez a casa, Chispa."]) {
+          expect(checkQuality(text, byReq({ trigger: "capture_streak", kind: "streak_boast" })), text).toBeNull();
+        }
+        expect(checkQuality("Me has comido una ficha, Brava.", victimReq())).toBeNull();
+        // Papel cambiado: quien recibe la captura no la ha hecho.
+        expect(checkQuality("Te he comido una ficha, Brava.", victimReq())).toEqual(unsupported("cifra 1 (historial incompleto)"));
+        // En la victoria no hay captura de ahora.
+        expect(checkQuality("¡Una captura limpia, Chispa!", say(BRAVA, CHISPA, { kind: "victory_reply", trigger: "victory", replyTo: 0 }))?.term).toBe("cifra 1 (real sin racha)");
+      });
+    });
+  });
+
+  it("regresión de la partida 84d066b1: se rechazan #16, #26, #7 y #17; se aceptan #4, #10, #21 y #28", () => {
+    const badStreak = { kind: "streak_lament" as const, trigger: "bad_streak" as const, streak: { count: 2, consecutive: false } };
+    // #16 Chispa (tres frases).
+    expect(reject("¡Ojo con la racha, Don Ernesto! Tu captura fue pura picardía, pero la próxima vez la cobro con intereses. ¡El dado no perdona!", say("ai-blue", "ai-purple", badStreak))?.reason).toBe("demasiadas frases");
+    // #26 Brava («Dón»).
+    expect(reject("¡Dón, te vas a quedar sin fichas para la salida!", say("ai-pink", "ai-purple", badStreak))?.reason).toBe("mezcla nombres de personajes");
+    // #7 Pilar (llama «abuela» a otro).
+    expect(reject("Con paciencia, el buen camino se alcanza, abuela.", say("ai-green", "ai-blue"))?.reason).toBe("mezcla nombres de personajes");
+    // #17 Don Ernesto (réplica: «su racha se acaba», cuando la mala racha de Chispa sigue).
+    const reply = { kind: "capture_boast" as const, trigger: "bad_streak" as const, replyTo: 0, streak: { count: 2, consecutive: false } };
+    expect(reject("Su racha se acaba. Su ficha vuelve a casa, y usted no recupera la pérdida.", say("ai-purple", "ai-blue", reply))).toEqual({
+      reason: "afirmación no respaldada",
+      detail: "termino=fin de racha",
+    });
+    // Mensajes de esa partida que están bien.
+    expect(reject("¡Vuelve al principio, hijo, que la prudencia vale más que la prisa!", say("ai-green", "ai-blue"))).toBeNull();
+    expect(reject("¡Chispa, me la pagas ahora!", say("ai-pink", "ai-blue", { kind: "capture_lament", replyTo: 0 }))).toBeNull();
+    expect(reject("¡Vuelve a empezar, Pilar!", say("ai-pink", "ai-green"))).toBeNull();
+    expect(reject("Cariño, con paciencia se gana el premio.", say("ai-green", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
+  });
+
   it("los motivos nuevos están en la lista cerrada que se registra", () => {
+    expect(QUALITY_REASONS).toContain("demasiadas frases");
     for (const reason of QUALITY_REASONS) expect(INVALID_RESPONSE_REASONS).toContain(reason);
   });
 });

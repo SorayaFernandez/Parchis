@@ -3,7 +3,21 @@ import { createGame, type GameEvent, type GameState } from "@/lib/engine";
 import { createSeededRandom } from "@/lib/game/ai";
 import { CHARACTERS, CHARACTER_IDS } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "../config";
-import { ambientCandidates, initialDirectorState, isChatCandidate, planChat, recordPublished, streakOf, type Random } from "../director";
+import {
+  ambientCandidates,
+  captureFacts,
+  FIRST_QUEUED_VERSION,
+  historyComplete,
+  initialDirectorState,
+  isChatCandidate,
+  planChat,
+  recordPublished,
+  streakOf,
+  trackCaptures,
+  type CompleteCaptureFacts,
+  type Random,
+  type Utterance,
+} from "../director";
 import { DirectorStateSchema, type DirectorState } from "../schemas";
 
 const [BRAVA, ERNESTO, PILAR, CHISPA] = CHARACTER_IDS;
@@ -12,6 +26,11 @@ const game = (patch: Partial<GameState> = {}): GameState => ({ ...createGame([..
 const always: Random = () => 0;
 const never: Random = () => 0.999;
 
+/** Hechos completos de una intervención (falla si el historial no es completo). */
+function complete(u: Utterance | undefined): CompleteCaptureFacts {
+  if (u?.captures?.history !== "complete") throw new Error("se esperaban hechos completos");
+  return u.captures;
+}
 const capture = (by: string, victim: string): GameEvent => ({ type: "piece_captured", playerId: by, victimId: victim, victimPieceIndex: 0, cell: 30 });
 const routine: GameEvent[] = [
   { type: "dice_rolled", playerId: BRAVA, value: 3 },
@@ -19,13 +38,16 @@ const routine: GameEvent[] = [
 ];
 
 function plan(events: GameEvent[], opts: { version?: number; director?: Partial<DirectorState>; messageCount?: number; state?: GameState; random?: Random } = {}) {
+  const version = opts.version ?? 101;
   return planChat(
     {
-      version: opts.version ?? 101,
+      version,
       events,
       state: opts.state ?? game(),
       messageCount: opts.messageCount ?? 0,
-      director: { ...initialDirectorState(), ...opts.director },
+      // Por defecto, un director que ha observado todas las versiones anteriores (historial completo);
+      // las pruebas de continuidad lo cambian con `observedThrough` / `historyGapThrough`.
+      director: { ...initialDirectorState(), observedThrough: version - 1, ...opts.director },
     },
     opts.random ?? always,
   );
@@ -100,9 +122,249 @@ describe("selección de acontecimientos", () => {
     // Como víctima, igual.
     expect(streakOf([c(80, BRAVA, CHISPA), c(90, PILAR, ERNESTO), c(101, PILAR, CHISPA)], CHISPA, "victim")).toBeNull();
     expect(streakOf([c(80, BRAVA, CHISPA), c(101, PILAR, CHISPA)], CHISPA, "victim")).toEqual({ count: 2, consecutive: true });
-    // La réplica de una racha no lleva datos de racha (habla de la captura, no del recuento).
+    // La réplica NO hereda la racha del mensaje principal (es de otro personaje): su contexto va en
+    // `captures`, calculado desde su propio punto de vista.
     const withReply = plan([capture(BRAVA, CHISPA)], { director: { captures: [c(90, BRAVA, PILAR)] } }).utterances;
-    expect(withReply[1]?.streak).toBeUndefined();
+    expect(withReply[0]).toMatchObject({ speaker: BRAVA, kind: "streak_boast", streak: { count: 2, consecutive: true } });
+    expect(withReply[1]).toMatchObject({ speaker: CHISPA, kind: "capture_lament", replyTo: 0 });
+    expect(withReply[1]!.streak).toBeUndefined();
+    expect(withReply[0].captures).toMatchObject({ selfRole: "by", self: { streak: { status: "active", count: 2 } }, selfOnRival: { count: 1 } });
+    expect(withReply[1]!.captures).toMatchObject({ selfRole: "victim", rival: { streak: { status: "active", count: 2 } }, rivalOnSelf: { count: 1 } });
+    // Una captura sin racha: nadie lleva `streak` y los hechos no tienen ninguna racha.
+    const plain = plan([capture(BRAVA, CHISPA)]).utterances;
+    expect(plain.length).toBeGreaterThan(0);
+    for (const u of plain) {
+      expect(u.streak).toBeUndefined();
+      expect(u.captures).toMatchObject({ self: { streak: null, badStreak: null }, rival: { streak: null, badStreak: null } });
+    }
+    // Los demás disparadores no llevan hechos de captura.
+    expect(plan([{ type: "player_finished", playerId: PILAR, place: 1 }]).utterances.every((u) => u.captures === undefined)).toBe(true);
+  });
+
+  it("P4: hechos de captura desde quien habla: racha y mala racha activas, recién interrumpidas o ninguna", () => {
+    const c = (v: number, by: string, victim: string) => ({ v, by, victim });
+    // 1. Racha de capturas que continúa: Brava lleva 3 (solo 1 contra Chispa) y vuelve a capturar.
+    const hunt = [c(10, BRAVA, PILAR), c(20, BRAVA, ERNESTO), c(30, BRAVA, CHISPA)];
+    const brava = captureFacts(hunt, 30, BRAVA, CHISPA, BRAVA);
+    expect(brava.self.streak).toEqual({ status: "active", count: 3, consecutive: true });
+    expect(brava.self.made).toEqual({ count: 3, consecutive: true });
+    expect(brava.selfOnRival).toEqual({ count: 1, consecutive: true });
+    // La víctima ve la misma racha como la de su rival, y su pareja (rival → ella) es 1, no 3.
+    const chispa = captureFacts(hunt, 30, BRAVA, CHISPA, CHISPA);
+    expect(chispa).toMatchObject({ selfRole: "victim", rival: { streak: { status: "active", count: 3 } }, rivalOnSelf: { count: 1 }, selfOnRival: { count: 0, consecutive: false } });
+    expect(chispa.self.streak).toBeNull();
+
+    // 2. Mala racha que continúa: a Chispa la capturan Pilar y después Brava (2 seguidas).
+    const bad = [c(10, PILAR, CHISPA), c(20, BRAVA, CHISPA)];
+    const victim = captureFacts(bad, 20, BRAVA, CHISPA, CHISPA);
+    expect(victim.self.badStreak).toEqual({ status: "active", count: 2, consecutive: true });
+    expect(victim.self.received).toEqual({ count: 2, consecutive: true });
+    // Pero Brava solo la ha capturado una vez: la pareja no hereda el recuento global.
+    expect(captureFacts(bad, 20, BRAVA, CHISPA, BRAVA)).toMatchObject({ selfOnRival: { count: 1 }, rival: { badStreak: { status: "active", count: 2 } } });
+
+    // 3. Racha interrumpida de verdad: Brava llevaba 3 y Chispa la captura.
+    const cut = [...hunt.slice(0, 2), c(30, BRAVA, PILAR), c(40, CHISPA, BRAVA)];
+    const cutter = captureFacts(cut, 40, CHISPA, BRAVA, CHISPA);
+    expect(cutter.rival.streak).toEqual({ status: "ended", count: 3, consecutive: true });
+    expect(captureFacts(cut, 40, CHISPA, BRAVA, BRAVA).self.streak).toEqual({ status: "ended", count: 3, consecutive: true });
+    // Una racha ya interrumpida no se "interrumpe" otra vez: Pilar captura después a Brava.
+    const again = [...cut, c(50, PILAR, BRAVA)];
+    expect(captureFacts(again, 50, PILAR, BRAVA, PILAR).rival.streak).toBeNull();
+
+    // 4. Mala racha interrumpida de verdad: a Chispa la capturaron dos veces seguidas y ahora captura ella.
+    const turn = [c(10, BRAVA, CHISPA), c(20, PILAR, CHISPA), c(30, CHISPA, ERNESTO)];
+    expect(captureFacts(turn, 30, CHISPA, ERNESTO, CHISPA).self.badStreak).toEqual({ status: "ended", count: 2, consecutive: true });
+    expect(captureFacts(turn, 30, CHISPA, ERNESTO, ERNESTO).rival.badStreak).toEqual({ status: "ended", count: 2, consecutive: true });
+
+    // 5. Sin racha: una sola captura, nada que contar.
+    const none = captureFacts([c(10, BRAVA, CHISPA)], 10, BRAVA, CHISPA, CHISPA);
+    expect(none).toMatchObject({ self: { streak: null, badStreak: null }, rival: { streak: null, badStreak: null }, rivalOnSelf: { count: 1 } });
+
+    // 6. Reinicio de una racha (R1): Brava v10, v20, v30; Chispa la captura en v40; Brava vuelve a
+    //    capturar en v50. Cuatro capturas en la ventana, pero el tramo vivo solo tiene una.
+    const r1 = [c(10, BRAVA, PILAR), c(20, BRAVA, ERNESTO), c(30, BRAVA, PILAR), c(40, CHISPA, BRAVA), c(50, BRAVA, PILAR)];
+    const r1Brava = captureFacts(r1, 50, BRAVA, PILAR, BRAVA);
+    expect(r1Brava.self.made).toEqual({ count: 4, consecutive: false });
+    expect(r1Brava.self.madeSinceBreak).toEqual({ count: 1, consecutive: true });
+    expect(r1Brava.self.streak).toBeNull();
+    expect(captureFacts(r1, 50, BRAVA, PILAR, PILAR).rival.streak).toBeNull();
+    // El disparador no cambia (cuenta la ventana): hay `capture_streak`, pero sin racha activa en los hechos.
+    const r1Plan = plan([capture(BRAVA, PILAR)], { version: 50, director: { captures: r1.slice(0, 4) } }).utterances;
+    expect(r1Plan[0]).toMatchObject({ trigger: "capture_streak", kind: "streak_boast", streak: { count: 4, consecutive: false } });
+    expect(complete(r1Plan[0]).self.streak).toBeNull();
+    // Dos capturas más de Brava después del corte: el tramo nuevo forma su propia racha (2 seguidas).
+    const r1b = [...r1, c(55, BRAVA, ERNESTO)];
+    expect(captureFacts(r1b, 55, BRAVA, ERNESTO, BRAVA).self.streak).toEqual({ status: "active", count: 2, consecutive: true });
+
+    // 7. Reinicio de una mala racha (R2): a Chispa la capturan en v10, v20, v30; captura ella en v40; la
+    //    vuelven a capturar en v50.
+    const r2 = [c(10, BRAVA, CHISPA), c(20, PILAR, CHISPA), c(30, ERNESTO, CHISPA), c(40, CHISPA, ERNESTO), c(50, BRAVA, CHISPA)];
+    const r2Chispa = captureFacts(r2, 50, BRAVA, CHISPA, CHISPA);
+    expect(r2Chispa.self.received).toEqual({ count: 4, consecutive: false });
+    expect(r2Chispa.self.receivedSinceBreak).toEqual({ count: 1, consecutive: true });
+    expect(r2Chispa.self.badStreak).toBeNull();
+    const r2Plan = plan([capture(BRAVA, CHISPA)], { version: 50, director: { captures: r2.slice(0, 4) } }).utterances;
+    expect(r2Plan[0]).toMatchObject({ trigger: "bad_streak", streak: { count: 4 } });
+    expect(r2Plan.every((u) => (complete(u).selfRole === "by" ? complete(u).rival.badStreak === null : complete(u).self.badStreak === null))).toBe(true);
+
+    // 8. Una racha antigua que sale de la ventana: ni activa ni "interrumpida" (desaparece sin más).
+    const aged = plan([capture(CHISPA, BRAVA)], { version: 95, director: { captures: [c(10, BRAVA, PILAR), c(20, BRAVA, ERNESTO), c(30, BRAVA, PILAR)] } });
+    expect(aged.director.captures).toEqual([{ v: 95, by: CHISPA, victim: BRAVA }]);
+    for (const u of aged.utterances) expect(u.captures).toMatchObject({ self: { streak: null, badStreak: null }, rival: { streak: null, badStreak: null } });
+    // Si solo sale una parte, la interrupción se informa con lo que queda en la ventana (2 seguidas).
+    expect(captureFacts([c(20, BRAVA, ERNESTO), c(30, BRAVA, PILAR), c(75, CHISPA, BRAVA)], 75, CHISPA, BRAVA, CHISPA).rival.streak).toEqual({ status: "ended", count: 2, consecutive: true });
+
+    // Una captura puede a la vez hacer crecer una racha e interrumpir otra: Brava (con racha) captura a
+    // Ernesto (que también tenía racha de capturas).
+    const both = [c(10, ERNESTO, PILAR), c(20, ERNESTO, CHISPA), c(30, ERNESTO, PILAR), c(40, BRAVA, CHISPA), c(50, BRAVA, PILAR), c(60, BRAVA, ERNESTO)];
+    expect(captureFacts(both, 60, BRAVA, ERNESTO, BRAVA)).toMatchObject({ self: { streak: { status: "active", count: 3 } }, rival: { streak: { status: "ended", count: 3 } } });
+  });
+
+  it("P4: captureFacts calcula sobre el historial que recibe; el hueco lo detecta la continuidad (`trackCaptures`)", () => {
+    // Historial completo: Brava captura, Pilar captura, Brava captura → las de Brava NO son seguidas.
+    const c = (v: number, by: string, victim: string) => ({ v, by, victim });
+    const complete = [c(10, BRAVA, CHISPA), c(15, PILAR, ERNESTO), c(20, BRAVA, CHISPA)];
+    expect(captureFacts(complete, 20, BRAVA, CHISPA, BRAVA)).toMatchObject({ self: { made: { count: 2, consecutive: false }, streak: null }, selfOnRival: { count: 2, consecutive: false } });
+    // Sin la versión 15, `captureFacts` (puro) las daría por seguidas; por eso el director no lo usa si el
+    // historial tiene un hueco: la continuidad lo detecta y los hechos quedan como incompletos.
+    const observed = [c(10, BRAVA, CHISPA), c(20, BRAVA, CHISPA)];
+    expect(captureFacts(observed, 20, BRAVA, CHISPA, BRAVA)).toMatchObject({ self: { made: { count: 2, consecutive: true } } });
+    let director = { ...initialDirectorState() };
+    for (let v = FIRST_QUEUED_VERSION; v <= 19; v++) {
+      if (v === 15) continue; // versión no observada (no encolada o defectuosa)
+      director = trackCaptures(director, v, v === 10 ? [capture(BRAVA, CHISPA)] : []);
+    }
+    expect(director).toMatchObject({ observedThrough: 19, historyGapThrough: 15 });
+    const gapped = plan([capture(BRAVA, CHISPA)], { version: 20, director });
+    expect(gapped.utterances[0]).toMatchObject({ trigger: "capture_streak", captures: { history: "incomplete", selfRole: "by" } });
+    expect(gapped.utterances.every((u) => u.streak === undefined)).toBe(true);
+  });
+
+  describe("P4: continuidad del historial (versiones no observadas)", () => {
+    const c = (v: number, by: string, victim: string) => ({ v, by, victim });
+    /** Observa las versiones `from…to` (salvo `skip`), con una captura en las de `captureAt`. */
+    const observe = (director: DirectorState, from: number, to: number, opts: { skip?: number[]; captureAt?: number[] } = {}) => {
+      let d = director;
+      for (let v = from; v <= to; v++) {
+        if (opts.skip?.includes(v)) continue;
+        d = trackCaptures(d, v, opts.captureAt?.includes(v) ? [capture(BRAVA, CHISPA)] : []);
+      }
+      return d;
+    };
+    const fresh = () => initialDirectorState();
+
+    it("versiones consecutivas desde v2: historial completo, sin cambios en el comportamiento", () => {
+      const d = observe(fresh(), FIRST_QUEUED_VERSION, 40, { captureAt: [10, 20] });
+      expect(d).toMatchObject({ observedThrough: 40, historyGapThrough: null });
+      expect(historyComplete(d, 40)).toBe(true);
+      expect(d.captures.map((x) => x.v)).toEqual([10, 20]);
+      // Una versión sin capturas también se observa (antes `trackCaptures` devolvía el mismo estado).
+      expect(trackCaptures(d, 41, [])).toMatchObject({ observedThrough: 41, historyGapThrough: null });
+    });
+
+    it("un salto marca el hueco; las versiones posteriores no recuperan la confianza hasta salir de la ventana (límite exacto)", () => {
+      const d = observe(fresh(), FIRST_QUEUED_VERSION, 5, { skip: [4] });
+      expect(d).toMatchObject({ observedThrough: 5, historyGapThrough: 4 });
+      // Ventana en la versión V: V−59…V. La v4 afecta mientras V − 4 < 60.
+      const at63 = observe(d, 6, 63);
+      expect(at63.historyGapThrough).toBe(4);
+      for (const v of [5, 6, 30, 62, 63]) expect(historyComplete(at63, v), `v${v}`).toBe(false);
+      const at64 = trackCaptures(at63, 64, []);
+      expect(historyComplete(at64, 64)).toBe(true); // ventana v5…v64: ninguna versión sin observar
+      expect(CHAT_LIMITS.streakWindow).toBe(60);
+    });
+
+    it("varios huecos sucesivos: `historyGapThrough` nunca retrocede y la recuperación cuenta desde el último", () => {
+      let d = observe(fresh(), FIRST_QUEUED_VERSION, 30, { skip: [4] });
+      expect(d.historyGapThrough).toBe(4);
+      d = observe(d, 31, 40, { skip: [32, 33] });
+      expect(d.historyGapThrough).toBe(33);
+      d = observe(d, 41, 92);
+      expect(historyComplete(d, 92)).toBe(false); // 92 − 33 = 59
+      expect(historyComplete(trackCaptures(d, 93, []), 93)).toBe(true);
+      // La versión siguiente nunca baja un hueco ya registrado, y un salto nuevo solo lo sube.
+      expect(trackCaptures({ ...d, historyGapThrough: 80 }, 93, []).historyGapThrough).toBe(80);
+      expect(trackCaptures({ ...d, historyGapThrough: 80 }, 95, []).historyGapThrough).toBe(94);
+    });
+
+    it("versiones repetidas, anteriores o fuera de orden: incompleto, sin retroceder ni añadir capturas", () => {
+      const d = observe(fresh(), FIRST_QUEUED_VERSION, 12, { captureAt: [10] });
+      const repeated = trackCaptures(d, 12, [capture(PILAR, ERNESTO)]);
+      expect(repeated).toMatchObject({ observedThrough: 12, historyGapThrough: 12 });
+      expect(repeated.captures).toEqual(d.captures); // no duplica ni reconstruye
+      const older = trackCaptures(d, 7, [capture(PILAR, ERNESTO)]);
+      expect(older).toMatchObject({ observedThrough: 12, historyGapThrough: 12, captures: d.captures });
+      // Fuera de orden: llega v14 y luego v13.
+      const outOfOrder = trackCaptures(trackCaptures(d, 14, []), 13, []);
+      expect(outOfOrder).toMatchObject({ observedThrough: 14, historyGapThrough: 14 }); // 13 sin observar y anomalía
+      expect(historyComplete(outOfOrder, 73)).toBe(false);
+      expect(historyComplete(outOfOrder, 74)).toBe(true);
+    });
+
+    it("estados antiguos (sin los campos) e inválidos: v2 completo; una partida avanzada, incompleta", () => {
+      const legacy = DirectorStateSchema.parse({ lastMessageVersion: null, lastSpokeAt: {}, captures: [], recent: [] });
+      expect(legacy).toMatchObject({ observedThrough: null, historyGapThrough: null });
+      expect(trackCaptures(legacy, FIRST_QUEUED_VERSION, [])).toMatchObject({ observedThrough: 2, historyGapThrough: null });
+      const advanced = trackCaptures(legacy, 340, []);
+      expect(advanced).toMatchObject({ observedThrough: 340, historyGapThrough: 339 });
+      expect(historyComplete(advanced, 340)).toBe(false);
+      // Estado inválido → el procesador empieza de cero (`initialDirectorState`): igual que uno antiguo.
+      expect(trackCaptures(initialDirectorState(), 50, [])).toMatchObject({ observedThrough: 50, historyGapThrough: 49 });
+      // Los esquemas rechazan valores imposibles.
+      expect(DirectorStateSchema.safeParse({ ...initialDirectorState(), observedThrough: 0 }).success).toBe(false);
+    });
+
+    it("límite de 50 capturas: si descarta capturas aún en la ventana, el historial queda incompleto hasta que salgan", () => {
+      // 50 capturas en v11…v60 y otra en v61: la de v11 sigue en la ventana (61 − 11 < 60) y se descarta.
+      const full = { ...fresh(), observedThrough: 60, captures: Array.from({ length: 50 }, (_, i) => c(11 + i, BRAVA, CHISPA)) };
+      const over = trackCaptures(full, 61, [capture(PILAR, ERNESTO)]);
+      expect(over.captures).toHaveLength(CHAT_LIMITS.maxTrackedCaptures);
+      expect(over.historyGapThrough).toBe(11);
+      expect(historyComplete(over, 70)).toBe(false);
+      expect(historyComplete(over, 71)).toBe(true);
+      // Si lo que sale es solo por antigüedad (fuera de la ventana), no hay incertidumbre.
+      const aged = trackCaptures({ ...full, captures: Array.from({ length: 50 }, (_, i) => c(2 + i, BRAVA, CHISPA)), observedThrough: 61 }, 62, [capture(PILAR, ERNESTO)]);
+      expect(aged.historyGapThrough).toBeNull();
+    });
+
+    it("al recuperarse solo se usan las capturas observadas que siguen en la ventana (no se reconstruye nada)", () => {
+      // Capturas de Brava en v3 y en v10, y una no observada en v4; después, capturas observadas en v70 y v80.
+      let d = observe(fresh(), FIRST_QUEUED_VERSION, 10, { skip: [4], captureAt: [3, 10] });
+      d = observe(d, 11, 80, { captureAt: [70, 80] });
+      expect(historyComplete(d, 80)).toBe(true);
+      expect(d.captures.map((x) => x.v)).toEqual([70, 80]);
+      expect(captureFacts(d.captures, 80, BRAVA, CHISPA, BRAVA).selfOnRival).toEqual({ count: 2, consecutive: true });
+    });
+
+    it("R1 con un hueco antes del reinicio: ni racha activa ni interrumpida, y sin recuentos", () => {
+      const d = { ...fresh(), observedThrough: 49, historyGapThrough: 35, captures: [c(10, BRAVA, PILAR), c(20, BRAVA, ERNESTO), c(30, BRAVA, PILAR), c(40, CHISPA, BRAVA)] };
+      const r = plan([capture(BRAVA, PILAR)], { version: 50, director: d });
+      expect(r.utterances[0]).toMatchObject({ trigger: "capture_streak", kind: "streak_boast", captures: { history: "incomplete", selfRole: "by" } });
+      expect(r.utterances.every((u) => u.streak === undefined && u.captures?.history === "incomplete")).toBe(true);
+    });
+
+    it("los disparadores, las intervenciones y el consumo de azar son idénticos con y sin hueco", () => {
+      const scenarios: { events: GameEvent[]; captures: ReturnType<typeof c>[] }[] = [
+        { events: [capture(BRAVA, CHISPA)], captures: [] },
+        { events: [capture(BRAVA, CHISPA)], captures: [c(90, BRAVA, PILAR)] },
+        { events: [capture(BRAVA, CHISPA)], captures: [c(80, PILAR, CHISPA)] },
+        { events: [capture(BRAVA, PILAR)], captures: [c(50, BRAVA, PILAR), c(60, BRAVA, ERNESTO), c(70, BRAVA, PILAR), c(80, CHISPA, BRAVA)] },
+      ];
+      for (const [k, sc] of scenarios.entries()) {
+        for (const seed of [1, 2, 3, 4, 5]) {
+          const run = (director: Partial<DirectorState>) => {
+            const base = createSeededRandom(seed);
+            let calls = 0;
+            const random: Random = () => (calls++, base());
+            const { utterances } = plan(sc.events, { director: { captures: sc.captures, ...director }, random });
+            return { calls, shape: utterances.map(({ speaker, kind, trigger, rival, replyTo, important }) => ({ speaker, kind, trigger, rival, replyTo, important })) };
+          };
+          const withoutGap = run({ observedThrough: 100 });
+          const withGap = run({ observedThrough: 100, historyGapThrough: 95 });
+          expect(withGap, `escenario ${k}, semilla ${seed}`).toEqual(withoutGap);
+        }
+      }
+    });
   });
 
   it("ambiente: quien ya terminó no comenta ni es el rival del comentario", () => {

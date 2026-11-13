@@ -2,15 +2,16 @@
 # Pruebas del SQL del chat (fase 8.2a) sobre un PostgreSQL 17 DESECHABLE en Docker.
 # NO se conecta a Supabase. Uso (desde web/): bash supabase/tests/run-chat-sql-tests.sh
 # Crea el contenedor, aplica supabase-stub.sql y 8.2a-chat.sql (dos veces: idempotencia), ejecuta
-# 8.2a-chat.test.sql, comprueba los WARNING del trigger tolerante y la concurrencia entre sesiones
-# (reservas simultáneas y un avance que no espera al chat). Borra el contenedor al terminar.
+# 8.2a-chat.test.sql, comprueba los WARNING del trigger tolerante, ejecuta 8.2a-chat-commit-state.test.sql
+# (director_state guardado por chat_commit sin mensajes) y la concurrencia entre sesiones (reservas
+# simultáneas y un avance que no espera al chat). Borra el contenedor al terminar.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 NAME="parchis-chat-sql-test-$$"
 IMAGE="postgres:17-alpine"
 OUT="$(mktemp)"
-trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -f "$OUT" "$OUT.a" "$OUT.many"' EXIT
+trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -f "$OUT" "$OUT.a" "$OUT.many" "$OUT.state"' EXIT
 
 docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD=test "$IMAGE" >/dev/null
 ready=0
@@ -64,6 +65,11 @@ for expected in "versión 7 .*\\(23514:" "versión 8 .*\\(42P01:" "versión 9 .*
 done
 warnings=$(awk '/WARNING: +chat:/ { n++ } END { print n + 0 }' "$OUT")
 if [ "$warnings" -ne 3 ]; then echo "FALLA: se esperaban 3 WARNING del chat y hubo $warnings"; fail=1; fi
+
+# chat_commit sin mensajes: guarda director_state y el cursor en la misma operación (archivo aparte).
+psql_file "$DIR/8.2a-chat-commit-state.test.sql" >"$OUT.state" 2>&1 || { cat "$OUT.state"; echo "FALLAN LAS PRUEBAS SQL DE chat_commit"; exit 1; }
+grep -E "OK: |COMPLETADAS" "$OUT.state" | sed -E 's/^.*NOTICE: +//'
+if grep -E "WARNING: +chat:" "$OUT.state" >/dev/null; then echo "FALLA: WARNING inesperado del trigger en las pruebas de chat_commit"; fail=1; fi
 
 # ─── Concurrencia entre sesiones (una sola sesión de psql no puede reproducirla) ───────────────
 G="'aaaaaaaa-1111-4000-8000-000000000001'"
