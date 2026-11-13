@@ -253,6 +253,27 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("Previsible jugada, Chispa.", say("ai-purple", "ai-blue", {}, [{ speaker: "ai-purple", text: "Previsible, como siempre." }]))?.term).toBe("Previsible");
   });
 
+  // ── B. Tercera persona propia: narración de su propia frase (auditoría de la v382) ──
+  it("B: rechaza que el personaje narre su propia frase («dijo Pilar», «dice Chispa», «Brava dijo»), con nombre o alias", () => {
+    for (const [speaker, rival, text, term] of [
+      ["ai-green", "ai-blue", "Ay, Chispa, a casita, dijo Pilar.", "narración+pilar"],
+      ["ai-green", "ai-blue", "Qué pena, Chispa, dice Abuela Pilar.", "narración+abuela pilar"],
+      ["ai-blue", "ai-pink", "¡Ostras, Brava!, exclamó Chispa.", "narración+chispa"],
+      ["ai-pink", "ai-blue", "Brava dijo: ¡a casa, Chispa!", "narración+brava"],
+      ["ai-purple", "ai-pink", "Previsible, contestó Don Ernesto a Brava.", "narración+don ernesto"],
+      ["ai-purple", "ai-pink", "Era de esperar, Brava, respondió Ernesto.", "narración+ernesto"],
+    ] as const) {
+      expect(checkQuality(text, say(speaker, rival)), text).toEqual({ reason: "habla de sí mismo en tercera persona", term });
+    }
+  });
+
+  it("B: la narración de otro personaje o los verbos de habla sin el propio nombre se siguen aceptando", () => {
+    expect(reject("Ya lo dijo Chispa: hoy no es mi día.", say("ai-green", "ai-blue"))).toBeNull();
+    expect(reject("Chispa dice que tiene suerte. Ya veremos, cariño.", say("ai-green", "ai-blue"))).toBeNull();
+    expect(reject("Como dice mi nieto, a casita, Chispa.", say("ai-green", "ai-blue"))).toBeNull();
+    expect(reject("Lo que te dije, Chispa: a casa.", say("ai-pink", "ai-blue"))).toBeNull();
+  });
+
   // ── B. Tercera persona propia ──
   it("B: rechaza que cada personaje hable de sí mismo en tercera persona (artículo o verbo), con nombre o alias", () => {
     for (const [speaker, rival, text, term] of [

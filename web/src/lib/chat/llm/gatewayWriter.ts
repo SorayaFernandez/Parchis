@@ -13,7 +13,7 @@ import { CHAT_LIMITS, CHAT_LLM } from "../config";
 import { validateChatText, type ChatWriteRequest, type ChatWriter, type WrittenText } from "../writer";
 import type { ChatLlmConfig } from "./env";
 import { buildChatPrompt } from "./prompt";
-import { QUALITY_REASONS, allowedNames, checkQuality, foreignAlias } from "./quality";
+import { ALIASES, QUALITY_REASONS, allowedNames, checkQuality, foreignAlias } from "./quality";
 
 export type ChatLlmErrorKind =
   /** Corte temporal activo: no se ha llamado. */
@@ -179,6 +179,8 @@ export const INVALID_RESPONSE_REASONS = [
   "nombra a un personaje ajeno a la intervención",
   "texto repetido o no válido",
   "respuesta no válida",
+  "comillas descompensadas",
+  "respuesta truncada",
   ...QUALITY_REASONS,
 ] as const;
 
@@ -270,23 +272,72 @@ function letterCase(match: string): string {
 }
 
 /**
- * Limpia y comprueba el texto del modelo: primera línea, sin comillas envolventes ni un prefijo
- * "Nombre:"; como mucho `CHAT_LLM.maxChars`; solo puede nombrar a quien habla y a su rival; y pasa la
- * misma validación que el escritor local (repeticiones, marcado). Devuelve el texto o lanza.
+ * Etiqueta inicial con el nombre completo o un alias de un personaje («Pilar:», «Abuela Pilar —»,
+ * «(Pilar)»): el modelo a veces firma la frase. Solo nombres del catálogo, nunca cualquier palabra seguida
+ * de dos puntos («Ojo: esa ficha…» no es una etiqueta). Devuelve el nombre del catálogo y el resto.
+ */
+const LABELS = ALL_NAMES.flatMap((name) =>
+  [name, ...(ALIASES[name] ?? [])].map((form) => {
+    const words = form.split(/\s+/).map(escapeRegExp).join("\\s+");
+    return { name, pattern: new RegExp(`^(?:\\(\\s*${words}\\s*\\)\\s*[:：\\-–—]?|${words}\\s*[:：\\-–—])\\s*`, "iu") };
+  }),
+);
+
+function splitLabel(text: string): { name: string; rest: string } | null {
+  for (const { name, pattern } of LABELS) {
+    const match = pattern.exec(text);
+    if (match) return { name, rest: text.slice(match[0].length).trim() };
+  }
+  return null;
+}
+
+/** Familias de comillas: apertura → cierres admitidos. */
+const QUOTE_PAIRS: Readonly<Record<string, string>> = { '"': '"”', "“": "”\"", "«": "»", "'": "'’", "‘": "’'" };
+
+/** Quita las comillas que envuelven todo el texto, solo si están emparejadas (nunca un extremo suelto). */
+function stripWrappingQuotes(text: string): string {
+  let t = text;
+  while (t.length >= 2 && QUOTE_PAIRS[t[0]]?.includes(t[t.length - 1])) t = t.slice(1, -1).trim();
+  return t;
+}
+
+const count = (text: string, chars: string) => [...text].filter((c) => chars.includes(c)).length;
+
+/** Comillas equilibradas en todo el texto: ninguna queda abierta o cerrada de más. */
+function quotesBalanced(text: string): boolean {
+  return (
+    count(text, '"') % 2 === 0 &&
+    count(text, "“") === count(text, "”") &&
+    count(text, "«") === count(text, "»") &&
+    count(text, "'") % 2 === 0 &&
+    count(text, "‘") === count(text, "’")
+  );
+}
+
+/**
+ * Limpia y comprueba el texto del modelo: primera línea (o la siguiente, si la primera es solo la
+ * etiqueta de quien habla), sin la etiqueta con su nombre o alias ni comillas envolventes emparejadas;
+ * comillas equilibradas; como mucho `CHAT_LLM.maxChars`; solo puede nombrar a quien habla y a su rival; y
+ * pasa la misma validación que el escritor local (repeticiones, marcado) y las de calidad. Las
+ * comprobaciones se hacen siempre sobre el texto ya limpio. Devuelve el texto o lanza.
  */
 export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
   if (typeof raw !== "string") throw new ChatLlmError("invalid_response", "respuesta sin texto");
-  let text = raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? "";
-  // Prefijo "Nombre:" o "Nombre -" de cualquier personaje (el modelo a veces firma la frase).
-  for (const name of ALL_NAMES) {
-    const prefix = new RegExp(`^${escapeRegExp(name)}\\s*[:：\\-—]\\s*`, "i");
-    if (prefix.test(text)) {
-      if (name !== CHARACTER_NAMES[request.utterance.speaker]) throw new ChatLlmError("invalid_response", "habla como otro personaje");
-      text = text.replace(prefix, "");
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  let text = lines[0] ?? "";
+  // Dos pasadas: etiqueta y comillas, en cualquier orden («Pilar: "…"» o «"Pilar: …"»).
+  for (let pass = 0; pass < 2; pass++) {
+    const label = splitLabel(text);
+    if (label) {
+      if (label.name !== CHARACTER_NAMES[request.utterance.speaker]) throw new ChatLlmError("invalid_response", "habla como otro personaje");
+      text = label.rest;
+      // Etiqueta sola en la primera línea: la frase es la línea siguiente (formato inequívoco).
+      if (text === "" && pass === 0 && lines.length > 1) text = lines[1];
     }
+    text = stripWrappingQuotes(text);
   }
-  text = text.replace(/^["'«“”‘’]+|["'»“”‘’]+$/g, "").trim();
   if (text === "") throw new ChatLlmError("invalid_response", "texto vacío");
+  if (!quotesBalanced(text)) throw new ChatLlmError("invalid_response", "comillas descompensadas");
   if (text.length > CHAT_LLM.maxChars) throw new ChatLlmError("invalid_response", "texto demasiado largo");
   if (/https?:|www\.|[*#`@]/i.test(text)) throw new ChatLlmError("invalid_response", "formato no permitido");
   const allowed = allowedNames(request);
@@ -373,8 +424,14 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
         if (signal.aborted) fail(new ChatLlmError("aborted", "cancelada o fuera de tiempo"));
         return fail(new ChatLlmError("network", "respuesta ilegible"));
       }
-      const content = (payload as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
+      const choice = (payload as { choices?: { finish_reason?: unknown; message?: { content?: unknown } }[] })?.choices?.[0];
+      const content = choice?.message?.content;
       try {
+        // Cortada por `max_tokens`: la frase puede estar a medias. Se rechaza (frase local) sin ampliar
+        // `max_tokens`. Sin texto, se sigue informando como «respuesta sin texto».
+        if (choice?.finish_reason === "length" && typeof content === "string" && content.trim() !== "") {
+          throw new ChatLlmError("invalid_response", "respuesta truncada");
+        }
         return { text: cleanLlmText(content, request), source: "llm" };
       } catch (error) {
         // Mismo error, con un resumen solo estructural de la respuesta (nunca su texto) para el registro.
