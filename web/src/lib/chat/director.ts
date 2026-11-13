@@ -270,7 +270,9 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
  * Candidatos del comentario de ambiente. La clasificación usa el progreso real y es independiente del
  * orden de los jugadores (un empate no favorece a nadie):
  * - Primero en solitario (progreso estrictamente mayor que el de todos): `ambient_lead`, el único tipo
- *   que puede afirmar que va ganando. Su rival, si lo nombra, es el último en solitario.
+ *   que puede afirmar que va ganando. Su rival, si lo nombra, es el último en solitario. Solo mientras
+ *   nadie ha terminado: después de la primera victoria, el primero entre los que quedan usa
+ *   `ambient_ahead` (neutral), porque las frases de liderazgo hablan de la partida entera.
  * - Los demás pueden decir algo neutral de progreso (`ambient_ahead`, que no afirma posición; su rival,
  *   si lo nombra, es el último en solitario) o, si alguien va por delante de ellos, que van por detrás
  *   (`ambient_behind`, «voy perdiendo»; su rival, si lo nombra, es el primero en solitario).
@@ -287,9 +289,16 @@ export function ambientCandidates(state: GameState): Candidate[] {
   const atMin = players.filter((p) => p.progress === min);
   const soleLeader = players.length > 1 && atMax.length === 1 ? atMax[0].id : null;
   const soleLast = players.length > 1 && atMin.length === 1 && max !== min ? atMin[0].id : null;
+  // Tras la primera victoria la partida sigue (por los demás puestos), pero ya nadie «va ganando» la
+  // partida: las frases de liderazgo hablan de la partida entera. El primero entre los que quedan usa
+  // frases neutrales (`ambient_ahead`), con el último en solitario como rival si lo hay.
+  const someoneFinished = state.ranking.length > 0;
 
   return players.flatMap(({ id, progress }): Candidate[] => {
-    if (id === soleLeader) return [{ speaker: id, kind: "ambient_lead", rival: soleLast, weight: talk(id) }];
+    if (id === soleLeader) {
+      const kind = someoneFinished ? "ambient_ahead" : "ambient_lead";
+      return [{ speaker: id, kind, rival: soleLast, weight: talk(id) }];
+    }
     const kinds: Pick<Candidate, "kind" | "rival">[] = [{ kind: "ambient_ahead", rival: soleLast !== id ? soleLast : null }];
     if (progress < max) kinds.push({ kind: "ambient_behind", rival: soleLeader });
     return kinds.map((k) => ({ speaker: id, ...k, weight: talk(id) / kinds.length }));

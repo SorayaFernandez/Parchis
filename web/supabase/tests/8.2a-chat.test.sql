@@ -244,7 +244,7 @@ $$;
 -- Otra partida con un mensaje, para comprobar que la lectura no está limitada a una partida.
 insert into public.games (id, state) values ('00000000-0000-4000-8000-000000000002', '{}');
 insert into public.game_messages (game_id, version, seq, character_id, trigger, text)
-values ('00000000-0000-4000-8000-000000000002', 2, 0, 'ai-blue', 'goal', '¡Ficha en meta! ¡Gooool!');
+values ('00000000-0000-4000-8000-000000000002', 2, 0, 'ai-blue', 'goal', '¡Ficha en meta!');
 do $$
 declare r text; total integer;
 begin
