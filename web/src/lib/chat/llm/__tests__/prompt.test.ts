@@ -90,7 +90,8 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain("Habla en primera persona");
       expect(system.content).toContain(`nombra solo a ti (${c.name}) y a ${CHARACTERS.find((x) => x.id === rival)!.name}, siempre con el nombre completo.`);
       expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
-      expect(system.content).toContain("Palabras sencillas de una partida de parchís (fichas, dado, casa, meta, turno), como en una conversación real. Sin metáforas ni comparaciones.");
+      expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones ni frases solemnes; no hace falta ser gracioso.");
+      expect(system.content).toContain("Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.");
       expect(system.content).toContain("Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.");
       expect(system.content).toContain("Puedes picar o bromear, pero sin insultos");
       // El carácter de cada personaje va en una sola línea (`chat.voice`), sin descripciones duplicadas.
@@ -156,7 +157,8 @@ describe("buildChatPrompt", () => {
     let max = 0;
     const kinds = ["capture_boast", "capture_lament", "streak_boast", "streak_lament", "victory_win", "victory_reply"] as const;
     for (const c of CHARACTERS) {
-      const rival = c.id === "ai-blue" ? "ai-pink" : "ai-blue";
+      // Abuela Pilar como rival siempre que se pueda: es el nombre más largo y añade la regla de «Abuela».
+      const rival = c.id === "ai-green" ? "ai-pink" : "ai-green";
       for (const kind of kinds) {
         const recent = Array.from({ length: CHAT_LIMITS.recentTexts }, (_, i) => ({ speaker: i % 2 ? c.id : rival, text: long(i) }));
         const streak = kind.startsWith("streak") ? { streak: { count: 3, consecutive: false } } : {};
@@ -204,9 +206,9 @@ describe("buildChatPrompt", () => {
     // Caracteres pedidos: Brava competitiva y directa; Ernesto sereno, formal y de usted; Pilar prudente y
     // cariñosa, con refranes o diminutivos sin repetirlos; Chispa espontáneo y supersticioso con el dado.
     const voiceOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.voice;
-    expect(voiceOf("ai-pink")).toMatch(/competitiva, directa e impulsiva.*pica a sus rivales.*sin pasarse ni insultar/i);
-    expect(voiceOf("ai-purple")).toMatch(/estratega sereno y formal.*precisión.*cálculo y probabilidad.*usted/i);
-    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente.*refrán o un diminutivo, sin repetirlos/i);
+    expect(voiceOf("ai-pink")).toMatch(/competitiva, directa y desafiante.*pica a sus rivales.*presume.*protesta.*sin pasarse ni insultar/i);
+    expect(voiceOf("ai-purple")).toMatch(/estratega sereno, calculador y educado.*usted.*precisión.*cálculo y probabilidad.*sin tecnicismos/i);
+    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente, algo tradicional.*refrán o un diminutivo, sin repetirlos ni abusar/i);
     expect(voiceOf("ai-blue")).toMatch(/espontáneo, divertido e imprevisible, algo travieso y supersticioso con el dado/i);
   });
 
