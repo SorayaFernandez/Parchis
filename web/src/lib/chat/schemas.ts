@@ -116,5 +116,16 @@ export const DirectorStateSchema = z.object({
   usedCatchphrases: z
     .record(z.string(), z.array(z.number().int().min(0)).max(CHAT_LIMITS.usedCatchphrasesPerCharacter))
     .default({}),
+  /**
+   * Continuidad del historial de capturas (ver `trackCaptures` en director.ts). Última versión observada
+   * por el director (nunca retrocede). Un estado guardado sin este campo se lee como `null`: si la
+   * siguiente versión no es la primera de la cola (v2), el historial se marca incompleto.
+   */
+  observedThrough: z.number().int().min(1).nullable().default(null),
+  /**
+   * Última versión NO observada (hueco, anomalía o captura descartada por el límite), o `null` si no ha
+   * habido ninguna. Nunca retrocede. El historial es completo cuando ya no puede afectar a la ventana.
+   */
+  historyGapThrough: z.number().int().min(1).nullable().default(null),
 });
 export type DirectorState = z.infer<typeof DirectorStateSchema>;

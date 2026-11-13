@@ -4,6 +4,7 @@ import { CHARACTERS, CHARACTER_NAMES, CHAT_LINE_KINDS, LINE_KINDS_WITH_RIVAL, LI
 import { CHAT_LIMITS } from "../config";
 import type { Utterance } from "../director";
 import { detectCatchphrases } from "../catchphrases";
+import { checkQuality } from "../llm/quality";
 import { countWord, createLocalWriter, isRepeated, renderLine, similarity, validateChatText, type RecentText } from "../writer";
 
 const [BRAVA, ERNESTO, PILAR, CHISPA] = CHARACTERS;
@@ -300,6 +301,46 @@ describe("frases neutrales y «por detrás»: ninguna afirma una buena posición
         const written = await createLocalWriter(createSeededRandom(1)).write({ utterance: u, recent: [], replyToText: null });
         expect(written, `${c.name} con rival ${rival}`).not.toBeNull();
         expect(c.chat.lines.ambient_lead.map((l) => renderLine(l, u))).toContain(written!.text);
+      }
+    }
+  });
+});
+
+describe("frases locales: comentarios de cuatro personas en la mesa, sin jerga ni elementos ajenos (P3)", () => {
+  const JARGON =
+    /señores|en directo|a cámara|cámara lenta|narrador|abracadabra|autógrafo|gato negro|guion|\bvar\b|go+l\b|golazo|escuadra|público|prensa|récord|podio|ovación|confeti|palomitas|aperturas|\bfase\b|retaguardia|retrovisor|caldito|repetición|sentencia|momento histórico|astros/iu;
+
+  it("ninguna frase local usa jerga de televisión, deportes o elementos ajenos al parchís", () => {
+    for (const c of CHARACTERS) {
+      for (const [kind, lines] of Object.entries(c.chat.lines)) {
+        for (const line of lines) expect(JARGON.test(line), `${c.name}/${kind}: ${line}`).toBe(false);
+      }
+    }
+  });
+
+  it("Chispa sigue siendo espontáneo y supersticioso con el dado (no un comentarista)", () => {
+    const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
+    const all = Object.values(chispa.chat.lines).flat();
+    expect(all.filter((l) => /dado|suerte|amuleto|mal de ojo|gafe|madera|horóscopo|calcetines/i.test(l)).length).toBeGreaterThanOrEqual(8);
+    expect(`${chispa.personality} ${chispa.chat.register} ${chispa.chat.voice}`).not.toMatch(/comentarista|racha|teatral/i);
+  });
+});
+
+describe("P4: historial incompleto (sin `streak` ni hechos fiables) con las frases locales", () => {
+  it("cada personaje tiene frases sin datos en cada tipo de captura y racha, y ninguna afirma cifras ni rachas", async () => {
+    const kinds = ["capture_boast", "capture_lament", "streak_boast", "streak_lament"] as const;
+    for (const c of CHARACTERS) {
+      const rival = CHARACTERS.find((x) => x.id !== c.id)!.id;
+      for (const kind of kinds) {
+        const selfRole = kind.endsWith("boast") ? "by" : "victim";
+        const trigger = kind === "streak_boast" ? "capture_streak" : kind === "streak_lament" ? "bad_streak" : "capture";
+        const u: Utterance = { speaker: c.id, kind, trigger, rival, replyTo: null, important: true, captures: { history: "incomplete", selfRole } };
+        const usable = c.chat.lines[kind].map((line) => renderLine(line, u)).filter((t): t is string => t !== null);
+        expect(usable.length, `${c.name} ${kind}`).toBeGreaterThan(0);
+        for (const text of usable) expect(checkQuality(text, { utterance: u, recent: [], replyToText: null }), `${c.name} ${kind}: ${text}`).toBeNull();
+        // El escritor local responde con una de ellas (nunca con una que necesite `{count}` o `{ritmo}`).
+        const written = await createLocalWriter(createSeededRandom(7)).write({ utterance: u, recent: [], replyToText: null });
+        expect(usable).toContain(written?.text);
       }
     }
   });
