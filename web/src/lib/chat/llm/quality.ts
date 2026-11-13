@@ -71,7 +71,7 @@ function checkLanguage(text: string): QualityIssue | null {
 // ── 2. Nombres: alias y combinaciones cruzadas ─────────────────────────────────────────────────────
 
 /** Alias de cada personaje (además del nombre completo, que ya comprueba `cleanLlmText`). */
-const ALIASES: Readonly<Record<string, readonly string[]>> = {
+export const ALIASES: Readonly<Record<string, readonly string[]>> = {
   "Don Ernesto": ["ernesto"],
   "Abuela Pilar": ["pilar"],
 };
@@ -239,6 +239,10 @@ const SELF_NAMES: Readonly<Record<string, readonly string[]>> = {
 const THIRD_PERSON =
   "(?:ha|va|esta|es|sigue|gana|pierde|se|no|nunca|siempre|tiene|puede|vuelve|lleva|manda|captura|cae|falla|sabe|quiere|juega|avanza|viene|dice|presume|celebra|lamenta)";
 
+/** Verbos de habla de un narrador (sin tildes, tras `normalize`): «dijo Pilar», «Chispa responde». */
+const SPEECH_VERBS =
+  "(?:dijo|dice|decia|comenta|comento|responde|respondio|contesta|contesto|exclama|exclamo|añade|añadio|murmura|murmuro|grita|grito|suspira|suspiro|replica|replico)";
+
 /**
  * El personaje se nombra a sí mismo en tercera persona:
  * - Con artículo o contracción: «la Chispa», «al Ernesto», «la Pilar».
@@ -254,6 +258,12 @@ function checkSelfThirdPerson(text: string, speaker: string): QualityIssue | nul
     if (withArticle.test(t)) return { reason: "habla de sí mismo en tercera persona", term: `artículo+${name}` };
     const withVerb = new RegExp(`(?<![${LETTER}])${words}\\s+${THIRD_PERSON}(?![${LETTER}])`, "u");
     if (withVerb.test(t)) return { reason: "habla de sí mismo en tercera persona", term: `${name}+verbo` };
+    // Narración de su propia frase: «…, dijo Pilar», «dice Chispa», «Brava dijo».
+    const narrated = new RegExp(
+      `(?<![${LETTER}])(?:${SPEECH_VERBS}\\s+${words}|${words}\\s+${SPEECH_VERBS})(?![${LETTER}])`,
+      "u",
+    );
+    if (narrated.test(t)) return { reason: "habla de sí mismo en tercera persona", term: `narración+${name}` };
   }
   return null;
 }

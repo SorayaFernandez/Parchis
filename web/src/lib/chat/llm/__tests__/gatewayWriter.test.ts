@@ -726,3 +726,164 @@ describe("integración con drainChat", () => {
     }
   });
 });
+
+describe("etiquetas, comillas y respuestas truncadas (auditoría de la v382)", () => {
+  // Habla Abuela Pilar y su rival es Chispa (como en el mensaje de la v382).
+  const pilar = (extra: Partial<ChatWriteRequest> = {}) => request({ utterance: utterance({ speaker: "ai-green", rival: "ai-blue" }), ...extra });
+  const ernesto = (extra: Partial<ChatWriteRequest> = {}) => request({ utterance: utterance({ speaker: "ai-purple", rival: "ai-pink" }), ...extra });
+  const reason = (raw: string, req: ChatWriteRequest) => {
+    try {
+      cleanLlmText(raw, req);
+    } catch (error) {
+      return (error as ChatLlmError).message;
+    }
+    return null;
+  };
+  const FRASE = "Qué pena, Chispa; ya tenía la tuya en casa.";
+
+  it("regresión v382: «Pilar: \"…\"» se publica sin la etiqueta ni comillas sobrantes", () => {
+    expect(cleanLlmText(`Pilar: "${FRASE}"`, pilar())).toBe(FRASE);
+    // Con la comilla sin cerrar ya no se publica a medias: se rechaza.
+    expect(reason(`Pilar: "${FRASE}`, pilar())).toBe("comillas descompensadas");
+  });
+
+  it("etiquetas del propio personaje: nombre completo y alias, con dos puntos, raya o paréntesis", () => {
+    for (const raw of [
+      `Pilar: ${FRASE}`,
+      `Abuela Pilar: ${FRASE}`,
+      `pilar : ${FRASE}`,
+      `Pilar — ${FRASE}`,
+      `Abuela Pilar - ${FRASE}`,
+      `(Pilar) ${FRASE}`,
+      `(Abuela Pilar): ${FRASE}`,
+      `"Pilar: ${FRASE}"`,
+      `Pilar: «${FRASE}»`,
+    ]) {
+      expect(cleanLlmText(raw, pilar()), raw).toBe(FRASE);
+    }
+    expect(cleanLlmText("Ernesto: Lo siento, Brava. Su ficha vuelve a casa.", ernesto())).toBe("Lo siento, Brava. Su ficha vuelve a casa.");
+    expect(cleanLlmText("(Don Ernesto) Lo siento, Brava. Su ficha vuelve a casa.", ernesto())).toBe("Lo siento, Brava. Su ficha vuelve a casa.");
+  });
+
+  it("etiquetas de otro personaje (nombre o alias, también del rival): habla como otro personaje", () => {
+    for (const raw of [`Chispa: ${FRASE}`, `Don Ernesto: ${FRASE}`, `Ernesto — ${FRASE}`, `(Brava) ${FRASE}`, `"Brava: ${FRASE}"`]) {
+      expect(reason(raw, pilar()), raw).toBe("habla como otro personaje");
+    }
+    expect(reason("Pilar: Lo siento, Brava.", ernesto())).toBe("habla como otro personaje");
+  });
+
+  it("etiqueta vacía: sola, sin contenido tras las comillas o seguida solo de espacios", () => {
+    for (const raw of ["Pilar:", "Abuela Pilar —", "(Pilar)", 'Pilar: ""', "  Pilar:   \n  \n"]) {
+      expect(reason(raw, pilar()), JSON.stringify(raw)).toBe("texto vacío");
+    }
+  });
+
+  it("etiqueta en la primera línea y la frase en la segunda: se conserva la frase (y solo ella)", () => {
+    expect(cleanLlmText(`Pilar:\n${FRASE}`, pilar())).toBe(FRASE);
+    expect(cleanLlmText(`(Abuela Pilar)\r\n\n"${FRASE}"\nOtra línea que sobra`, pilar())).toBe(FRASE);
+    // La segunda línea también se comprueba: si es de otro personaje, se rechaza.
+    expect(reason(`Pilar:\nChispa: ${FRASE}`, pilar())).toBe("habla como otro personaje");
+    // Una primera línea con contenido sigue siendo la única que cuenta.
+    expect(cleanLlmText(`${FRASE}\nPilar: otra cosa`, pilar())).toBe(FRASE);
+  });
+
+  it("comillas: se quitan solo emparejadas; las descompensadas se rechazan y nunca quedan sobrantes", () => {
+    for (const [raw, clean] of [
+      [`"${FRASE}"`, FRASE],
+      [`«${FRASE}»`, FRASE],
+      [`“${FRASE}”`, FRASE],
+      [`'${FRASE}'`, FRASE],
+      [`‘${FRASE}’`, FRASE],
+      [`"${FRASE}”`, FRASE],
+      // Comillas equilibradas dentro de la frase: se conservan.
+      ["Ay, «Chispa», a casita.", "Ay, «Chispa», a casita."],
+      ['Ay, "Chispa", a casita.', 'Ay, "Chispa", a casita.'],
+    ] as const) {
+      expect(cleanLlmText(raw, pilar()), raw).toBe(clean);
+    }
+    for (const raw of [`"${FRASE}`, `${FRASE}"`, `«${FRASE}`, `${FRASE}»`, `“${FRASE}`, 'Ay, "Chispa, a casita.', "Ay, «Chispa», a «casita.", `'${FRASE}`]) {
+      expect(reason(raw, pilar()), raw).toBe("comillas descompensadas");
+    }
+  });
+
+  it("los dos puntos de una frase natural no son una etiqueta", () => {
+    for (const text of ["Ojo: esa ficha, a casita, Chispa.", "Lo dicho: despacito, Chispa.", "Cariño, una cosa: a casa, Chispa."]) {
+      expect(cleanLlmText(text, pilar()), text).toBe(text);
+    }
+    // Ni las palabras que solo empiezan por un nombre («Pilares», «Bravata»).
+    expect(cleanLlmText("Pilares de la casa: paciencia, Chispa.", pilar())).toBe("Pilares de la casa: paciencia, Chispa.");
+  });
+
+  it("narración en tercera persona de quien habla: se rechaza", () => {
+    expect(reason(`"Ay, Chispa, a casita," dijo Pilar.`, pilar())).toBe("habla de sí mismo en tercera persona");
+    expect(reason("Ay, Chispa, a casita, dice Abuela Pilar.", pilar())).toBe("habla de sí mismo en tercera persona");
+  });
+
+  it("coletillas: se detectan sobre el texto limpio, con y sin etiqueta", () => {
+    // «Previsible» es la coletilla 0 de Don Ernesto: ya publicada, se rechaza con y sin etiqueta.
+    const used = ernesto({ usedCatchphrases: [0] });
+    for (const raw of ["Previsible, Brava.", "Ernesto: Previsible, Brava.", "Don Ernesto: «Previsible, Brava.»", "(Ernesto) Previsible, Brava."]) {
+      expect(reason(raw, used), raw).toBe("expresión característica repetida");
+    }
+    // Sin haberla usado, se publica limpia.
+    expect(cleanLlmText("Ernesto: Previsible, Brava.", ernesto())).toBe("Previsible, Brava.");
+    // Y la repetición de un texto reciente tampoco se elude con una etiqueta.
+    const recent = pilar({ recent: [{ speaker: "ai-green", text: FRASE }] });
+    expect(reason(FRASE, recent)).toBe("texto repetido o no válido");
+    expect(reason(`Pilar: "${FRASE}"`, recent)).toBe("texto repetido o no válido");
+  });
+
+  it("finish_reason «length» con texto: respuesta truncada (sin corte temporal); «stop» con el mismo texto se acepta", async () => {
+    const truncated = (content: string, finish: string) =>
+      Response.json({ model: MODEL, choices: [{ index: 0, finish_reason: finish, message: { role: "assistant", content } }] });
+    const t = writerWith(() => truncated("Ay, Chispa, a ca", "length"));
+    const error = await t.writer.write(pilar()).catch((e: unknown) => e);
+    expect(error).toMatchObject({ kind: "invalid_response", message: "respuesta truncada" });
+    expect((error as ChatLlmError).detail).toMatch(/^choices=1 finish_reason=length content=string\(16\) /);
+    expect((error as ChatLlmError).detail).not.toContain("Chispa");
+    expect(t.breaker.blockedUntil).toBe(0);
+    expect(t.calls).toHaveLength(1);
+    const ok = writerWith(() => truncated(FRASE, "stop"));
+    expect(await ok.writer.write(pilar())).toEqual({ text: FRASE, source: "llm" });
+  });
+
+  it("los motivos nuevos están en la lista que se registra", () => {
+    expect(INVALID_RESPONSE_REASONS).toContain("comillas descompensadas");
+    expect(INVALID_RESPONSE_REASONS).toContain("respuesta truncada");
+  });
+
+  it.each([
+    ["etiqueta sola", { content: "Abuela Pilar:", finish: "stop" }, "texto vacío"],
+    ["comillas descompensadas", { content: `Pilar: "${FRASE}`, finish: "stop" }, "comillas descompensadas"],
+    // Brava no participa: su etiqueta es ajena tanto para Pilar como para la réplica de Chispa.
+    ["etiqueta de otro personaje", { content: `Brava: ${FRASE}`, finish: "stop" }, "habla como otro personaje"],
+    ["respuesta truncada", { content: "Ay, mi fichita, qué pena me da", finish: "length" }, "respuesta truncada"],
+  ])("integración (%s): el LLM se rechaza y la frase local se usa exactamente una vez por intervención", async (_, answer, message) => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() =>
+      Response.json({ choices: [{ finish_reason: answer.finish, message: { role: "assistant", content: answer.content } }] }),
+    );
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Pilar captura a Chispa: Pilar habla (y, si hay réplica, Chispa).
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-green", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    // Ningún mensaje publicado sale de la respuesta rechazada (ni entera ni limpiada a medias).
+    expect(memory.rows.every((r) => r.text !== answer.content && !r.text.includes(FRASE) && !r.text.includes("qué pena me da"))).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures).toHaveLength(published);
+    // Pilar recibe la respuesta tal cual; la réplica de Chispa, si la hay, también (con su propio motivo).
+    expect(failures[0]).toMatchObject({ kind: "invalid_response", message });
+    expect(memory.queue).toEqual([]);
+  });
+});
