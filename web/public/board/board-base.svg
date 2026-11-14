@@ -2,81 +2,65 @@
 
 <defs>
 
-<!-- CIRCUITO PINK -->
-<pattern id="circuit-pink" width="130" height="140" patternUnits="userSpaceOnUse">
-  
-  <path d="M10 30 H60 V20 H110 V70 H80 V110"
-        stroke="#ff3bd4"
-        stroke-width="2"
-        fill="none"
-        opacity="0.35"/>
+<!--
+  CIRCUITOS DE LAS CASAS (solo decoración).
+  Un único dibujo para las cuatro zonas, en coordenadas de la zona (0–340) y con simetría de 4 lados:
+  el lado superior se repite girado 90°, 180° y 270° alrededor del centro (170, 170). El recuadro interior
+  (75–265) tapa el centro, así que el circuito ocupa solo la franja entre el borde de la zona y el recuadro.
+  Cada patrón mide exactamente lo que su zona y empieza en su esquina: las cuatro quedan iguales y solo
+  cambia el color (`color` → `currentColor`). Las vías tienen el relleno del fondo para cortar las pistas.
+-->
+<g id="circuit-side">
+  <!-- Halo suave de la pista principal (profundidad sin filtros) -->
+  <path d="M40 62 L62 40 H278" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.08"/>
+  <!-- Pista principal: anillo con esquinas en chaflán -->
+  <path d="M40 62 L62 40 H278" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+  <!-- Pista exterior, unida a la principal a 45° -->
+  <path d="M110 40 L128 22 H212 L230 40" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.32"/>
+  <!-- Pista interior, junto al recuadro -->
+  <path d="M84 66 L92 58 H248 L256 66" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.32"/>
+  <path d="M170 40 V58" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.32"/>
+  <!-- Vías -->
+  <g fill="#050816" stroke="currentColor" stroke-width="1.6" opacity="0.75">
+    <circle cx="51" cy="51" r="4.5"/>
+    <circle cx="110" cy="40" r="4"/>
+    <circle cx="170" cy="40" r="4"/>
+    <circle cx="230" cy="40" r="4"/>
+  </g>
+  <g fill="currentColor" opacity="0.6">
+    <circle cx="51" cy="51" r="1.6"/>
+    <circle cx="110" cy="40" r="1.4"/>
+    <circle cx="170" cy="40" r="1.4"/>
+    <circle cx="230" cy="40" r="1.4"/>
+    <circle cx="84" cy="66" r="2.2"/>
+    <circle cx="256" cy="66" r="2.2"/>
+    <circle cx="170" cy="58" r="2"/>
+  </g>
+</g>
 
-  <path d="M20 120 V80 H50 V40 H90 V10"
-        stroke="#ff69e7"
-        stroke-width="1.5"
-        fill="none"
-        opacity="0.25"/>
+<g id="circuit-art" fill="none">
+  <use href="#circuit-side"/>
+  <use href="#circuit-side" transform="rotate(90 170 170)"/>
+  <use href="#circuit-side" transform="rotate(180 170 170)"/>
+  <use href="#circuit-side" transform="rotate(270 170 170)"/>
+</g>
 
-  <circle cx="60" cy="30" r="3.5" fill="#ff3bd4"/>
-  <circle cx="110" cy="70" r="3.5" fill="#ff69e7"/>
-  <circle cx="80" cy="110" r="3" fill="#ff3bd4"/>
-
+<!-- Un patrón por color, del tamaño de su zona y alineado con ella. La opacidad iguala la luminosidad
+     percibida (el verde y el azul se ven más brillantes que el rosa y el morado). -->
+<pattern id="circuit-pink" x="30" y="30" width="340" height="340" patternUnits="userSpaceOnUse">
+  <use href="#circuit-art" color="#ff3bd4"/>
 </pattern>
 
-<!-- CIRCUITO GREEN -->
-<pattern id="circuit-green" width="120" height="120" patternUnits="userSpaceOnUse">
-  <path d="M10 10 H50 V40 H90 V70" stroke="#00ff9d" stroke-width="2" fill="none" opacity="0.3"/>
-  <path d="M30 100 H70 V60 H110" stroke="#52ffb8" stroke-width="1.5" fill="none" opacity="0.25"/>
-  <path d="M50 60 l-15 -10 M70 100 l10 15 M90 40 l15 -10" stroke="#00ff9d" stroke-width="1" opacity="0.2"/>
-  <circle cx="50" cy="40" r="3" fill="#00ff9d"/>
-  <circle cx="90" cy="70" r="3" fill="#52ffb8"/>
+<pattern id="circuit-green" x="630" y="30" width="340" height="340" patternUnits="userSpaceOnUse">
+  <use href="#circuit-art" color="#00ff9d" opacity="0.8"/>
 </pattern>
 
-<!-- CIRCUITO BLUE -->
-<pattern id="circuit-blue" width="125" height="125" patternUnits="userSpaceOnUse">
-
-  <path d="M10 110 H40 V70 H80 V30 H120"
-        stroke="#00d9ff"
-        stroke-width="2"
-        opacity="0.3"
-        fill="none"/>
-
-  <path d="M20 20 V60 H60 V100 H110 V40"
-        stroke="#37b8ff"
-        stroke-width="1.5"
-        opacity="0.25"
-        fill="none"/>
-
-  <circle cx="40" cy="110" r="3.5" fill="#00d9ff"/>
-  <circle cx="80" cy="70" r="3.5" fill="#37b8ff"/>
-  <circle cx="110" cy="40" r="3" fill="#00d9ff"/>
-
+<pattern id="circuit-blue" x="30" y="630" width="340" height="340" patternUnits="userSpaceOnUse">
+  <use href="#circuit-art" color="#00d9ff" opacity="0.85"/>
 </pattern>
 
-<!-- CIRCUITO PURPLE -->
-<pattern id="circuit-purple" width="140" height="140" patternUnits="userSpaceOnUse">
-
-  <path d="M20 20 H70 V60 H110 V100 H60 V130"
-        stroke="#c86cff"
-        stroke-width="2"
-        opacity="0.3"
-        fill="none"/>
-
-  <path d="M10 90 H40 V50 H90 V10"
-        stroke="#bb6cff"
-        stroke-width="1.5"
-        opacity="0.25"
-        fill="none"/>
-
-  <path d="M70 60 l10 -15 M110 100 l-10 10 M40 50 l-15 -10"
-        stroke="#c86cff"
-        stroke-width="1"
-        opacity="0.2"/>
-
-  <circle cx="70" cy="60" r="3.5" fill="#c86cff"/>
-  <circle cx="110" cy="100" r="3.5" fill="#bb6cff"/>
-  <circle cx="60" cy="130" r="3" fill="#c86cff"/>
-
+<pattern id="circuit-purple" x="630" y="630" width="340" height="340" patternUnits="userSpaceOnUse">
+  <use href="#circuit-art" color="#c86cff"/>
 </pattern>
 
 </defs>

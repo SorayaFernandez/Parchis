@@ -220,7 +220,7 @@ describe("buildChatPrompt", () => {
     const [, lead] = buildChatPrompt(request(utterance("ai-pink", "ambient_lead", { rival: "ai-blue", trigger: "ambient", important: false })));
     expect(lead.content).toContain("Vas el primero de la partida, en solitario; Chispa va el último.");
     const [, ahead] = buildChatPrompt(request(utterance("ai-pink", "ambient_ahead", { rival: null, trigger: "ambient", important: false })));
-    expect(ahead.content).toContain("La partida sigue abierta y no vas en cabeza.");
+    expect(ahead.content).toContain("Vas avanzando, pero no vas ganando.");
   });
 
   it("P4: hechos de racha y de pareja desde quien habla (mensajes y réplicas), sin heredar el recuento ajeno", () => {

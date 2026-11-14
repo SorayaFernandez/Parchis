@@ -1,135 +1,143 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { DicePanel } from "@/components/hud/DicePanel";
-import { PlayersPanel } from "@/components/hud/PlayersPanel";
-import { TurnLog, type TurnLogEntry } from "@/components/hud/TurnLog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GameView } from "@/components/game/GameView";
 import { Button } from "@/components/ui/button";
 import { applyPositions, buildAnimation } from "@/lib/board/animation";
-import { DEMO_PLAYER_NAMES, createDemoGame, createShowcaseState } from "@/lib/board/demo";
-import { applyAction, getAvailableMoves, type GameAction, type GameState } from "@/lib/engine";
-import { describeEvent } from "@/lib/hud/events";
-import { getPlayerSummaries, getTurnInfo } from "@/lib/hud/summary";
-import { ParchisBoard } from "./ParchisBoard";
+import {
+  createShowcaseState,
+  newDemoMatch,
+  nextDemoAction,
+  rollDemoAction,
+  stepDemo,
+  type DemoMatch,
+  type DemoRandom,
+} from "@/lib/board/demo";
+import type { GameAction } from "@/lib/engine";
+import type { GameResponse } from "@/lib/game/api";
+import { getTurnInfo } from "@/lib/hud/summary";
 import { useBoardAnimation } from "./useBoardAnimation";
 
-const LOG_SIZE = 6;
-/** Pausa entre acciones en modo automático (después de que termine la animación). */
+/** Pausa entre acciones en reproducción automática (después de la animación), como en la partida real. */
 const AUTO_PAUSE_MS = 450;
+/** Fecha fija de la vista (la demo no muestra fechas). */
+const DEMO_DATE = "2026-01-01T00:00:00.000Z";
 
-interface DemoState {
-  /** Estado real del motor. El tablero puede estar mostrando aún un fotograma anterior. */
-  game: GameState;
-  log: TurnLogEntry[];
-  /** Número de tiradas: reinicia la animación del dado. */
-  rolls: number;
-  nextLogId: number;
+/** Azar al continuar la partida (la partida inicial ya viene calculada con su semilla). */
+const browserRandom: DemoRandom = {
+  rollDie: () => 1 + Math.floor(Math.random() * 6),
+  ai: Math.random,
+  chat: Math.random,
+};
+
+/** La demo con el aspecto de la partida real (`GameView`), sin guardarse ni conectarse a nada. */
+function toGameResponse(match: DemoMatch): GameResponse {
+  return {
+    id: "demo",
+    version: match.version,
+    status: match.state.status,
+    winner: match.state.winner,
+    state: match.state,
+    lastAction: match.lastAction,
+    lastEvents: match.lastEvents,
+    createdAt: DEMO_DATE,
+    updatedAt: DEMO_DATE,
+    finishedAt: null,
+  };
 }
-
-const initialDemo = (game: GameState): DemoState => ({ game, log: [], rolls: 0, nextLogId: 0 });
-
-const rollAction = (state: GameState): GameAction => ({
-  type: "roll",
-  playerId: state.turn,
-  value: 1 + Math.floor(Math.random() * 6),
-});
 
 /**
- * Siguiente acción de demostración: dado aleatorio y primera ficha legal.
- * No es la IA del juego; solo sirve para ver el tablero y el HUD conectados al motor.
+ * Partida de demostración de /tablero: los cuatro personajes juegan con el motor, la IA y el chat local
+ * reales. Empieza en una partida avanzada y fija (`initial`, calculada al prerenderizar) y se reproduce
+ * sola; se puede pausar, avanzar paso a paso, tirar el dado, reiniciar o empezar una partida nueva.
  */
-function nextDemoAction(state: GameState): GameAction {
-  if (state.dice === null && state.pendingBonus === null) return rollAction(state);
-  return { type: "move", playerId: state.turn, pieceIndex: getAvailableMoves(state)[0] };
-}
-
-export function BoardDemo() {
-  const [demo, setDemo] = useState(() => initialDemo(createShowcaseState()));
-  const [auto, setAuto] = useState(false);
+export function BoardDemo({ initial }: { initial: DemoMatch }) {
+  const [match, setMatch] = useState(initial);
+  const [auto, setAuto] = useState(true);
+  /** Hay una acción calculándose (el chat es asíncrono): no se empieza otra. */
+  const [busy, setBusy] = useState(false);
+  /** Versión de la última tirada: reinicia la animación del dado. */
+  const [rollKey, setRollKey] = useState(0);
   const { frame, animating, play, cancel } = useBoardAnimation();
-  const { game } = demo;
-  const finished = game.status === "finished";
+  // Cada reinicio invalida la acción que estuviera en curso (su resultado tardío se descarta).
+  const generation = useRef(0);
+  const { state } = match;
+  const finished = state.status === "finished";
+  const turn = getTurnInfo(state);
 
-  /** Aplica una acción al motor y lanza la animación de sus eventos. Ignorada mientras se anima. */
   const perform = useCallback(
-    (action: GameAction) => {
-      if (animating || demo.game.status === "finished") return;
-      const result = applyAction(demo.game, action);
-      if (!result.ok) return;
-
-      let nextLogId = demo.nextLogId;
-      const entries = result.events
-        .map((event) => describeEvent(event, DEMO_PLAYER_NAMES))
-        .filter((text): text is string => text !== null)
-        .map((text) => ({ id: nextLogId++, text }))
-        .reverse();
-
-      setDemo({
-        game: result.state,
-        log: [...entries, ...demo.log].slice(0, LOG_SIZE),
-        rolls: demo.rolls + (action.type === "roll" ? 1 : 0),
-        nextLogId,
-      });
-      play(buildAnimation(demo.game, result.events, result.state));
+    async (makeAction: (m: DemoMatch) => GameAction) => {
+      if (animating || busy || match.state.status !== "playing") return;
+      const gen = generation.current;
+      setBusy(true);
+      const next = await stepDemo(match, makeAction(match), browserRandom);
+      if (gen !== generation.current) return;
+      setBusy(false);
+      if (!next) return;
+      setMatch(next);
+      if (next.lastAction?.type === "roll") setRollKey(next.version);
+      play(buildAnimation(match.state, next.lastEvents, next.state));
     },
-    [animating, demo, play],
+    [animating, busy, match, play],
   );
 
-  const reset = (next: GameState) => {
-    setAuto(false);
+  const reset = (next: DemoMatch, autoplay: boolean) => {
+    generation.current++;
     cancel();
-    setDemo(initialDemo(next));
+    setBusy(false);
+    setRollKey(0);
+    setMatch(next);
+    setAuto(autoplay);
   };
 
-  // Modo automático: la siguiente acción espera a que termine la animación en curso.
+  // Reproducción automática: la siguiente acción espera a que termine la animación. Al pausar, el
+  // temporizador se cancela enseguida y no empieza ninguna acción más.
   useEffect(() => {
-    if (!auto || finished || animating) return;
-    const id = setTimeout(() => perform(nextDemoAction(game)), AUTO_PAUSE_MS);
+    if (!auto || finished || animating || busy) return;
+    const id = setTimeout(() => void perform((m) => nextDemoAction(m.state, browserRandom)), AUTO_PAUSE_MS);
     return () => clearTimeout(id);
-  }, [auto, finished, animating, game, perform]);
+  }, [auto, finished, animating, busy, perform]);
 
-  const turn = getTurnInfo(game);
-  const shownState = frame ? applyPositions(game, frame.positions) : game;
+  // Como en la partida real, los mensajes de una jugada aparecen cuando el tablero termina de mostrarla.
+  const boardVersion = animating ? match.version - 1 : match.version;
+  const chat = useMemo(() => match.messages.filter((m) => m.version <= boardVersion), [match.messages, boardVersion]);
+  const stepping = auto || animating || busy || finished;
 
   return (
-    <div className="grid w-full max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
-      <section aria-label="Partida de demostración" className="flex min-w-0 flex-col items-center gap-3">
-        <div className="w-full max-w-[min(100%,calc(100dvh_-_9rem))]">
-          <ParchisBoard
-            state={shownState}
-            highlightedPieces={animating ? [] : getAvailableMoves(game)}
-            movingKey={frame?.movingKey ?? null}
-            transitionMs={frame?.durationMs}
-          />
-        </div>
-
-        <div className="flex flex-wrap justify-center gap-2">
-          <Button onClick={() => perform(nextDemoAction(game))} disabled={finished || animating || auto}>
+    <GameView
+      game={toGameResponse(match)}
+      demo
+      live={{
+        boardState: frame ? applyPositions(state, frame.positions) : state,
+        movingKey: frame?.movingKey ?? null,
+        transitionMs: frame?.durationMs,
+        animating,
+        rollKey,
+        log: match.log,
+      }}
+      chat={chat}
+      controls={
+        <>
+          <Button size="sm" onClick={() => setAuto((a) => !a)} disabled={finished} aria-pressed={auto && !finished}>
+            {auto && !finished ? "Pausar" : "Reproducir"}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => void perform((m) => nextDemoAction(m.state, browserRandom))} disabled={stepping}>
             Siguiente acción
           </Button>
-          <Button variant="secondary" onClick={() => setAuto((a) => !a)} disabled={finished}>
-            {auto ? "Pausar" : "Automático"}
+          <Button size="sm" variant="secondary" onClick={() => void perform((m) => rollDemoAction(m.state, browserRandom))} disabled={stepping || !turn.canRoll}>
+            Lanzar dado
           </Button>
-          <Button variant="outline" onClick={() => reset(createShowcaseState())}>
-            Ejemplo
+          <Button size="sm" variant="outline" onClick={() => reset(initial, true)}>
+            Reiniciar demo
           </Button>
-          <Button variant="outline" onClick={() => reset(createDemoGame())}>
+          <Button size="sm" variant="outline" onClick={() => reset(newDemoMatch(), true)}>
             Partida nueva
           </Button>
-        </div>
-      </section>
-
-      <aside aria-label="Información de la partida" className="flex min-w-0 flex-col gap-3">
-        <DicePanel
-          turn={turn}
-          names={DEMO_PLAYER_NAMES}
-          rollKey={demo.rolls}
-          busy={animating}
-          onRoll={auto ? undefined : () => perform(rollAction(game))}
-        />
-        <PlayersPanel players={getPlayerSummaries(game)} names={DEMO_PLAYER_NAMES} />
-        <TurnLog entries={demo.log} />
-      </aside>
-    </div>
+          <Button size="sm" variant="outline" onClick={() => reset(newDemoMatch(createShowcaseState()), false)}>
+            Ejemplo
+          </Button>
+        </>
+      }
+    />
   );
 }

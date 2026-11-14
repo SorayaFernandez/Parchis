@@ -38,3 +38,8 @@ export const GAME_BOARD = "w-full max-w-[min(100%,calc(100dvh_-_10rem))] xl:w-[m
 export const FILL_PANEL = "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col";
 /** Lista con scroll dentro de un `FILL_PANEL`. */
 export const FILL_SCROLL = "xl:max-h-none xl:min-h-0 xl:flex-1 xl:overflow-y-auto";
+/**
+ * Lista de «Últimas jugadas»: desde xl ocupa el alto del panel y hace scroll con las anteriores; por
+ * debajo de xl (móvil, tablet y lg) solo se ven las 8 más recientes, como antes de ampliar el búfer.
+ */
+export const LOG_LIST = `${FILL_SCROLL} max-xl:[&>li:nth-child(n+9)]:hidden`;
