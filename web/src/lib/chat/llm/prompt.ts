@@ -17,9 +17,15 @@ export interface PromptMessage {
 const nameOf = (id: PlayerId | null) => (id ? (CHARACTER_NAMES[id] ?? id) : "");
 const PILAR_ID = "ai-green";
 
-/** Papeles explícitos de una captura: quién gana la ficha y quién la pierde (evita contradicciones). */
-const youWin = (rival: string) => `Tú capturas y ${rival} pierde la ficha: no te lamentes ni digas que la mala suerte es tuya.`;
-const youLose = (rival: string) => `Tú pierdes la ficha y ${rival} la captura: no presumas ni digas que la mala suerte es de ${rival}.`;
+/**
+ * Papeles explícitos de una captura: quién gana la ficha y quién la pierde, y CÓMO se dice desde ese lado
+ * (con usted si habla Don Ernesto). Antes la regla general daba a la vez «te comí» y «me comiste», y el
+ * modelo podía contar la captura al revés.
+ */
+const youWin = (rival: string, usted: boolean) =>
+  `Tú capturas y ${rival} pierde la ficha: dilo desde tu lado (${usted ? "«le he comido una ficha», «he comido su ficha»" : "«te comí», «he comido tu ficha»"}); no te lamentes ni digas que la mala suerte es tuya.`;
+const youLose = (rival: string, usted: boolean) =>
+  `Tú pierdes la ficha y ${rival} la captura: dilo desde tu lado (${usted ? "«me ha comido una ficha»" : "«me comiste», «me has comido una ficha»"}); no presumas ni digas que la mala suerte es de ${rival}.`;
 
 /** Lo que se dice con el historial incompleto: no hay datos fiables de recuentos ni de rachas. */
 export const INCOMPLETE_HISTORY = "No sabes cuántas capturas lleva nadie ni si alguien está de racha: no des cifras ni hables de rachas.";
@@ -93,13 +99,14 @@ function situation(utterance: Utterance): string {
     ? ` Te han capturado ${countWord(utterance.streak.count)} veces ${utterance.streak.consecutive ? "seguidas" : "en poco tiempo"}.`
     : "";
   const facts = captureContext(utterance, rival);
+  const usted = utterance.speaker === "ai-purple";
   const byKind: Record<ChatLineKind, string> = {
     victory_win: "Acabas de terminar el primero: has ganado la partida (los demás siguen jugando por los otros puestos).",
     victory_reply: `${rival} acaba de ganar la partida, no tú. La partida no ha terminado: los demás seguís jugando por los otros puestos. Reaccionas a su victoria.`,
-    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival)}${facts}`,
-    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival)}${facts}`,
-    streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival)}${facts}`,
-    streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted} ${youLose(rival)}${facts}`,
+    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival, usted)}${facts}`,
+    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival, usted)}${facts}`,
+    streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival, usted)}${facts}`,
+    streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted} ${youLose(rival, usted)}${facts}`,
     third_six_self: "Has sacado tres seises seguidos y te han castigado.",
     third_six_tease: `${rival} ha sacado tres seises seguidos y le han castigado.`,
     goal: "Una de tus fichas acaba de llegar a la meta.",
@@ -120,7 +127,9 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   const character = getCharacter(utterance.speaker);
   if (!character) throw new Error("Personaje desconocido");
 
-  const names = utterance.rival ? `a ti (${character.name}) y a ${nameOf(utterance.rival)}` : `a ti (${character.name})`;
+  // Quien habla no se nombra a sí mismo (antes la regla decía «nombra solo a ti (X) y a Y», y el modelo
+  // acababa diciéndose «…, Don Ernesto»): si nombra a alguien, es al rival.
+  const names = utterance.rival ? `Si nombras a alguien, solo a ${nameOf(utterance.rival)}, con el nombre completo; a ti no te nombres.` : "No te nombres.";
   // «Abuela» es la misma jugadora que Abuela Pilar: los demás pueden llamarla así (el validador lo
   // admite cuando participa). A la propia Pilar no se le dice: su vocativo «abuela» a otro se rechaza.
   const grandma = utterance.rival === PILAR_ID ? ` A ${nameOf(PILAR_ID)} también puedes llamarla «Abuela».` : "";
@@ -140,8 +149,8 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     `- Una sola frase corta en español: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres. Sin saludos, explicaciones ni resumen de la jugada.`,
     "- Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso.",
     "- Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.",
-    "- Di claro qué ha pasado («te comí», «me comiste», «te comió», «he sacado un seis»). Sin preguntas retóricas, peticiones al dado ni «voy primero».",
-    `- Habla en primera persona y nombra solo ${names}, siempre con el nombre completo.${grandma} Sin comillas, emojis ni tu nombre delante.`,
+    "- Di claro qué ha pasado, desde tu lado («he sacado un seis»). Sin preguntas retóricas, peticiones al dado ni «voy primero».",
+    `- Habla en primera persona. ${names}${grandma} Sin comillas ni emojis.`,
     gender,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
     "- Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.",

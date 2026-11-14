@@ -230,7 +230,7 @@ describe("frases locales: sin las expresiones artificiales de la partida de Prev
   it("las frases corregidas: Brava sin preguntas retóricas de liderazgo y Don Ernesto sin solemnidad", () => {
     expect(BRAVA.chat.lines.ambient_lead).toContain("Voy delante. Así me gusta.");
     expect(BRAVA.chat.lines.ambient_lead).toContain("Voy ganando. Hoy me salen las tiradas.");
-    expect(BRAVA.chat.lines.ambient_ahead).toContain("Sigo aquí, y con ganas.");
+    expect(BRAVA.chat.lines.ambient_ahead).toContain("Todavía no he terminado. ¡Queda partida!");
     expect(ERNESTO.chat.lines.streak_boast).toContain("Le he comido, {rival}. Era de esperar.");
   });
 });
@@ -271,7 +271,7 @@ describe("prompt: registro de España, la situación real y el nombre «Abuela»
       expect(system.content).toMatch(/como se habla en España jugando al parchís/);
       expect(system.content).toMatch(/ficha, dado, comer, casa, meta, seis, turno/);
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar.");
-      expect(system.content).toContain("- Di claro qué ha pasado («te comí», «me comiste», «te comió», «he sacado un seis»). Sin preguntas retóricas, peticiones al dado ni «voy primero».");
+      expect(system.content).toContain("- Di claro qué ha pasado, desde tu lado («he sacado un seis»). Sin preguntas retóricas, peticiones al dado ni «voy primero».");
       expect(system.content).toContain("no inventes jugadas, cifras, posiciones ni rachas");
       expect(system.content).not.toMatch(/señores|comentarista|retransmi|partido|deport/i);
     }

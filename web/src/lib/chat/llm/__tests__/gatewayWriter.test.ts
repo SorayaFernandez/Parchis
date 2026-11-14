@@ -1002,3 +1002,33 @@ describe("registro de los motivos de cooldown del chat", () => {
     }
   });
 });
+
+describe("integración: dirección de la captura y el propio nombre (conversación real)", () => {
+  it("si el LLM responde «He comido su ficha, Don Ernesto.», se rechaza y se publica la frase local de cada uno", async () => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "He comido su ficha, Don Ernesto." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const localWrite = vi.fn(createLocalWriter(createSeededRandom(1)).write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Don Ernesto le come una ficha a Abuela Pilar.
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-purple", victimId: "ai-green", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && r.text !== "He comido su ficha, Don Ernesto.")).toBe(true);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    // Don Ernesto se habla a sí mismo; si replica Abuela Pilar, la misma frase cuenta la captura al revés.
+    expect(failures[0]).toMatchObject({ kind: "invalid_response", message: "se dirige a sí mismo" });
+    for (const failure of failures.slice(1)) expect(failure).toMatchObject({ kind: "invalid_response", message: "contradice quién captura" });
+    // Cada frase local es del personaje que habla y nombra al otro, nunca a sí mismo.
+    for (const row of memory.rows) {
+      const own = row.character_id === "ai-purple" ? "Don Ernesto" : "Abuela Pilar";
+      expect(row.text, row.text).not.toContain(own);
+    }
+    expect(memory.queue).toEqual([]);
+  });
+});

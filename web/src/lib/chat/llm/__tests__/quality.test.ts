@@ -420,7 +420,7 @@ describe("cada regla nueva por separado", () => {
 
   it("D: la señal de captura es léxica y por frase (sin coincidencias accidentales)", () => {
     // La señal tiene que estar en la MISMA frase.
-    expect(checkQuality("Me has pillado, sí. Piénsalo dos veces, Chispa.", say("ai-pink", "ai-blue"))).toBeNull();
+    expect(checkQuality("Me has pillado, sí. Piénsalo dos veces, Chispa.", say("ai-pink", "ai-blue", { kind: "capture_lament" }))).toBeNull();
     // Palabras que contienen las señales pero no lo son: «capturista», «pillería», «cazuela», «racheado», «acasa».
     for (const text of ["Dos veces lo dijo el capturista, Chispa.", "Dos veces vi esa pillería, Chispa.", "Dos veces probé la cazuela, Chispa.", "Dos veces racheado, Chispa."]) {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toBeNull();
@@ -1443,7 +1443,7 @@ describe("frases repetidas de las pruebas reales y «¡Voy ganando!» de Chispa"
       ["La partida está muy abierta, Chispa.", "partida abierta"],
       ["La partida sigue abierta.", "partida abierta"],
       ["La partida continúa bastante abierta.", "partida abierta"],
-      ["Hay que estar atentas, Brava.", "estar atentos"],
+      ["Hay que estar atentas, chicas.", "estar atentos"],
       ["Tendremos que estar atentos.", "estar atentos"],
       ["Y todavía tengo hambre.", "aún tengo hambre"],
       ["¡Aún me quedo con hambre!", "aún tengo hambre"],
@@ -1579,5 +1579,169 @@ describe("expresiones retiradas, «Voy ganando» con respaldo y capturas repetid
     expect(chispa.chat.lines.capture_lament).toContain("Maldición, me comiste la ficha, {rival}.");
     expect(CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.ambient_lead).toContain("Voy ganando. Hoy me salen las tiradas.");
     expect(CHARACTERS.find((c) => c.id === "ai-green")!.chat.lines.ambient_lead).toContain("La abuela va ganando. Tomad nota, cariños.");
+  });
+});
+
+describe("dirección de las capturas, el propio nombre y expresiones retiradas (conversación real)", () => {
+  const NAMES: Record<string, string> = { "ai-pink": "Brava", "ai-purple": "Don Ernesto", "ai-green": "Abuela Pilar", "ai-blue": "Chispa" };
+  const IDS = Object.keys(NAMES);
+  const DIRECTION = "contradice quién captura";
+  const SELF = "se dirige a sí mismo";
+  /** Mensaje de quien captura (`by`) a su víctima, o réplica de la víctima a quien captura, con los hechos reales. */
+  const capturer = (speaker: string, victim: string, log = [cap(10, speaker, victim)]) =>
+    say(speaker, victim, { kind: "capture_boast", captures: factsOf(log, speaker) });
+  const victimOf = (speaker: string, by: string, log = [cap(10, by, speaker)]) =>
+    say(speaker, by, { kind: "capture_lament", captures: factsOf(log, speaker) });
+
+  it("habla quien captura: «Te comí» / «He comido tu ficha» (Don Ernesto, de usted: «Le he comido una ficha» / «He comido su ficha»)", () => {
+    for (const speaker of IDS) {
+      for (const victim of IDS.filter((id) => id !== speaker)) {
+        const forms = speaker === "ai-purple" ? ["Le he comido una ficha", "He comido su ficha"] : ["Te comí", "He comido tu ficha"];
+        for (const form of forms) expect(reject(`${form}, ${NAMES[victim]}.`, capturer(speaker, victim)), `${NAMES[speaker]} → ${NAMES[victim]}: ${form}`).toBeNull();
+        // Al revés (como si la hubiera perdido): se rechaza.
+        const wrong = speaker === "ai-purple" ? "Me ha comido una ficha" : "Me comiste";
+        // (Con «una ficha», ya lo rechaza la regla de cifras: «una ficha» con el papel cambiado.)
+        expect([DIRECTION, "afirmación no respaldada"], `${NAMES[speaker]}: ${wrong}`).toContain(checkQuality(`${wrong}, ${NAMES[victim]}.`, capturer(speaker, victim))?.reason);
+      }
+    }
+  });
+
+  it("habla quien pierde la ficha: «Me comiste» / «Me has comido una ficha» (Don Ernesto: «Me ha comido una ficha»)", () => {
+    for (const speaker of IDS) {
+      for (const by of IDS.filter((id) => id !== speaker)) {
+        const forms = speaker === "ai-purple" ? ["Me ha comido una ficha"] : ["Me comiste", "Me has comido una ficha"];
+        for (const form of forms) expect(reject(`${form}, ${NAMES[by]}.`, victimOf(speaker, by)), `${NAMES[speaker]} ← ${NAMES[by]}: ${form}`).toBeNull();
+        const wrong = speaker === "ai-purple" ? "Le he comido una ficha" : "Te comí";
+        expect([DIRECTION, "afirmación no respaldada"], `${NAMES[speaker]}: ${wrong}`).toContain(checkQuality(`${wrong}, ${NAMES[by]}.`, victimOf(speaker, by))?.reason);
+      }
+    }
+  });
+
+  it("Don Ernesto no puede usar las formas de tú, aunque la dirección sea correcta", () => {
+    expect(reject("Te comí, Abuela Pilar.", capturer("ai-purple", "ai-green"))).toMatchObject({ reason: "tutea (Don Ernesto)" });
+    expect(reject("Me comiste, Abuela Pilar.", victimOf("ai-purple", "ai-green"))).toMatchObject({ reason: "tutea (Don Ernesto)" });
+  });
+
+  it("los ejemplos de la conversación real", () => {
+    // Don Ernesto se dirige a sí mismo.
+    expect(reject("He comido su ficha, Don Ernesto.", capturer("ai-purple", "ai-green"))).toEqual({ reason: SELF, detail: "termino=don ernesto" });
+    expect(reject("Pues nada, Don Ernesto, Abuela Pilar se come mi ficha.", victimOf("ai-purple", "ai-green"))).toEqual({ reason: SELF, detail: "termino=don ernesto" });
+    // Abuela Pilar le ha comido a Don Ernesto: correcto.
+    expect(reject("Te comí, Don Ernesto.", capturer("ai-green", "ai-purple"))).toBeNull();
+    // «Lo siento, Abuela Pilar. Era la mejor jugada.»: coherente si Don Ernesto ha capturado; si la ficha la ha
+    // perdido él (Pilar le acaba de comer), disculparse contradice el evento.
+    expect(reject("Lo siento, Abuela Pilar. Era la mejor jugada.", capturer("ai-purple", "ai-green"))).toBeNull();
+    expect(reject("Lo siento, Abuela Pilar. Era la mejor jugada.", victimOf("ai-purple", "ai-green"))).toEqual({ reason: DIRECTION, detail: "termino=disculpa de quien captura: era la mejor jugada" });
+    // Quien captura no puede contar que el rival se ha comido su ficha.
+    expect(checkQuality("Abuela Pilar se come mi ficha.", capturer("ai-purple", "ai-green"))).toMatchObject({ reason: DIRECTION });
+  });
+
+  it("el propio nombre como destinatario se rechaza para los cuatro; el del rival, no", () => {
+    for (const speaker of IDS) {
+      const rival = IDS.find((id) => id !== speaker)!;
+      const own = NAMES[speaker];
+      for (const text of [`Bien jugado, ${own}.`, `${own}, qué suerte la mía.`, `¡Ay, ${own}! Otra vez será.`]) {
+        expect(checkQuality(text, capturer(speaker, rival)), `${own}: ${text}`).toMatchObject({ reason: SELF });
+      }
+      expect(checkQuality(`Bien jugado, ${NAMES[rival]}.`, capturer(speaker, rival)), `${own} → ${NAMES[rival]}`).toBeNull();
+    }
+    // Alias propios («Ernesto», «Pilar») también; nombrarse sin hablarse a sí mismo no es un vocativo.
+    expect(checkQuality("Lo tenía calculado, Ernesto.", capturer("ai-purple", "ai-pink"))).toMatchObject({ reason: SELF, term: "ernesto" });
+    expect(checkQuality("Ay, Pilar, qué cosas.", capturer("ai-green", "ai-pink"))).toMatchObject({ reason: SELF, term: "pilar" });
+    expect(checkQuality("¡Gol de Chispa!", capturer("ai-blue", "ai-pink"))).toBeNull();
+  });
+
+  it("con capturas anteriores en el otro sentido no se confunde quién comió a quién en esta", () => {
+    // Brava le había comido dos veces a Chispa; ahora Chispa le come a Brava.
+    const log = [cap(10, "ai-pink", "ai-blue"), cap(20, "ai-pink", "ai-blue"), cap(30, "ai-blue", "ai-pink")];
+    expect(reject("¡Te comí, Brava!", capturer("ai-blue", "ai-pink", log))).toBeNull();
+    expect(checkQuality("Me comiste antes, pero hoy no, Brava.", capturer("ai-blue", "ai-pink", log))).toMatchObject({ reason: DIRECTION });
+    // Y desde el lado de Brava (la víctima de ahora), aunque antes fuera ella quien comía.
+    expect(reject("Me comiste, Chispa.", victimOf("ai-pink", "ai-blue", log))).toBeNull();
+    expect(checkQuality("Te comí dos veces, Chispa.", victimOf("ai-pink", "ai-blue", log))).toMatchObject({ reason: DIRECTION });
+  });
+
+  it("fuera de las capturas no hay dirección que comprobar", () => {
+    const goal = say("ai-pink", null, { kind: "goal", trigger: "goal", important: false });
+    expect(checkQuality("¡Otra en la meta! Esto marcha.", goal)).toBeNull();
+  });
+
+  it("«Sigo aquí, y con ganas.» y «¡Dentro! Y sin pedir permiso.»: fuera del catálogo, rechazadas y sin citarse", () => {
+    for (const text of ["Sigo aquí, y con ganas.", "Sigo aquí y con ganas, Chispa.", "¡Dentro! Y sin pedir permiso.", "Una más, sin pedir permiso a nadie.", "¡Dentro, sin pedirle permiso!"]) {
+      expect(checkQuality(text, capturer("ai-pink", "ai-blue")), text).toMatchObject({ reason: "expresión poco natural" });
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    expect(reject("Sigo aquí, y con ganas.", capturer("ai-pink", "ai-blue"))).toEqual({ reason: "expresión poco natural", detail: "termino=sigo aquí y con ganas" });
+    for (const text of ["Aquí sigo, Chispa.", "Con ganas de la siguiente, Chispa.", "¡Dentro, Chispa!"]) {
+      expect(checkQuality(text, capturer("ai-pink", "ai-blue")), text).toBeNull();
+    }
+    for (const c of CHARACTERS) {
+      for (const lines of Object.values(c.chat.lines)) {
+        for (const line of lines) expect(line, `${c.name}: ${line}`).not.toMatch(/sigo aquí,? y con ganas|sin pedir permiso/i);
+      }
+    }
+  });
+
+  it("catálogo: ninguna frase local habla a su propio personaje ni cuenta la captura al revés", () => {
+    const kindTrigger: Record<string, ChatTrigger> = {
+      victory_win: "victory", victory_reply: "victory", capture_boast: "capture", capture_lament: "capture",
+      streak_boast: "capture_streak", streak_lament: "bad_streak", third_six_self: "third_six", third_six_tease: "third_six",
+      goal: "goal", finish_place: "finish_place", ambient_lead: "ambient", ambient_ahead: "ambient", ambient_behind: "ambient",
+    };
+    for (const c of CHARACTERS) {
+      const rival = IDS.find((id) => id !== c.id)!;
+      for (const [kind, lines] of Object.entries(c.chat.lines)) {
+        for (const line of lines) {
+          const text = line.replaceAll("{rival}", NAMES[rival]).replaceAll("{Count}", "Dos").replaceAll("{count}", "dos").replaceAll("{ritmo}", "seguidas");
+          const issue = checkQuality(text, say(c.id, rival, { kind: kind as Utterance["kind"], trigger: kindTrigger[kind] }));
+          expect(issue?.reason, `${c.name}/${kind}: ${text}`).not.toBe(SELF);
+          expect(issue?.reason, `${c.name}/${kind}: ${text}`).not.toBe(DIRECTION);
+        }
+      }
+    }
+  });
+
+  it("los motivos nuevos están en la lista que se registra", () => {
+    expect(INVALID_RESPONSE_REASONS).toContain(SELF);
+    expect(INVALID_RESPONSE_REASONS).toContain(DIRECTION);
+  });
+});
+
+describe("disculpas de quien pierde la ficha: solo se rechazan si se atribuye la captura", () => {
+  const DIRECTION = "contradice quién captura";
+  const victimOf = (speaker: string, by: string, log = [cap(10, by, speaker)]) => say(speaker, by, { kind: "capture_lament", captures: factsOf(log, speaker) });
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+
+  it("Abuela Pilar le come a Don Ernesto: «Lo siento, Abuela Pilar. Era la mejor jugada» de Don Ernesto se rechaza y se usa la frase local", () => {
+    expect(reject("Lo siento, Abuela Pilar. Era la mejor jugada.", victimOf("ai-purple", "ai-green"))).toMatchObject({ reason: DIRECTION });
+    // Otras disculpas que justifican una captura que no ha hecho quien habla.
+    for (const text of [
+      "Perdona, Brava, no tenía otra opción.",
+      "Lo siento, Brava, tenía que hacerlo.",
+      "Perdona, Brava. Nada personal.",
+      "Lo siento, Brava. No me lo tengas en cuenta.",
+      "Disculpa, Brava, estaba a tiro.",
+    ]) {
+      expect(checkQuality(text, victimOf("ai-blue", "ai-pink")), text).toMatchObject({ reason: DIRECTION });
+    }
+  });
+
+  it("las disculpas naturales de quien pierde la ficha se aceptan", () => {
+    for (const text of ["Perdona, Brava, pero la próxima es mía.", "Lo siento, hoy no hay suerte, Brava.", "Perdona, Brava, ¿me repites la tirada?", "Lo siento por mi ficha, Brava."]) {
+      expect(checkQuality(text, victimOf("ai-blue", "ai-pink")), text).toBeNull();
+    }
+    // Don Ernesto, de usted.
+    expect(reject("Disculpe, Abuela Pilar, pero la próxima es mía.", victimOf("ai-purple", "ai-green"))).toBeNull();
+  });
+
+  it("la justificación sola es ambigua (puede ser un elogio) y no se rechaza; quien captura puede disculparse y justificarse", () => {
+    expect(checkQuality("Era la mejor jugada, Brava. Bien visto.", victimOf("ai-blue", "ai-pink"))).toBeNull();
+    expect(reject("Lo siento, Chispa. Era la mejor jugada.", capturer("ai-pink", "ai-blue"))).toBeNull();
+  });
+
+  it("se mira el acontecimiento actual, no el historial: con capturas anteriores del hablante, la disculpa que justifica esta captura sigue rechazada", () => {
+    const log = [cap(5, "ai-blue", "ai-pink"), cap(8, "ai-blue", "ai-pink"), cap(10, "ai-pink", "ai-blue")];
+    expect(checkQuality("Perdona, Brava, no tenía otra opción.", victimOf("ai-blue", "ai-pink", log))).toMatchObject({ reason: DIRECTION });
+    expect(checkQuality("Perdona, Brava, pero la próxima es mía.", victimOf("ai-blue", "ai-pink", log))).toBeNull();
   });
 });
