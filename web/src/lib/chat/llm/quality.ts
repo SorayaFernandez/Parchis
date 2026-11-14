@@ -31,6 +31,7 @@ export const QUALITY_REASONS = [
   "expresión poco natural",
   "se dirige a sí mismo",
   "contradice quién captura",
+  "no responde a la captura",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -1010,6 +1011,28 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   // Giros artificiales retirados del catálogo: «Sigo aquí, y con ganas.» y «¡Dentro! Y sin pedir permiso.».
   { term: "sigo aquí y con ganas", re: /(?<![\p{L}])sigo\s+aqui\s*,?\s+y\s+con\s+ganas(?![\p{L}])/u },
   { term: "sin pedir permiso", re: /(?<![\p{L}])sin\s+pedir(?:le|les)?\s+permiso(?![\p{L}])/u },
+  // Capturar es «comer»: «Te la he quitado», «Me ha quitado una ficha», «me han quitado una ficha» no se dicen
+  // así. (Las formas naturales: «Te he comido», «He comido tu ficha», «Me has comido una ficha».)
+  {
+    term: "quitar una ficha",
+    re: /(?<![\p{L}])(?:(?:me|te|le|nos|os|les)\s+(?:(?:la|las|lo)\s+)?(?:(?:he|has|ha|hemos|habeis|han)\s+)?quit(?:ado|aste|o|e|as|a|an|amos|asteis|aron)|quitad[oa]\s+(?:una|la|mi|tu|su)\s+ficha|quitar(?:me|te|le)?\s+(?:una|la|mi|tu|su)\s+ficha)(?![\p{L}])/u,
+  },
+  // Narración de comentarista: «una captura de libro», «una jugada de manual».
+  { term: "de libro", re: /(?<![\p{L}])de\s+(?:libro|manual)(?![\p{L}])/u },
+];
+/**
+ * Distancias hasta la meta: los personajes no calculan ni anuncian cuántas casillas les quedan («Y ahora a la
+ * meta en seis», «me quedan cinco casillas», «estoy a tres de la meta»). Pueden celebrar que han llegado o que
+ * tienen una ficha cerca, pero sin números.
+ */
+const NUMBER_WORD = String.raw`(?:\d+|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)`;
+const GOAL_DISTANCE: readonly RegExp[] = [
+  new RegExp(String.raw`(?<![\p{L}])(?:a|hasta|para)\s+(?:la\s+)?meta\s+(?:en|con|a)\s+(?:solo\s+)?(?:un\s+)?${NUMBER_WORD}(?![\p{L}\p{N}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${NUMBER_WORD}\s+(?:casillas?\s+)?(?:de|para|hasta)\s+(?:la\s+)?meta(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])(?:me\s+|le\s+|te\s+)?(?:quedan?|faltan?)\s+(?:solo\s+)?${NUMBER_WORD}\s+casillas?(?![\p{L}])`, "u"),
+  // Lo que falta, contado con el dado: «Con un seis, a la meta», «otro cinco y a la meta».
+  new RegExp(String.raw`(?<![\p{L}])(?:con|necesito|me\s+basta\s+con)\s+(?:un|otro)\s+${NUMBER_WORD}\s*,?\s+(?:y\s+)?(?:a\s+la|llego\s+a\s+la|entro\s+en\s+la|en\s+la|estoy\s+en\s+la)\s+meta(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])(?:un|otro)\s+${NUMBER_WORD}\s+y\s+(?:a\s+la|en\s+la|llego\s+a\s+la|entro\s+en\s+la)\s+meta(?![\p{L}])`, "u"),
 ];
 /**
  * «Tirarse un número» («me tiré un cuatro», «se tiró un seis»): no es como se dice. Lo natural es «he
@@ -1041,6 +1064,7 @@ function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue
   if (DICE_REFLEXIVE.test(t)) return { reason: "expresión poco natural", term: "tirarse un número" };
   for (const { term, re } of UNNATURAL) if (re.test(t)) return { reason: "expresión poco natural", term };
   if (CAPTURE_TRIGGERS.has(request.utterance.trigger) && KEEP_IT.test(t)) return { reason: "expresión poco natural", term: "no me la quites" };
+  if (GOAL_DISTANCE.some((re) => re.test(t))) return { reason: "afirmación no respaldada", term: "distancia a la meta" };
   const ordinal = ORDINAL_GOAL.exec(t);
   if (ordinal) return { reason: "afirmación no respaldada", term: `objetivo ${ordinal[1]}` };
   return null;
@@ -1111,6 +1135,39 @@ function checkCaptureDirection(text: string, request: ChatWriteRequest): Quality
   const apology = APOLOGY.exec(t);
   const excuse = apology ? CAPTURE_EXCUSE.exec(t) : null;
   return excuse ? { reason: "contradice quién captura", term: `disculpa de quien captura: ${excuse[0].replace(/\s+/g, " ")}` } : null;
+}
+
+// ── Hablar de la captura, no de otra cosa ─────────────────────────────────────────────────────────
+
+/** Otros acontecimientos: llegar a la meta, sacar una ficha de casa. */
+const OTHER_EVENT: readonly { term: string; re: RegExp }[] = [
+  { term: "meta", re: /(?<![\p{L}])meta(?![\p{L}])/u },
+  { term: "sacar ficha", re: /(?<![\p{L}])(?:sac\p{L}*\s+(?:otra|una|la|mi|las|mis)\s+fichas?|salir\s+de\s+casa|sal\p{L}*\s+de\s+casa)(?![\p{L}])/u },
+];
+/**
+ * Buena suerte propia («qué suerte», «tengo suerte», «estoy de suerte»): no es una reacción de quien acaba
+ * de perder una ficha. «Mala suerte», «qué suerte tienes» (protesta por la suerte del rival) sí lo son.
+ */
+const OWN_GOOD_LUCK =
+  /(?<![\p{L}])(?:(?<!mala\s)(?<!poca\s)que\s+suerte(?!\s+(?:tienes|tiene|teneis|has\s+tenido|ha\s+tenido|la\s+tuya|la\s+suya|la\s+vuestra))|tengo\s+suerte|estoy\s+de\s+suerte|me\s+sonrie\s+la\s+suerte)(?![\p{L}])/u;
+
+/**
+ * En una captura (mensaje o réplica, también en rachas), la frase debe reaccionar a ESA captura: nada sobre la
+ * meta ni sobre sacar fichas (Abuela Pilar, tras «Te he comido» de Brava: «Tengo otra en meta, qué suerte»), y
+ * quien pierde la ficha no celebra su buena suerte. Va después de la comprobación de la dirección.
+ */
+function checkCaptureTopic(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const role = captureRole(request);
+  if (!role) return null;
+  const t = normalize(text);
+  for (const { term, re } of OTHER_EVENT) if (re.test(t)) return { reason: "no responde a la captura", term };
+  if (role === "victim" && OWN_GOOD_LUCK.test(t)) return { reason: "no responde a la captura", term: "buena suerte propia" };
+  // En una captura simple quien la pierde sabe quién se la ha comido: nada de «me han comido» impersonal (en
+  // una mala racha sí puede hablar de varias capturas de distintos rivales).
+  if (role === "victim" && request.utterance.trigger === "capture" && /(?<![\p{L}])me\s+han\s+(?:comido|pillado|cazado|capturado|mandado)(?![\p{L}])/u.test(t)) {
+    return { reason: "no responde a la captura", term: "me han comido (impersonal)" };
+  }
+  return null;
 }
 
 // ── Capturas repetidas ────────────────────────────────────────────────────────────────────────────
@@ -1251,7 +1308,8 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkDiminutives(text, request) ??
     // Las últimas: no cambian el diagnóstico de ninguna regla anterior.
     checkSelfAddress(text, request.utterance.speaker) ??
-    checkCaptureDirection(text, request)
+    checkCaptureDirection(text, request) ??
+    checkCaptureTopic(text, request)
   );
 }
 

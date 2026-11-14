@@ -23,9 +23,9 @@ const PILAR_ID = "ai-green";
  * modelo podía contar la captura al revés.
  */
 const youWin = (rival: string, usted: boolean) =>
-  `Tú capturas y ${rival} pierde la ficha: dilo desde tu lado (${usted ? "«le he comido una ficha», «he comido su ficha»" : "«te comí», «he comido tu ficha»"}); no te lamentes ni digas que la mala suerte es tuya.`;
+  `Tú capturas y ${rival} pierde la ficha. Habla solo de eso, desde tu lado (${usted ? "«le he comido una ficha», «he comido su ficha»" : "«te comí», «he comido tu ficha»"}); no te lamentes ni digas que la mala suerte es tuya.`;
 const youLose = (rival: string, usted: boolean) =>
-  `Tú pierdes la ficha y ${rival} la captura: dilo desde tu lado (${usted ? "«me ha comido una ficha»" : "«me comiste», «me has comido una ficha»"}); no presumas ni digas que la mala suerte es de ${rival}.`;
+  `Tú pierdes la ficha y ${rival} la captura. Habla solo de eso, desde tu lado (${usted ? "«me ha comido una ficha»" : "«me comiste», «me has comido una ficha»"}); no presumas ni digas que la mala suerte es de ${rival}.`;
 
 /** Lo que se dice con el historial incompleto: no hay datos fiables de recuentos ni de rachas. */
 export const INCOMPLETE_HISTORY = "No sabes cuántas capturas lleva nadie ni si alguien está de racha: no des cifras ni hables de rachas.";
@@ -129,7 +129,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
 
   // Quien habla no se nombra a sí mismo (antes la regla decía «nombra solo a ti (X) y a Y», y el modelo
   // acababa diciéndose «…, Don Ernesto»): si nombra a alguien, es al rival.
-  const names = utterance.rival ? `Si nombras a alguien, solo a ${nameOf(utterance.rival)}, con el nombre completo; a ti no te nombres.` : "No te nombres.";
+  const names = utterance.rival ? `Si nombras a alguien, solo a ${nameOf(utterance.rival)} (nombre completo), nunca a ti.` : "No te nombres.";
   // «Abuela» es la misma jugadora que Abuela Pilar: los demás pueden llamarla así (el validador lo
   // admite cuando participa). A la propia Pilar no se le dice: su vocativo «abuela» a otro se rechaza.
   const grandma = utterance.rival === PILAR_ID ? ` A ${nameOf(PILAR_ID)} también puedes llamarla «Abuela».` : "";

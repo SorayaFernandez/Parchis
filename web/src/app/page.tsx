@@ -17,6 +17,14 @@ const CTA_BUTTON =
 const DEMO_LINK =
   "inline-flex h-14 items-center justify-center rounded-2xl border border-white/15 bg-white/5 px-6 text-base font-semibold text-slate-100 backdrop-blur transition-colors hover:border-white/30 hover:bg-white/10";
 
+/**
+ * Textos de ejemplo que la portada muestra de otra forma (solo aquí: el catálogo, el chat y la demo de
+ * /tablero no cambian). La réplica de Abuela Pilar a la captura de Chispa se enseña más directa.
+ */
+const HOME_TEXT: Readonly<Record<string, string>> = {
+  "Bueno, Chispa, mi ficha a casita. No hay mal que por bien no venga.": "Ay, Chispa, me has comido la ficha.",
+};
+
 const STEPS = [
   { icon: "/ui/dice-5.svg", title: "Pulsa «Nueva partida»", text: "Se prepara un tablero con los cuatro personajes." },
   { icon: "/ui/dice-3.svg", title: "Ellos juegan", text: "Tiran, deciden cada jugada y se comen fichas con las reglas del parchís." },
@@ -35,7 +43,8 @@ export default async function Home() {
     .reverse()
     .filter((m, i, all) => all.findIndex((o) => o.characterId === m.characterId) === i)
     .slice(0, 2)
-    .reverse();
+    .reverse()
+    .map((m) => ({ ...m, text: HOME_TEXT[m.text] ?? m.text }));
 
   return (
     <main className="dark relative isolate flex flex-1 flex-col overflow-hidden bg-[#020617] text-slate-100">
