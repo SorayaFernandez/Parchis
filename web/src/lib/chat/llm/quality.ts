@@ -196,6 +196,18 @@ export const COMMENTATOR = "ai-blue";
 
 const STREAK_TRIGGERS: ReadonlySet<ChatTrigger> = new Set(["capture_streak", "bad_streak"]);
 
+/**
+ * «Voy ganando» (o «vas/va ganando», dicho del rival) solo es cierto si los datos reales lo respaldan: quien
+ * lo dice (o el rival) es `request.leader`, el primero en solitario por progreso mientras nadie ha
+ * terminado (el mismo criterio que `ambient_lead`). Sin ese dato, nunca. No basta con capturar, sacar un
+ * seis o avanzar. El resto de afirmaciones de posición («voy primero», «vas el último»…) sigue rechazado.
+ */
+function leadClaimBacked(claim: string, request: ChatWriteRequest): boolean {
+  const m = /^(voy|vas|va)\s+ganando$/u.exec(claim);
+  if (!m || !request.leader) return false;
+  return m[1] === "voy" ? request.leader === request.utterance.speaker : request.leader === request.utterance.rival;
+}
+
 /** Afirmaciones sobre la marcha de la partida que la intervención no respalda. */
 const STATE_CLAIMS: readonly RegExp[] = [
   // Eliminación (en el parchís nadie queda «fuera»).
@@ -249,8 +261,9 @@ function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | 
     if (term) return { reason: "afirmación no respaldada", term };
   }
   for (const re of STATE_CLAIMS) {
-    const match = re.exec(t);
-    if (match) return { reason: "afirmación no respaldada", term: match[0].replace(/\s+/g, " ") };
+    for (const match of t.matchAll(new RegExp(re.source, `${re.flags}g`))) {
+      if (!leadClaimBacked(match[0], request)) return { reason: "afirmación no respaldada", term: match[0].replace(/\s+/g, " ") };
+    }
   }
   const result = RESULT_CLAIM.exec(t);
   if (result && request.utterance.trigger !== "victory") return { reason: "afirmación no respaldada", term: result[0].replace(/\s+/g, " ") };
@@ -968,14 +981,16 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "partida abierta", re: /(?<![\p{L}])partida\s+(?:sigue|esta|continua)\s+(?:muy\s+|bastante\s+|todavia\s+|aun\s+)?abierta(?![\p{L}])/u },
   { term: "estar atentos", re: /(?<![\p{L}])(?:habra|hay|tendremos|tocara)\s+que\s+estar\s+atent[oa]s?(?![\p{L}])/u },
   { term: "aún tengo hambre", re: /(?<![\p{L}])(?:(?:aun|todavia)\s+(?:tengo|me\s+queda|me\s+quedo\s+con)\s+hambre|sigo\s+con\s+hambre)(?![\p{L}])/u },
+  // Expresiones retiradas: «¡Me la he quedado!» (y «me la quedo», «quedármela», «me quedo con tu ficha»)
+  // para celebrar una captura, «contratiempo» («Un pequeño contratiempo») y «en cabeza» («voy en cabeza»,
+  // «va en cabeza»): para decir que va ganando, «voy ganando», y solo con respaldo (ver `leadClaimBacked`).
+  {
+    term: "me la he quedado",
+    re: /(?<![\p{L}])(?:(?:me|nos)\s+(?:la|las)\s+(?:(?:he|hemos|habia)\s+)?qued(?:o|e|ado|amos|ao)|quedarmela?s?|quedarnosla?s?|me\s+quedo\s+con\s+(?:tu|su|vuestra|esa|la)\s+ficha)(?![\p{L}])/u,
+  },
+  { term: "contratiempo", re: /(?<![\p{L}])contratiempos?(?![\p{L}])/u },
+  { term: "en cabeza", re: /(?<![\p{L}])en\s+cabeza(?![\p{L}])/u },
 ];
-/**
- * Chispa dice que va ganando con «¡Voy ganando!», nunca con «voy en cabeza». El validador ya rechaza
- * cualquier afirmación de posición del LLM (`STATE_CLAIMS`); esto solo evita citar en el prompt el
- * «voy en cabeza» de Chispa de partidas anteriores (ver `hasDiscardedExpression`).
- */
-const CHISPA_LEAD = /(?<![\p{L}])(?:voy|vamos)\s+en\s+cabeza(?![\p{L}])/u;
-const CHISPA_ID = "ai-blue";
 /**
  * «Tirarse un número» («me tiré un cuatro», «se tiró un seis»): no es como se dice. Lo natural es «he
  * sacado un cuatro» o «me ha salido un seis». «He tirado y me ha salido un seis» sí vale.
@@ -1008,6 +1023,41 @@ function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue
   if (CAPTURE_TRIGGERS.has(request.utterance.trigger) && KEEP_IT.test(t)) return { reason: "expresión poco natural", term: "no me la quites" };
   const ordinal = ORDINAL_GOAL.exec(t);
   if (ordinal) return { reason: "afirmación no respaldada", term: `objetivo ${ordinal[1]}` };
+  return null;
+}
+
+// ── Capturas repetidas ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Afirmar que una captura se repite («me comiste la ficha de nuevo», «otra vez me pillas», «me comiste
+ * otra ficha», «me vuelves a comer», «te he comido otra vez») solo es cierto si esa pareja, en esa
+ * dirección, ya lleva al menos dos capturas en la ventana (incluida la de ahora). «me» (o «nos») es una
+ * captura del rival a quien habla; «te», «le», «la», «lo», «os», una de quien habla al rival. Sin hechos
+ * completos (`captures`), no es verificable y se rechaza. No cuentan «de nuevo» ni «otra vez» lejos del
+ * verbo de captura («¡Te pillé! A empezar de nuevo», «¿Otra vez?»).
+ */
+const REPEAT_MARK = String.raw`(?:de\s+nuevo|otra\s+vez|una\s+vez\s+mas)`;
+const CAPTURE_VERB = String.raw`(?:comid[oa]s?|comiste|comio|comi|comes|come|como|comer|pillad[oa]s?|pillaste|pillo|pille|pillas|pilla|pillar|cazad[oa]s?|cazaste|cazo|cace|cazas|caza|cazar|capturad[oa]s?|capturaste|capturo|capture|capturas|captura|capturar|mandad[oa]s?|mandaste|mando|mande|mandas|manda|mandar)`;
+const CAPTURE_OBJECT = String.raw`(me|nos|te|le|la|lo|os)`;
+const HAVE = String.raw`(?:(?:has|ha|he|hemos|habeis|han)\s+)?`;
+const AFTER_VERB = String.raw`(?:\s+(?:la|una|mi|tu|su|esa)\s+ficha)?(?:\s+a\s+(?:casa|casita))?`;
+const REPEATED_CAPTURE: readonly RegExp[] = [
+  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}\s+${HAVE}${CAPTURE_VERB}${AFTER_VERB}\s*,?\s+${REPEAT_MARK}(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${REPEAT_MARK}\s*,?\s+${CAPTURE_OBJECT}\s+${HAVE}${CAPTURE_VERB}(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}\s+${HAVE}${CAPTURE_VERB}\s+otra\s+ficha(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}\s+(?:vuelves|vuelve|vuelvo|has\s+vuelto|ha\s+vuelto|he\s+vuelto)\s+a\s+(?:comer|pillar|cazar|capturar|mandar)(?![\p{L}])`, "u"),
+];
+
+function checkRepeatedCapture(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const t = normalize(text);
+  const facts = request.utterance.captures;
+  for (const re of REPEATED_CAPTURE) {
+    const match = re.exec(t);
+    if (!match) continue;
+    const towardsSpeaker = match[1] === "me" || match[1] === "nos";
+    const pair = facts?.history === "complete" ? (towardsSpeaker ? facts.rivalOnSelf : facts.selfOnRival) : null;
+    if (!pair || pair.count < 2) return { reason: "afirmación no respaldada", term: "captura repetida" };
+  }
   return null;
 }
 
@@ -1076,13 +1126,11 @@ const DISCARDED_EXPRESSIONS = [
  * El texto contiene una expresión descartada: las de naturalidad (petición al dado, «golpe», «da sus
  * frutos», «no me la quites», objetivos ordinales), las de otros juegos y deportes, o las de
  * `DISCARDED_EXPRESSIONS`. `buildChatPrompt` no cita esos textos (las frases recientes que se piden no
- * repetir), para que no sirvan de modelo de estilo; el validador seguiría rechazándolos. Con `speaker`,
- * también las expresiones descartadas solo para ese personaje («voy en cabeza» de Chispa).
+ * repetir), para que no sirvan de modelo de estilo; el validador seguiría rechazándolos.
  */
-export function hasDiscardedExpression(text: string, speaker?: string): boolean {
+export function hasDiscardedExpression(text: string): boolean {
   const t = normalize(text);
   return (
-    (speaker === CHISPA_ID && CHISPA_LEAD.test(t)) ||
     DICE_REQUEST.some((re) => re.test(t)) ||
     DICE_REFLEXIVE.test(t) ||
     disallowedDiminutive(text, null, null) !== null ||
@@ -1111,6 +1159,7 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkCountClaims(text, request) ??
     checkStreakEnd(text, request) ??
     checkGameTalk(text, request) ??
+    checkRepeatedCapture(text, request) ??
     checkNaturalness(text, request) ??
     checkDiminutives(text, request)
   );

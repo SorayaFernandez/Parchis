@@ -95,7 +95,7 @@ describe("página /partida/[id]: partida en curso", () => {
     expect(html).toContain("Brava saca una ficha de casa");
     expect(html).toContain("Chispa puede lanzar el dado"); // turno siguiente
     expect(html).toContain("Dado: 5"); // último valor del dado
-    expect(html).toContain(">3<"); // versión
+    expect(html).not.toContain("Versión"); // el panel «Partida» ya no muestra la versión
   });
 
   it("con dado pendiente resalta las fichas que se pueden mover", () => {

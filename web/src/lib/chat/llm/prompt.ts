@@ -157,7 +157,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   // Las frases recientes que se piden no repetir, sin las que contengan una expresión descartada (de una
   // partida empezada antes de una corrección): no deben servir de modelo de estilo, y el validador las
   // rechazaría igualmente. El mensaje al que se responde se mantiene (hace falta para responder).
-  const quotable = request.recent.filter((r) => !hasDiscardedExpression(r.text, r.speaker));
+  const quotable = request.recent.filter((r) => !hasDiscardedExpression(r.text));
   const own = quotable.filter((r) => r.speaker === utterance.speaker).slice(-CHAT_LLM.ownRecentTexts);
   if (own.length > 0) lines.push(`Ya has dicho hace poco (no lo repitas): ${own.map((r) => `«${clip(r.text)}»`).join(" ")}`);
   // Los textos recientes de los demás (los propios ya van arriba), para no repetirlos.

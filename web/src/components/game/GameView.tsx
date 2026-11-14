@@ -129,13 +129,12 @@ function describeAction(action: GameAction | null): string | null {
 
 function GameInfo({ game, demo }: { game: GameResponse; demo: boolean }) {
   return (
-    <section aria-label="Datos de la partida" className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm xl:p-3">
+    // Desde lg va encima de «Últimas jugadas» (`order`); en móvil y tablet, el orden del HTML (debajo).
+    <section aria-label="Datos de la partida" className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm lg:order-first xl:p-3">
       <h2 className="mb-2 text-xs font-medium tracking-widest text-slate-400 uppercase">Partida</h2>
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
         <dt className="text-slate-400">Estado</dt>
         <dd>{game.status === "finished" ? "Terminada" : "En curso"}</dd>
-        <dt className="text-slate-400">Versión</dt>
-        <dd className="tabular-nums">{game.version}</dd>
         {demo ? (
           // La demo no tiene fechas ni id: se juega en el navegador, sin guardarse.
           <>
