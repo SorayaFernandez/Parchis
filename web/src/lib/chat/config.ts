@@ -135,7 +135,7 @@ export const CHAT_LLM = {
   promptMaxWords: 18,
   /** Textos recientes de la partida que se envían para no repetirlos (cada uno recortado). */
   recentTexts: 3,
-  recentTextMaxChars: 90,
+  recentTextMaxChars: 80,
   /** Textos propios recientes de quien habla que se envían para que no repita sus coletillas. */
   ownRecentTexts: 2,
   /**

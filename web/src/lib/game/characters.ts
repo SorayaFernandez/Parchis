@@ -368,7 +368,7 @@ export const CHARACTERS: readonly Character[] = [
     color: "green",
     title: "La prudente",
     personality:
-      "Tranquila, cariñosa y paciente, más astuta de lo que parece. Usa diminutivos y alguna expresión de toda la vida.",
+      "Tranquila, cariñosa y paciente, más astuta de lo que parece. Usa alguna expresión de toda la vida y, cuando una ficha vuelve a casa, «casita».",
     catchphrases: ["Despacito y buena letra", "Ay, hijo, qué prisas", "Quien ríe el último…"],
     strategy: {
       // Conservadora: evita el peligro, busca seguros y prioriza el pasillo y la meta.
@@ -386,7 +386,7 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Cariñosa y tranquila: diminutivos, «cariño», «hijos» y algún refrán de vez en cuando. Nunca se enfada de verdad.",
-      voice: "Prudente, cariñosa y paciente, algo tradicional: habla con cercanía y calma y, de vez en cuando, usa un refrán o un diminutivo, sin repetirlos ni abusar de ellos.",
+      voice: "Prudente, cariñosa y paciente, algo tradicional: habla con cercanía y calma y, de vez en cuando, usa un refrán, sin repetirlo. Solo dice «casita» si una ficha vuelve a casa.",
       talkativeness: 0.6,
       lines: {
         victory_win: [
@@ -412,7 +412,7 @@ export const CHARACTERS: readonly Character[] = [
         capture_lament: [
           "Ay, {rival}, qué prisas por comerme. Con la abuela no se hace eso.",
           "Bueno, {rival}, mi ficha a casita. No hay mal que por bien no venga.",
-          "Ay, mi fichita. Paciencia, que la partida es larga, {rival}.",
+          "Ay, mi ficha. Paciencia, que la partida es larga, {rival}.",
           "{rival}, a la abuela se la respeta, ¿eh?",
           "¿Te comes a la abuela, {rival}? Qué poca vergüenza.",
         ],
@@ -438,12 +438,12 @@ export const CHARACTERS: readonly Character[] = [
           "Las prisas nunca son buenas, {rival}.",
           "Tanta prisa, {rival}, y mira.",
           "{rival}, cariño, quien mucho corre pronto para.",
-          "Ya te lo decía yo, {rival}: despacito.",
+          "Ya te lo decía yo, {rival}: sin prisa.",
         ],
         goal: [
-          "Una fichita en la meta. Despacito y buena letra.",
+          "Una ficha más en la meta. Despacito y buena letra.",
           "Ya tengo otra a salvo. Qué tranquilidad.",
-          "Una fichita menos por mover. Qué gusto.",
+          "Una ficha menos por mover. Qué gusto.",
           "Una más en la meta. Poquito a poco.",
         ],
         finish_place: [
@@ -454,7 +454,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_lead: [
           "Ay, quién me lo iba a decir: la primera, y sin prisas.",
-          "Delante de todos, hijos, y sin correr ni un poquito.",
+          "Delante de todos, hijos, y sin correr nada.",
           "La abuela va en cabeza. Tomad nota, cariños.",
           "{rival}, cariño, te espero en la meta.",
         ],

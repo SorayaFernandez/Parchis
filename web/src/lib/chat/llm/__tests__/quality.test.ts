@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { CHARACTERS } from "@/lib/game/characters";
 import { captureFacts, type Utterance } from "../../director";
 import type { RecentText } from "../../writer";
+import type { ChatTrigger } from "../../schemas";
 import { ChatLlmError, cleanLlmText, INVALID_RESPONSE_REASONS } from "../gatewayWriter";
-import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences, hasDiscardedExpression } from "../quality";
+import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences, disallowedDiminutive, hasDiscardedExpression } from "../quality";
 
 const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = [], usedCatchphrases?: number[]) => ({
   utterance: { speaker, kind: "capture_boast", rival, trigger: "capture", replyTo: null, important: true, ...extra } as Utterance,
@@ -138,7 +139,7 @@ describe("mensajes naturales que se siguen aceptando", () => {
     ok("Juego como mi abuela: con calma y buena suerte.", say("ai-blue", "ai-pink"));
     ok("Ni una abuela con prisas corre tanto, Brava.", say("ai-blue", "ai-pink"));
     ok("¡La abuela se lleva un susto! A casa esa ficha.", say("ai-blue", "ai-green"));
-    ok("Ay, cariño, esa ficha vuelve a su casita. Despacito se llega lejos, Chispa.", say("ai-green", "ai-blue"));
+    ok("Ay, cariño, esa ficha vuelve a su casita. Sin prisa se llega lejos, Chispa.", say("ai-green", "ai-blue"));
   });
 
   it("expresiones naturales de competición y préstamos sueltos", () => {
@@ -312,7 +313,7 @@ describe("cada regla nueva por separado", () => {
     expect(reject("Ay, la abuela no corre tanto, Chispa.", say("ai-green", "ai-blue"))).toBeNull();
     expect(reject("Felicidades, Chispa. A la próxima, la abuela se pone seria.", say("ai-green", "ai-blue", { kind: "victory_reply", trigger: "victory" }))).toBeNull();
     // Palabras comunes: «abuela» genérica dicha por Pilar y «brava» como adjetivo dicha por Brava.
-    expect(reject("Mi abuela siempre decía: despacito, cariño.", say("ai-green", "ai-blue"))).toBeNull();
+    expect(reject("Mi abuela siempre decía: sin prisa, cariño.", say("ai-green", "ai-blue"))).toBeNull();
     expect(reject("¡Qué jugada más brava, Chispa!", say("ai-pink", "ai-blue"))).toBeNull();
   });
 
@@ -950,15 +951,15 @@ describe("género del destinatario (apelativos en vocativo)", () => {
       detail: "termino=hijita (Chispa: masculino)",
     });
     // Con el género que corresponde a cada destinataria o destinatario, las mismas frases se aceptan.
-    expect(reject("Pues eso es lo que tiene jugar con las que más quieres, hijita", say("ai-green", "ai-pink"))).toBeNull();
-    expect(reject("La vida son juegos, hijito, y las fichas se van.", say("ai-green", "ai-blue"))).toBeNull();
+    expect(reject("Pues eso es lo que tiene jugar con las que más quieres, hija", say("ai-green", "ai-pink"))).toBeNull();
+    expect(reject("La vida son juegos, hijo, y las fichas se van.", say("ai-green", "ai-blue"))).toBeNull();
   });
 
   it("los dos sentidos con los cuatro destinatarios, también Don Ernesto", () => {
     for (const [speaker, rival, text, ok] of [
-      ["ai-green", "ai-pink", "Ay, hijita, a casita.", true],
+      ["ai-green", "ai-pink", "Ay, hija, a casita.", true],
       ["ai-green", "ai-pink", "Ay, hijito, a casita.", false],
-      ["ai-green", "ai-blue", "Ay, hijito, a casita.", true],
+      ["ai-green", "ai-blue", "Ay, hijo, a casita.", true],
       ["ai-green", "ai-blue", "Ay, hijita, a casita.", false],
       ["ai-green", "ai-purple", "Ay, hijo mío, a casita.", true],
       ["ai-green", "ai-purple", "Ay, hija mía, a casita.", false],
@@ -981,18 +982,18 @@ describe("género del destinatario (apelativos en vocativo)", () => {
 
   it("en una réplica, el destinatario es quien dijo el mensaje (el rival de la réplica)", () => {
     const reply = { kind: "capture_lament" as const, replyTo: 0 };
-    expect(checkQuality("Ay, hijita, qué poca vergüenza.", say("ai-green", "ai-pink", reply))).toBeNull();
+    expect(checkQuality("Ay, hija, qué poca vergüenza.", say("ai-green", "ai-pink", reply))).toBeNull();
     expect(checkQuality("Ay, hijita, qué poca vergüenza.", say("ai-green", "ai-blue", reply))).toMatchObject({ reason: GENDER, term: "hijita (Chispa: masculino)" });
   });
 
   it("no cuentan los plurales, los apelativos neutros, los usos que no son vocativos ni la victoria sin rival", () => {
     for (const rival of ["ai-pink", "ai-blue", "ai-purple"]) {
-      for (const text of ["Despacito, hijos, que esto es largo.", "Ay, cariño, a casita.", "Perdona, cielo, es el juego.", "El dado te ha querido hoy.", "Qué bonita jugada.", "Mi nieta juega así.", "Una hija de la suerte, eso es lo que eres."]) {
+      for (const text of ["Con calma, hijos, que esto es largo.", "Ay, cariño, a casita.", "Perdona, cielo, es el juego.", "El dado te ha querido hoy.", "Qué bonita jugada.", "Mi nieta juega así.", "Una hija de la suerte, eso es lo que eres."]) {
         expect(checkQuality(text, say("ai-green", rival)), `${rival}: ${text}`).toBeNull();
       }
     }
     // Sin rival no hay destinatario con el que comparar: «Ay, hijo» es una interjección.
-    expect(checkQuality("¡Gané, hijita! Despacito se llega lejos.", say("ai-green", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
+    expect(checkQuality("¡Gané, hija! Sin prisa se llega lejos.", say("ai-green", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
   });
 
   it("el motivo nuevo está en la lista que se registra", () => {
@@ -1297,6 +1298,125 @@ describe("hasDiscardedExpression: expresiones descartadas que no se citan en el 
     }
     for (const c of CHARACTERS) {
       for (const lines of Object.values(c.chat.lines)) for (const line of lines) expect(hasDiscardedExpression(line), `${c.name}: ${line}`).toBe(false);
+    }
+  });
+});
+
+describe("naturalidad: diminutivos, «me tiré un cuatro», «en la calle» y Don Ernesto de usted", () => {
+  const UNNATURAL = "expresión poco natural";
+  const TUTEA = "tutea (Don Ernesto)";
+  const TRIGGER_OF_KIND: Record<string, ChatTrigger> = {
+    victory_win: "victory",
+    victory_reply: "victory",
+    capture_boast: "capture",
+    capture_lament: "capture",
+    streak_boast: "capture_streak",
+    streak_lament: "bad_streak",
+    third_six_self: "third_six",
+    third_six_tease: "third_six",
+    goal: "goal",
+    finish_place: "finish_place",
+    ambient_lead: "ambient",
+    ambient_ahead: "ambient",
+    ambient_behind: "ambient",
+  };
+
+  it("regresión: los tres ejemplos se rechazan (flujo completo de cleanLlmText)", () => {
+    expect(reject("¡Me comí la tuya y me tiré un cuatro!", say("ai-pink", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=tirarse un número" });
+    expect(reject("Su fichita quedó en la calle.", say("ai-green", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=en la calle" });
+    expect(reject("¿Tiraste un seis, Abuela Pilar?", say("ai-purple", "ai-green", { kind: "capture_lament" }))).toEqual({ reason: TUTEA, detail: "termino=tiraste" });
+  });
+
+  it("cada parte por separado", () => {
+    expect(reject("Su fichita vuelve a casa, Chispa.", say("ai-green", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=diminutivo fichita" });
+    expect(reject("Su ficha se queda en la calle, Chispa.", say("ai-green", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=en la calle" });
+    for (const text of ["Te tiraste un seis, Chispa.", "Se tiró un cinco y me comió, Chispa.", "¡Me he tirado un seis!", "Nos tiramos dos seises, Chispa."]) {
+      expect(reject(text, say("ai-pink", "ai-blue")), text).toEqual({ reason: UNNATURAL, detail: "termino=tirarse un número" });
+    }
+  });
+
+  it("Don Ernesto nunca tutea, tampoco en preguntas ni réplicas cortas", () => {
+    for (const [text, term] of [
+      ["¿Sacaste un seis, Chispa?", "sacaste"],
+      ["Me comiste, Brava. Bien jugado.", "comiste"],
+      ["¿Tiras ya, Chispa?", "tiras"],
+      ["Siempre llegas tarde, Brava.", "llegas"],
+      ["¿Lo pillas, Chispa?", "pillas"],
+    ] as const) {
+      const r = reject(text, say("ai-purple", text.includes("Brava") ? "ai-pink" : "ai-blue", { kind: "capture_lament", replyTo: 0 }));
+      expect(r, text).toEqual({ reason: TUTEA, detail: `termino=${term}` });
+    }
+    // De usted, y palabras que solo lo parecen.
+    for (const text of [
+      "¿Ha sacado un seis, Abuela Pilar?",
+      "Me ha comido usted, Abuela Pilar. Bien jugado.",
+      "Existe una probabilidad razonable, Abuela Pilar.",
+      "Qué triste jugada la mía, Abuela Pilar.",
+      "Juego con ganas, Abuela Pilar.",
+      "Sus capturas no me inquietan, Abuela Pilar.",
+    ]) {
+      expect(reject(text, say("ai-purple", "ai-green", { kind: "capture_lament" })), text).toBeNull();
+    }
+    // La regla es solo de Don Ernesto.
+    expect(reject("¿Sacaste un seis, Chispa?", say("ai-pink", "ai-blue", { kind: "capture_lament" }))).toBeNull();
+  });
+
+  it("diminutivos: nadie salvo Pilar, y ella solo «casita» cuando una ficha vuelve a casa y sus dos frases hechas", () => {
+    for (const speaker of ["ai-pink", "ai-purple", "ai-blue"]) {
+      for (const text of ["¡A casita, Abuela Pilar!", "Un poquito de suerte, Abuela Pilar.", "Despacito y buena letra, Abuela Pilar."]) {
+        expect(reject(text, say(speaker, "ai-green")), `${speaker}: ${text}`).toMatchObject({ reason: UNNATURAL });
+      }
+    }
+    // Pilar: «casita» en capturas y rachas, sí; en la meta, el tercer 6 o el ambiente, no.
+    for (const trigger of ["capture", "capture_streak", "bad_streak"] as const) {
+      expect(checkQuality("Ay, Chispa, a casita.", say("ai-green", "ai-blue", { trigger })), trigger).toBeNull();
+    }
+    for (const trigger of ["goal", "third_six", "ambient", "victory"] as const) {
+      expect(checkQuality("Ay, Chispa, a casita.", say("ai-green", "ai-blue", { trigger })), trigger).toEqual({ reason: UNNATURAL, term: "diminutivo casita" });
+    }
+    // Sus dos frases hechas, sí; el diminutivo suelto, no.
+    expect(checkQuality("Despacito y buena letra, Chispa.", say("ai-green", "ai-blue"))).toBeNull();
+    expect(checkQuality("Poquito a poco, Chispa.", say("ai-green", "ai-blue"))).toBeNull();
+    for (const [text, word] of [["Despacito, Chispa.", "despacito"], ["Un poquito más, Chispa.", "poquito"], ["Ay, hijito, qué cosas.", "hijito"], ["Un ratito más, Chispa.", "ratito"], ["Mi abuelita lo decía, Chispa.", "abuelita"]] as const) {
+      expect(disallowedDiminutive(text, "ai-green", "capture"), text).toBe(word);
+    }
+    // Palabras normales que no son diminutivos.
+    for (const text of ["La ficha entra en el pasillo, Chispa.", "Qué bonita jugada, Chispa.", "Una cosa: a casa, Chispa.", "Paso a paso, Chispa.", "Solo un rato, Chispa."]) {
+      expect(disallowedDiminutive(text, "ai-pink", "capture"), text).toBeNull();
+    }
+  });
+
+  it("las formas naturales de hablar del dado se aceptan", () => {
+    for (const text of ["He sacado un cuatro y te comí, Chispa.", "¡Me ha salido un seis! A casa, Chispa.", "He tirado y me ha salido un seis, Chispa.", "Tiré un cuatro y te comí, Chispa."]) {
+      expect(reject(text, say("ai-pink", "ai-blue")), text).toBeNull();
+    }
+    expect(reject("Le ha salido un seis, Abuela Pilar. Le comí.", say("ai-purple", "ai-green"))).toBeNull();
+  });
+
+  it("hasDiscardedExpression no cita las formas nuevas y sí las frases de Pilar", () => {
+    for (const text of ["¡Me comí la tuya y me tiré un cuatro!", "Su fichita quedó en la calle.", "Se queda en la calle, Chispa.", "Despacito, Chispa.", "Un ratito más."]) {
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    for (const text of ["Ay, Chispa, a casita.", "Despacito y buena letra.", "Poquito a poco, Chispa.", "He sacado un cuatro."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("el catálogo local cumple: diminutivos solo los de Pilar permitidos y Don Ernesto siempre de usted", () => {
+    for (const c of CHARACTERS) {
+      for (const [kind, lines] of Object.entries(c.chat.lines)) {
+        for (const line of lines) {
+          expect(disallowedDiminutive(line, c.id, TRIGGER_OF_KIND[kind]), `${c.name}/${kind}: ${line}`).toBeNull();
+        }
+      }
+    }
+    const ernesto = CHARACTERS.find((c) => c.id === "ai-purple")!;
+    for (const [kind, lines] of Object.entries(ernesto.chat.lines)) {
+      for (const line of lines) {
+        const text = line.replaceAll("{rival}", "Abuela Pilar").replaceAll("{Count}", "Dos").replaceAll("{count}", "dos").replaceAll("{ritmo}", "seguidas");
+        const issue = checkQuality(text, say("ai-purple", "ai-green", { kind: kind as Utterance["kind"], trigger: TRIGGER_OF_KIND[kind] }));
+        expect(issue?.reason, `${kind}: ${text}`).not.toBe(TUTEA);
+      }
     }
   });
 });

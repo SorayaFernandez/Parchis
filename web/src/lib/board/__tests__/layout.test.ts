@@ -16,7 +16,7 @@ import {
   TRACK_CELLS,
   isStretchVertical,
 } from "../geometry";
-import { getPieceSlot, layoutPieces } from "../layout";
+import { PIECE_HALO_RATIO, PIECE_RING_RATIO, PIECE_SIZE, getPieceSlot, layoutPieces, stackSpacing } from "../layout";
 
 const positions = (state: GameState) => layoutPieces(state).map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`);
 
@@ -139,4 +139,59 @@ describe("tramo final en el tablero: entrada + 7 casillas de color + meta", () =
       expect(getPieceSlot(color, 0, FINAL_POSITION)).toEqual({ kind: "goal", color, pieceIndex: 0 });
     });
   }
+});
+
+describe("tamaño de las fichas: legibles y sin solaparse", () => {
+  /** Las fichas de la casilla 30 (brazo vertical), con `n` jugadores en ella. */
+  const stackOf = (n: number) => {
+    const state = createGame(["a", "b", "c", "d"]);
+    state.players.slice(0, n).forEach((player) => {
+      const steps = (30 - { pink: 39, purple: 5, green: 22, blue: 56 }[player.color] + 68) % 68;
+      player.pieces[0] = { steps, state: "track", arrivalOrder: 1 };
+    });
+    return layoutPieces(state).filter((p) => p.slot.kind === "track");
+  };
+
+  it("una ficha sola, con su anillo de resaltado (trazo 3), cabe en el eje corto de la casilla", () => {
+    expect(PIECE_SIZE).toBe(46);
+    expect(PIECE_SIZE * PIECE_RING_RATIO + 3).toBeLessThan(CELL_WIDTH);
+  });
+
+  it("en casa, la ficha con su halo cabe en el círculo (r = 22 en board-base.svg ≈ 35)", () => {
+    const [piece] = layoutPieces(createGame(["a", "b"]));
+    expect(piece.slot.kind).toBe("base");
+    expect((piece.size * PIECE_HALO_RATIO) / 2).toBeLessThanOrEqual(22 * 1.6);
+  });
+
+  it("apiladas (2, 3 y 4): más pequeñas, dentro de la casilla y sin que se toquen las fichas ni sus halos", () => {
+    let previous = PIECE_SIZE;
+    for (const n of [2, 3, 4]) {
+      const stack = stackOf(n);
+      expect(stack).toHaveLength(n);
+      const size = stack[0].size;
+      expect(size).toBeLessThan(previous);
+      // Legibles: la más pequeña (4 en una casilla) no baja de 24 unidades.
+      expect(size).toBeGreaterThanOrEqual(24);
+      previous = size;
+      const xs = stack.map((p) => p.x).sort((a, b) => a - b);
+      expect(xs.at(-1)! - xs[0] + size).toBeLessThanOrEqual(CELL_LENGTH + 1e-9);
+      for (let i = 1; i < xs.length; i++) {
+        const gap = xs[i] - xs[i - 1];
+        expect(gap).toBeCloseTo(stackSpacing(n, size), 9);
+        expect(gap).toBeGreaterThanOrEqual(size * PIECE_HALO_RATIO - 0.1);
+      }
+    }
+  });
+
+  it("en el ejemplo de /tablero (casa, salida, barreras, pasillos y meta) ninguna ficha se solapa con otra", () => {
+    const pieces = layoutPieces(createShowcaseState());
+    for (let i = 0; i < pieces.length; i++) {
+      for (let j = i + 1; j < pieces.length; j++) {
+        const a = pieces[i];
+        const b = pieces[j];
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        expect(distance, `${a.key} / ${b.key}`).toBeGreaterThanOrEqual((a.size + b.size) / 2 - 0.1);
+      }
+    }
+  });
 });

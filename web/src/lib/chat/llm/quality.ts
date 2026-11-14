@@ -139,12 +139,24 @@ function withoutQuotes(text: string): string {
     .replace(/\b(?:dice|dijo|decía|diría|dicen|reza)\s*:[\s\S]*$/iu, " ");
 }
 
+/** Presente de «tú» de verbos de la partida (Don Ernesto diría «tira», «saca», «come»…). */
+const TUTEO_PRESENT = ["tiras", "sacas", "comes", "pierdes", "llevas", "sales", "llegas", "dejas", "corres", "vienes", "haces", "dices", "necesitas", "piensas", "crees", "pillas"];
+/**
+ * Pretérito de «tú» («tiraste», «sacaste», «comiste», «pillaste»): termina en -aste o -iste. Se excluyen las
+ * palabras que no lo son («existe», «insiste», «triste», «chiste», «contraste»…).
+ */
+const TUTEO_PRETERITE = /(?<![\p{L}])(\p{L}+(?:aste|iste))(?![\p{L}])/gu;
+const NOT_PRETERITE = new Set(["existe", "consiste", "insiste", "resiste", "asiste", "subsiste", "persiste", "desiste", "embiste", "reviste", "triste", "chiste", "alpiste", "contraste", "desgaste", "gaste", "baste", "caste"]);
+
 function checkUsted(text: string, speaker: string): QualityIssue | null {
   if (speaker !== USTED_SPEAKER) return null;
   // Con tildes: «estás» es tuteo, pero «estas» (demostrativo) no.
   const t = withoutQuotes(text).toLowerCase();
-  for (const word of TUTEO) {
+  for (const word of [...TUTEO, ...TUTEO_PRESENT]) {
     if (wordsRe(word).test(t)) return { reason: "tutea (Don Ernesto)", term: word };
+  }
+  for (const m of t.matchAll(TUTEO_PRETERITE)) {
+    if (!NOT_PRETERITE.has(m[1])) return { reason: "tutea (Don Ernesto)", term: m[1] };
   }
   return null;
 }
@@ -948,7 +960,14 @@ const DICE_REQUEST = [
 const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "golpe", re: /(?<![\p{L}])(?<!de\s)golpes?(?![\p{L}])(?!\s+de\s+suerte)/u },
   { term: "da sus frutos", re: /(?<![\p{L}])(?:da|dan|dar|dio|dieron|ha\s+dado|han\s+dado)\s+sus\s+frutos(?![\p{L}])/u },
+  // «Su ficha quedó en la calle»: metáfora que nadie usa jugando al parchís (la ficha vuelve a casa).
+  { term: "en la calle", re: /(?<![\p{L}])en\s+la\s+calle(?![\p{L}])/u },
 ];
+/**
+ * «Tirarse un número» («me tiré un cuatro», «se tiró un seis»): no es como se dice. Lo natural es «he
+ * sacado un cuatro» o «me ha salido un seis». «He tirado y me ha salido un seis» sí vale.
+ */
+const DICE_REFLEXIVE = /(?<![\p{L}])(?:me|te|se|nos|os)\s+(?:(?:he|has|ha|hemos|habeis|han)\s+)?tir\p{L}*\s+(?:(?:un|el|otro)\s+)?(?:uno|dos|tres|cuatro|cinco|seis|\d+)(?![\p{L}\p{N}])/u;
 /** En una captura, «no me la quites» no tiene sentido: la ficha ya se ha perdido (o es la que se come). */
 const KEEP_IT = /(?<![\p{L}])no\s+me\s+la\s+quites(?![\p{L}])/u;
 /**
@@ -971,11 +990,48 @@ const ORDINAL_GOAL = new RegExp(
 function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue | null {
   const t = normalize(text);
   if (DICE_REQUEST.some((re) => re.test(t))) return { reason: "expresión poco natural", term: "petición al dado" };
+  if (DICE_REFLEXIVE.test(t)) return { reason: "expresión poco natural", term: "tirarse un número" };
   for (const { term, re } of UNNATURAL) if (re.test(t)) return { reason: "expresión poco natural", term };
   if (CAPTURE_TRIGGERS.has(request.utterance.trigger) && KEEP_IT.test(t)) return { reason: "expresión poco natural", term: "no me la quites" };
   const ordinal = ORDINAL_GOAL.exec(t);
   if (ordinal) return { reason: "afirmación no respaldada", term: `objetivo ${ordinal[1]}` };
   return null;
+}
+
+// ── Diminutivos ────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Diminutivos (sin tildes, tras `normalize`; lista cerrada de raíces para no confundirlos con palabras
+ * normales: «pasillo», «bonita», «solicita» no lo son): «fichita», «casita», «poquito», «despacito»,
+ * «cariñito», «hijito», «abuelita», «ratito», «dadito», «cerquita», «pobrecito», «chiquillo»…
+ */
+const DIMINUTIVE =
+  /(?<![\p{L}])((?:fich|cas|cos|poqu|despac|cariñ|abuel|hij|niñ|rat|moment|cuidad|tranquil|rapid|cerqu|sol|junt|pequeñ|dad|turn|tirad|met|pas|suav|lent|gord|pobrec|vuel|ahor)(?:it|ic)(?:o|a|os|as)|chiquill(?:o|a|os|as))(?![\p{L}])/gu;
+/** Frases hechas de Abuela Pilar que se le permiten (refranes de toda la vida). */
+const PILAR_SET_PHRASES = /despacito\s+y\s+buena\s+letra|poquito\s+a\s+poco/gu;
+const PILAR_ID = "ai-green";
+
+/**
+ * Primer diminutivo no permitido, o `null`. Ningún personaje usa diminutivos, salvo Abuela Pilar: «casita»
+ * solo cuando una ficha vuelve a casa (una captura o una racha), y sus dos frases hechas («despacito y
+ * buena letra», «poquito a poco»). Sin hablante (frases citadas), se permiten esas tres cosas.
+ */
+export function disallowedDiminutive(text: string, speaker: string | null, trigger: ChatTrigger | null): string | null {
+  const pilar = speaker === null || speaker === PILAR_ID;
+  const t = pilar ? normalize(text).replace(PILAR_SET_PHRASES, " ") : normalize(text);
+  const piecesGoHome = trigger === null || CAPTURE_TRIGGERS.has(trigger);
+  for (const m of t.matchAll(DIMINUTIVE)) {
+    const word = m[1];
+    if (pilar && piecesGoHome && /^casitas?$/.test(word)) continue;
+    return word;
+  }
+  return null;
+}
+
+/** Diminutivos (regla de estilo): ver `disallowedDiminutive`. Va la última del conjunto. */
+function checkDiminutives(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const word = disallowedDiminutive(text, request.utterance.speaker, request.utterance.trigger);
+  return word ? { reason: "expresión poco natural", term: `diminutivo ${word}` } : null;
 }
 
 // ── Expresiones descartadas (para no citarlas en el prompt) ─────────────────────────────────────────
@@ -1013,6 +1069,8 @@ export function hasDiscardedExpression(text: string): boolean {
   const t = normalize(text);
   return (
     DICE_REQUEST.some((re) => re.test(t)) ||
+    DICE_REFLEXIVE.test(t) ||
+    disallowedDiminutive(text, null, null) !== null ||
     UNNATURAL.some(({ re }) => re.test(t)) ||
     KEEP_IT.test(t) ||
     ORDINAL_GOAL.test(t) ||
@@ -1038,7 +1096,8 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkCountClaims(text, request) ??
     checkStreakEnd(text, request) ??
     checkGameTalk(text, request) ??
-    checkNaturalness(text, request)
+    checkNaturalness(text, request) ??
+    checkDiminutives(text, request)
   );
 }
 

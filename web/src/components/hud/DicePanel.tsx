@@ -13,6 +13,8 @@ interface DicePanelProps {
   onRoll?: () => void;
   /** Hay una animación en curso: el botón se desactiva hasta que termine. */
   busy?: boolean;
+  /** Más compacto desde `xl` (pantalla de partida en tres columnas). Por defecto, sin cambios. */
+  compact?: boolean;
   className?: string;
 }
 
@@ -31,7 +33,7 @@ function phaseText(turn: TurnInfo, name: string): string {
 }
 
 /** Panel del dado: valor, qué toca hacer en el turno, bonus y seises seguidos. */
-export function DicePanel({ turn, names, rollKey, onRoll, busy = false, className }: DicePanelProps) {
+export function DicePanel({ turn, names, rollKey, onRoll, busy = false, compact = false, className }: DicePanelProps) {
   const name = names[turn.playerId] ?? turn.playerId;
   const color = COLOR_HEX[turn.color];
   const { phase } = turn;
@@ -43,11 +45,12 @@ export function DicePanel({ turn, names, rollKey, onRoll, busy = false, classNam
       aria-label="Dado y turno"
       className={cn(
         "flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur",
+        compact && "xl:shrink-0 xl:gap-3 xl:p-3",
         className,
       )}
       style={{ boxShadow: phase.kind === "finished" ? undefined : `0 0 24px -12px ${color}` }}
     >
-      <DiceFace value={diceValue} rollKey={rollKey} dimmed={diceUsed} className="w-20 shrink-0 sm:w-24" />
+      <DiceFace value={diceValue} rollKey={rollKey} dimmed={diceUsed} className={cn("w-20 shrink-0 sm:w-24", compact && "xl:w-16")} />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <p className="text-xs font-medium tracking-widest text-slate-400 uppercase">Turno</p>

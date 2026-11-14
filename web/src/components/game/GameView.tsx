@@ -10,8 +10,10 @@ import type { GameResponse } from "@/lib/game/api";
 import { CHARACTER_NAMES } from "@/lib/game/characters";
 import { describeEvent } from "@/lib/hud/events";
 import type { Connection } from "@/lib/game/liveController";
+import { inDisplayOrder } from "@/lib/hud/displayOrder";
 import { getPlayerSummaries, getTurnInfo } from "@/lib/hud/summary";
 import { cn } from "@/lib/utils";
+import { FILL_PANEL, FILL_SCROLL, GAME_AREA, GAME_BOARD, GAME_GRID } from "./layout";
 
 // Se formatea en el servidor: zona horaria fija para que no dependa de dónde se ejecute.
 const dateFormat = new Intl.DateTimeFormat("es-ES", {
@@ -49,7 +51,7 @@ function GameStatusBanner({ game, connection }: { game: GameResponse; connection
     return (
       <section
         aria-label="Resultado"
-        className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 sm:col-span-full"
+        className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 xl:py-3"
       >
         <p className="text-xs font-medium tracking-widest text-amber-300 uppercase">Partida terminada</p>
         <p className="mt-1 text-2xl font-bold">
@@ -79,7 +81,7 @@ function GameStatusBanner({ game, connection }: { game: GameResponse; connection
   return (
     <section
       aria-label="Estado"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-emerald-400/30 bg-emerald-400/5 px-4 py-3 sm:col-span-full"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-emerald-400/30 bg-emerald-400/5 px-4 py-3 xl:py-2"
     >
       <span className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
         <span className="relative flex size-2.5">
@@ -126,7 +128,7 @@ function describeAction(action: GameAction | null): string | null {
 
 function GameInfo({ game }: { game: GameResponse }) {
   return (
-    <section aria-label="Datos de la partida" className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm">
+    <section aria-label="Datos de la partida" className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm xl:p-3">
       <h2 className="mb-2 text-xs font-medium tracking-widest text-slate-400 uppercase">Partida</h2>
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
         <dt className="text-slate-400">Estado</dt>
@@ -191,15 +193,18 @@ export function GameView({
     .map((text, i) => ({ id: i, text }));
 
   return (
-    <div className="grid w-full max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
-      <div className="lg:col-span-2">
+    // El HTML sigue el orden de móvil (aviso, tablero, dado/jugadores/chat, jugadas/datos); en
+    // escritorio, cada bloque va a su zona de la rejilla (ver `layout.ts`).
+    <div className={GAME_GRID}>
+      <div className={GAME_AREA.banner}>
         <GameStatusBanner game={game} connection={live?.connection} />
       </div>
 
-      <section aria-label="Tablero" className="flex min-w-0 justify-center">
+      <section aria-label="Tablero" className={GAME_AREA.board}>
         <div
           className={cn(
-            "w-full max-w-[min(100%,calc(100dvh_-_10rem))] rounded-3xl p-1 ring-1",
+            GAME_BOARD,
+            "rounded-3xl p-1 ring-1",
             finished ? "ring-amber-400/40" : "ring-emerald-400/20",
           )}
         >
@@ -212,21 +217,29 @@ export function GameView({
         </div>
       </section>
 
-      <aside aria-label="Información de la partida" className="flex min-w-0 flex-col gap-3">
-        <DicePanel turn={getTurnInfo(state)} names={CHARACTER_NAMES} rollKey={live?.rollKey ?? 0} />
-        <PlayersPanel players={getPlayerSummaries(state)} names={CHARACTER_NAMES} />
+      <aside aria-label="Turno, jugadores y chat" className={GAME_AREA.right}>
+        <DicePanel turn={getTurnInfo(state)} names={CHARACTER_NAMES} rollKey={live?.rollKey ?? 0} compact />
+        {/* Orden visual (Chispa, Don Ernesto, Abuela Pilar, Brava); el del motor no cambia. */}
+        <PlayersPanel players={inDisplayOrder(getPlayerSummaries(state))} names={CHARACTER_NAMES} compact />
         {chat && (
           <ChatPanel
             messages={chat}
             names={CHARACTER_NAMES}
             colors={Object.fromEntries(state.players.map((p) => [p.id, p.color]))}
+            className={FILL_PANEL}
+            scrollClassName={FILL_SCROLL}
           />
         )}
+      </aside>
+
+      <aside aria-label="Jugadas y datos de la partida" className={GAME_AREA.left}>
         <TurnLog
           title={live ? "Últimas jugadas" : "Última jugada"}
           description={actionText}
           emptyText="Todavía no se ha jugado ningún turno."
           entries={live?.log ?? log}
+          className={FILL_PANEL}
+          listClassName={FILL_SCROLL}
         />
         <GameInfo game={game} />
       </aside>

@@ -61,6 +61,26 @@ describe("página /partida/[id]: partida en curso", () => {
     expect(html).not.toContain("Lanzar dado");
   });
 
+  it("disposición: jugadores en orden visual (Chispa, Don Ernesto, Abuela Pilar, Brava) sin tocar el estado, y jugadas y datos en su propio panel", () => {
+    const state = createGame([...CHARACTER_IDS]);
+    const before = JSON.stringify(state);
+    const html = render(game(state));
+    const players = html.slice(html.indexOf('aria-label="Jugadores"'));
+    const names = [...players.matchAll(/<p class="truncate font-semibold">([^<]+)/g)].map((m) => m[1]);
+    expect(names).toEqual(["Chispa", "Don Ernesto", "Abuela Pilar", "Brava"]);
+    // Solo presentación: el estado (orden interno y turno) no cambia.
+    expect(JSON.stringify(state)).toBe(before);
+    expect(state.players.map((p) => p.id)).toEqual([...CHARACTER_IDS]);
+    expect(html).toContain("Brava puede lanzar el dado");
+    // Dado, jugadores y chat a un lado; jugadas y datos de la partida al otro (zonas de la rejilla).
+    const right = html.indexOf('aria-label="Turno, jugadores y chat"');
+    const left = html.indexOf('aria-label="Jugadas y datos de la partida"');
+    expect(right).toBeGreaterThan(html.indexOf('aria-label="Tablero"'));
+    expect(left).toBeGreaterThan(right);
+    expect(html.indexOf('aria-label="Chat de los personajes"')).toBeLessThan(left);
+    expect(html.indexOf('aria-label="Datos de la partida"')).toBeGreaterThan(left);
+  });
+
   it("muestra las posiciones reales, el dado y la última jugada (acción + eventos)", () => {
     const start = createGame([...CHARACTER_IDS]);
     const rolled = applyAction(start, { type: "roll", playerId: "ai-pink", value: 5 });

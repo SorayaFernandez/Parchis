@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { GAME_AREA, GAME_BOARD, GAME_GRID } from "./layout";
 import { RetryButton } from "./RetryButton";
 
 /** Esqueleto mientras se carga la partida (misma disposición que GameView). */
@@ -9,15 +10,19 @@ export function GameLoading() {
       role="status"
       aria-live="polite"
       aria-busy="true"
-      className="grid w-full max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start"
+      className={GAME_GRID}
     >
       <span className="sr-only">Cargando partida…</span>
-      <div className="flex justify-center">
-        <div className="aspect-square w-full max-w-[min(100%,calc(100dvh_-_7rem))] rounded-3xl bg-white/5 motion-safe:animate-pulse" />
+      <div className={`${GAME_AREA.banner} h-11 rounded-2xl bg-white/5 motion-safe:animate-pulse`} aria-hidden="true" />
+      <div className={GAME_AREA.board} aria-hidden="true">
+        <div className={`${GAME_BOARD} aspect-square rounded-3xl bg-white/5 motion-safe:animate-pulse`} />
       </div>
-      <div className="flex flex-col gap-3" aria-hidden="true">
-        <div className="h-32 rounded-2xl bg-white/5 motion-safe:animate-pulse" />
-        <div className="h-72 rounded-2xl bg-white/5 motion-safe:animate-pulse" />
+      <div className={GAME_AREA.right} aria-hidden="true">
+        <div className="h-28 shrink-0 rounded-2xl bg-white/5 motion-safe:animate-pulse" />
+        <div className="h-72 rounded-2xl bg-white/5 motion-safe:animate-pulse xl:h-auto xl:flex-1" />
+      </div>
+      <div className={GAME_AREA.left} aria-hidden="true">
+        <div className="h-40 rounded-2xl bg-white/5 motion-safe:animate-pulse xl:h-auto xl:flex-1" />
       </div>
     </div>
   );

@@ -90,7 +90,7 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain("Habla en primera persona");
       expect(system.content).toContain(`nombra solo a ti (${c.name}) y a ${CHARACTERS.find((x) => x.id === rival)!.name}, siempre con el nombre completo.`);
       expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
-      expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones ni frases solemnes; no hace falta ser gracioso.");
+      expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso.");
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.");
       expect(system.content).toContain("Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.");
       expect(system.content).toContain("Puedes picar o bromear, pero sin insultos");
@@ -212,7 +212,7 @@ describe("buildChatPrompt", () => {
     const voiceOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.voice;
     expect(voiceOf("ai-pink")).toMatch(/competitiva, directa y desafiante.*pica a sus rivales.*presume.*protesta.*sin pasarse ni insultar/i);
     expect(voiceOf("ai-purple")).toMatch(/estratega sereno, calculador y educado.*usted.*precisión.*cálculo y probabilidad.*sin tecnicismos/i);
-    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente, algo tradicional.*refrán o un diminutivo, sin repetirlos ni abusar/i);
+    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente, algo tradicional.*refrán, sin repetirlo\. Solo dice «casita» si una ficha vuelve a casa/i);
     expect(voiceOf("ai-blue")).toMatch(/espontáneo, divertido e imprevisible, algo travieso y supersticioso con el dado/i);
   });
 
