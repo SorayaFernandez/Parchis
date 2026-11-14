@@ -6,7 +6,7 @@ import { createGame } from "@/lib/engine";
 import { advanceGame } from "../advance";
 import { toGameResponse, type GameResponse } from "../api";
 import { CHARACTER_IDS } from "../characters";
-import { LiveGameController, type RealtimeHandlers, type RealtimeStatus } from "../liveController";
+import { LOG_SIZE, LiveGameController, type RealtimeHandlers, type RealtimeStatus } from "../liveController";
 import type { StoredGame } from "../schemas";
 import { createMemoryRepository } from "./memoryRepository";
 
@@ -126,6 +126,22 @@ async function runUntil(cond: () => boolean, maxMs = 600_000) {
 describe("LiveGameController", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("«Últimas jugadas» conserva más de 9 entradas (hasta LOG_SIZE), de la más reciente a la más antigua y sin duplicados", async () => {
+    const world = await createWorld();
+    const { controller } = world.spectator();
+    controller.start();
+    await runUntil(() => controller.getSnapshot().display.version >= 120);
+    controller.stop();
+    const log = controller.getSnapshot().log;
+    expect(LOG_SIZE).toBe(60);
+    expect(log.length).toBeGreaterThan(9);
+    expect(log.length).toBeLessThanOrEqual(LOG_SIZE);
+    expect(new Set(log.map((e) => e.id)).size).toBe(log.length);
+    // Cada id es versión × 100 + posición: las versiones van de la más reciente a la más antigua.
+    const versions = log.map((e) => Math.floor(e.id / 100));
+    expect(versions).toEqual([...versions].sort((a, b) => b - a));
+  });
 
   it("un espectador juega la partida completa: cada versión se anima una vez, en orden, y al terminar se detiene", async () => {
     const world = await createWorld();

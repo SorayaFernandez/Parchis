@@ -1297,7 +1297,7 @@ describe("hasDiscardedExpression: expresiones descartadas que no se citan en el 
       expect(hasDiscardedExpression(text), text).toBe(false);
     }
     for (const c of CHARACTERS) {
-      for (const lines of Object.values(c.chat.lines)) for (const line of lines) expect(hasDiscardedExpression(line), `${c.name}: ${line}`).toBe(false);
+      for (const lines of Object.values(c.chat.lines)) for (const line of lines) expect(hasDiscardedExpression(line, c.id), `${c.name}: ${line}`).toBe(false);
     }
   });
 });
@@ -1418,5 +1418,72 @@ describe("naturalidad: diminutivos, «me tiré un cuatro», «en la calle» y Do
         expect(issue?.reason, `${kind}: ${text}`).not.toBe(TUTEA);
       }
     }
+  });
+});
+
+describe("frases repetidas de las pruebas reales y «¡Voy ganando!» de Chispa", () => {
+  const UNNATURAL = "expresión poco natural";
+  const ambient = (speaker: string, kind: Utterance["kind"] = "ambient_ahead") => say(speaker, null, { kind, trigger: "ambient", important: false });
+
+  it("regresión: las dos frases se rechazan, digan quien las diga (flujo completo de cleanLlmText)", () => {
+    expect(reject("La partida sigue muy abierta. Habrá que estar atentos.", ambient("ai-purple"))).toEqual({ reason: UNNATURAL, detail: "termino=partida abierta" });
+    for (const speaker of ["ai-pink", "ai-blue", "ai-green", "ai-purple"]) {
+      expect(checkQuality("Habrá que estar atentos.", ambient(speaker))).toEqual({ reason: UNNATURAL, term: "estar atentos" });
+    }
+    // En una racha real de Brava (tres seguidas), la cifra es correcta: lo que se rechaza es la coletilla.
+    const streak = { kind: "streak_boast" as const, trigger: "capture_streak" as const, streak: { count: 3, consecutive: true } };
+    const facts = factsOf([cap(10, "ai-pink", "ai-blue"), cap(11, "ai-pink", "ai-green"), cap(12, "ai-pink", "ai-blue")], "ai-pink");
+    expect(reject("Tres seguidas y aún tengo hambre.", say("ai-pink", "ai-blue", { ...streak, captures: facts }))).toEqual({ reason: UNNATURAL, detail: "termino=aún tengo hambre" });
+    expect(reject("Tres seguidas. ¡Y voy a por más!", say("ai-pink", "ai-blue", { ...streak, captures: facts }))).toBeNull();
+  });
+
+  it("variantes claramente equivalentes, también rechazadas", () => {
+    for (const [text, term] of [
+      ["La partida está muy abierta, Chispa.", "partida abierta"],
+      ["La partida sigue abierta.", "partida abierta"],
+      ["La partida continúa bastante abierta.", "partida abierta"],
+      ["Hay que estar atentas, Brava.", "estar atentos"],
+      ["Tendremos que estar atentos.", "estar atentos"],
+      ["Y todavía tengo hambre.", "aún tengo hambre"],
+      ["¡Aún me quedo con hambre!", "aún tengo hambre"],
+      ["Sigo con hambre, Chispa.", "aún tengo hambre"],
+    ] as const) {
+      expect(checkQuality(text, ambient("ai-pink")), text).toEqual({ reason: UNNATURAL, term });
+    }
+  });
+
+  it("no se bloquean frases naturales parecidas", () => {
+    for (const text of ["Todavía queda mucha partida.", "Atento a esa ficha, Chispa.", "Estad atentos, que esto se pone bueno.", "¡Tengo hambre de fichas!", "Todo está por decidir. Lo calculo con calma.", "La partida es larga."]) {
+      expect(checkQuality(text, ambient("ai-pink")), text).toBeNull();
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("Chispa no dice «voy en cabeza» (dice «¡Voy ganando!»)", () => {
+    // El LLM no puede afirmar su posición en ninguna intervención: se rechaza antes de llegar al chat.
+    expect(reject("¡Voy en cabeza! Que no se acabe la suerte.", say("ai-blue", "ai-pink"))).toEqual({ reason: "afirmación no respaldada", detail: "termino=voy en cabeza" });
+    // Filtrado del historial que se cita en el prompt: el «voy en cabeza» de Chispa no se cita; el de Brava, sí.
+    expect(hasDiscardedExpression("¡Voy en cabeza! Que no se acabe la suerte.", "ai-blue")).toBe(true);
+    expect(hasDiscardedExpression("Voy en cabeza. Hoy me salen las tiradas.", "ai-pink")).toBe(false);
+  });
+
+  it("las frases antiguas se citaban como modelo y ya no se citan en el prompt", () => {
+    for (const text of ["La partida sigue muy abierta. Habrá que estar atentos.", "Tres seguidas y aún tengo hambre."]) {
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("catálogo local: ninguna de las dos frases ni sus variantes, y Chispa usa «¡Voy ganando!» y nunca «en cabeza»", () => {
+    const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
+    for (const c of CHARACTERS) {
+      for (const lines of Object.values(c.chat.lines)) {
+        for (const line of lines) {
+          expect(line, `${c.name}: ${line}`).not.toMatch(/sigue muy abierta|estar atentos|tengo hambre/i);
+          if (c === chispa) expect(line, line).not.toMatch(/en cabeza/i);
+        }
+      }
+    }
+    expect(chispa.chat.lines.ambient_lead).toContain("¡Voy ganando! Que no se acabe la suerte.");
+    expect(chispa.chat.lines.ambient_lead.some((l) => /^¡?Voy ganando/.test(l))).toBe(true);
   });
 });

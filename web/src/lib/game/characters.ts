@@ -199,7 +199,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡{Count} capturas {ritmo}! Estoy imparable.",
           "¡Ya van {count} {ritmo}! Que alguien me pare.",
           "¡Hoy estoy de caza! Lo siento, {rival}… no mucho.",
-          "{Count} {ritmo} y aún tengo hambre.",
+          "{Count} {ritmo}. ¡Y voy a por más!",
         ],
         streak_lament: [
           "¿Otra vez? ¡Me tenéis manía!",
@@ -299,7 +299,7 @@ export const CHARACTERS: readonly Character[] = [
         capture_lament: [
           "Interesante, {rival}. Un riesgo que no había considerado.",
           "Lo anoto, {rival}. No volverá a ocurrir.",
-          "Un pequeño contratiempo, {rival}. Nada más.",
+          "No ha salido como esperaba, {rival}. Sigamos.",
           "Bien visto, {rival}. Ahora me toca reorganizarme.",
         ],
         streak_boast: [
@@ -350,7 +350,7 @@ export const CHARACTERS: readonly Character[] = [
           "Analizo cada tirada. El plan sigue en marcha.",
           "{rival}, debería proteger mejor sus fichas.",
           "Cada movimiento suma. Sigamos con método.",
-          "La partida sigue muy abierta. Habrá que estar atentos.",
+          "Todo está por decidir. Lo calculo con calma.",
         ],
         ambient_behind: [
           "Voy por detrás, pero la partida es larga, {rival}.",
@@ -565,7 +565,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Listo! Misión cumplida.",
         ],
         ambient_lead: [
-          "¡Voy en cabeza! Que no se acabe la suerte.",
+          "¡Voy ganando! Que no se acabe la suerte.",
           "Voy ganando. ¡Que siga así!",
           "¡Voy primero! Ni yo me lo esperaba.",
           "{rival}, desde aquí arriba casi no te veo.",

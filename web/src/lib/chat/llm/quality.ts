@@ -962,7 +962,20 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "da sus frutos", re: /(?<![\p{L}])(?:da|dan|dar|dio|dieron|ha\s+dado|han\s+dado)\s+sus\s+frutos(?![\p{L}])/u },
   // «Su ficha quedó en la calle»: metáfora que nadie usa jugando al parchís (la ficha vuelve a casa).
   { term: "en la calle", re: /(?<![\p{L}])en\s+la\s+calle(?![\p{L}])/u },
+  // Frases hechas que se repetían en las pruebas reales y sus variantes equivalentes: «La partida sigue
+  // muy abierta. Habrá que estar atentos.» y «Tres seguidas y aún tengo hambre.». «Tengo hambre» o
+  // «estad atentos» sueltos no cuentan.
+  { term: "partida abierta", re: /(?<![\p{L}])partida\s+(?:sigue|esta|continua)\s+(?:muy\s+|bastante\s+|todavia\s+|aun\s+)?abierta(?![\p{L}])/u },
+  { term: "estar atentos", re: /(?<![\p{L}])(?:habra|hay|tendremos|tocara)\s+que\s+estar\s+atent[oa]s?(?![\p{L}])/u },
+  { term: "aún tengo hambre", re: /(?<![\p{L}])(?:(?:aun|todavia)\s+(?:tengo|me\s+queda|me\s+quedo\s+con)\s+hambre|sigo\s+con\s+hambre)(?![\p{L}])/u },
 ];
+/**
+ * Chispa dice que va ganando con «¡Voy ganando!», nunca con «voy en cabeza». El validador ya rechaza
+ * cualquier afirmación de posición del LLM (`STATE_CLAIMS`); esto solo evita citar en el prompt el
+ * «voy en cabeza» de Chispa de partidas anteriores (ver `hasDiscardedExpression`).
+ */
+const CHISPA_LEAD = /(?<![\p{L}])(?:voy|vamos)\s+en\s+cabeza(?![\p{L}])/u;
+const CHISPA_ID = "ai-blue";
 /**
  * «Tirarse un número» («me tiré un cuatro», «se tiró un seis»): no es como se dice. Lo natural es «he
  * sacado un cuatro» o «me ha salido un seis». «He tirado y me ha salido un seis» sí vale.
@@ -1063,11 +1076,13 @@ const DISCARDED_EXPRESSIONS = [
  * El texto contiene una expresión descartada: las de naturalidad (petición al dado, «golpe», «da sus
  * frutos», «no me la quites», objetivos ordinales), las de otros juegos y deportes, o las de
  * `DISCARDED_EXPRESSIONS`. `buildChatPrompt` no cita esos textos (las frases recientes que se piden no
- * repetir), para que no sirvan de modelo de estilo; el validador seguiría rechazándolos.
+ * repetir), para que no sirvan de modelo de estilo; el validador seguiría rechazándolos. Con `speaker`,
+ * también las expresiones descartadas solo para ese personaje («voy en cabeza» de Chispa).
  */
-export function hasDiscardedExpression(text: string): boolean {
+export function hasDiscardedExpression(text: string, speaker?: string): boolean {
   const t = normalize(text);
   return (
+    (speaker === CHISPA_ID && CHISPA_LEAD.test(t)) ||
     DICE_REQUEST.some((re) => re.test(t)) ||
     DICE_REFLEXIVE.test(t) ||
     disallowedDiminutive(text, null, null) !== null ||
