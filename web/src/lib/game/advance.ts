@@ -9,7 +9,10 @@
 // la versión ya habrá cambiado (version_conflict) o la reserva estará tomada (turn_in_progress).
 
 import { applyAction, type GameAction, type GameEvent } from "@/lib/engine";
-import { decideAction, type RandomSource } from "./ai";
+import type { RandomSource } from "./ai";
+import { decideActionWithSelector, type MoveFallbackReason } from "./moveSelector/decide";
+import type { MoveSelector } from "./moveSelector/gateway";
+import type { MoveQuota } from "./moveSelector/quota";
 import type { GamesRepository } from "./repository";
 import type { StoredGame } from "./schemas";
 
@@ -35,6 +38,21 @@ export interface AdvanceDeps {
    * Sin él, todos eligen siempre su mejor jugada (determinista).
    */
   random?: RandomSource;
+  /**
+   * Selector estratégico con LLM (fase 8.3). Solo se consulta tras reservar y con dos o más movimientos
+   * legales; su elección se valida con el motor y, si falla, se usa la estrategia local. Sin él (lo
+   * normal fuera de Vercel Preview), el comportamiento es exactamente el de siempre.
+   */
+  moveSelector?: MoveSelector;
+  /**
+   * Cupo de consultas al selector por partida (F4: 20, en Upstash). Sin él, el selector no se consulta
+   * aunque exista (falla cerrado): se usa la estrategia local.
+   */
+  moveQuota?: MoveQuota;
+  /** Cancelación de quien llama (la petición HTTP), que se pasa al selector. */
+  signal?: AbortSignal;
+  /** Aviso cuando, tras consultar al selector, se usa la estrategia local (para el registro). */
+  onMoveFallback?: (reason: MoveFallbackReason) => void;
 }
 
 /** Error del motor al aplicar la acción elegida (no debería ocurrir: la IA solo elige jugadas legales). */
@@ -43,7 +61,7 @@ export class EngineRejectedActionError extends Error {
 }
 
 export async function advanceGame(id: string, expectedVersion: number, deps: AdvanceDeps): Promise<AdvanceResult> {
-  const { repository, rollDie, newToken, random } = deps;
+  const { repository, rollDie, newToken, random, moveSelector, moveQuota, signal, onMoveFallback } = deps;
 
   // 1. Comprobaciones previas (evitan reservar en vano y dan respuestas precisas).
   const current = await repository.get(id);
@@ -63,8 +81,17 @@ export async function advanceGame(id: string, expectedVersion: number, deps: Adv
   }
 
   try {
-    // 3. Decidir y aplicar con el motor sobre el estado reservado (el de la BD en esa versión).
-    const action = decideAction(claimed.state, rollDie, random);
+    // 3. Decidir y aplicar con el motor sobre el estado reservado (el de la BD en esa versión). Con dos o más
+    //    movimientos legales y selector, se consulta al LLM (dentro de esta reserva: su respuesta solo puede
+    //    aplicarse a esta versión) y, si falla, a la estrategia local. El motor vuelve a validar abajo.
+    const { action } = await decideActionWithSelector(claimed.state, {
+      rollDie,
+      random,
+      selector: moveSelector,
+      signal,
+      onFallback: onMoveFallback,
+      consumeQuota: moveQuota ? () => moveQuota.tryConsume(id) : undefined,
+    });
     const result = applyAction(claimed.state, action);
     if (!result.ok) throw new EngineRejectedActionError(`El motor rechazó ${action.type}: ${result.error}`);
 
