@@ -8,6 +8,10 @@ import { z } from "zod";
 import { isChatCandidate } from "@/lib/chat/director";
 import { scheduleDrain } from "@/lib/chat/schedule";
 import { EngineRejectedActionError, advanceGame } from "@/lib/game/advance";
+import { readMoveLlmConfig } from "@/lib/game/moveSelector/env";
+import { createMoveBreaker, createMoveSelector, type MoveSelector } from "@/lib/game/moveSelector/gateway";
+import { logMoveError } from "@/lib/game/moveSelector/log";
+import { getMoveQuota, type MoveQuota } from "@/lib/game/moveSelector/quota";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
 import { guardAdvance } from "@/lib/security/guards";
@@ -15,6 +19,36 @@ import { guardAdvance } from "@/lib/security/guards";
 const BodySchema = z.strictObject({
   expectedVersion: z.number().int().min(1),
 });
+
+/** Corte temporal del selector de movimientos, compartido por las peticiones de este proceso (no es el del chat). */
+const moveBreaker = createMoveBreaker();
+
+/**
+ * Selector estratégico con LLM y su cupo por partida, solo si su configuración lo activa (Vercel Preview,
+ * `MOVES_LLM_ENABLED`, clave y modelo exacto) **y** hay Upstash para el cupo de 20 consultas (F4). Si no,
+ * sin selector: se usa la estrategia local como siempre. Un error de configuración se registra sin
+ * valores (como mucho una vez por minuto); `off` es lo normal.
+ */
+function moveSelectorFromEnv(): { moveSelector?: MoveSelector; moveQuota?: MoveQuota } {
+  const config = readMoveLlmConfig(process.env);
+  if (!config.enabled) {
+    if (config.reason !== "off") logMoveError("configuración", Object.assign(new Error(config.reason), { name: `configuración ${config.reason}` }));
+    return {};
+  }
+  // Sin cupo verificable no se consulta al modelo (falla cerrado).
+  const moveQuota = getMoveQuota(process.env);
+  if (!moveQuota) {
+    logMoveError("configuración", Object.assign(new Error("sin_upstash"), { name: "configuración sin_upstash" }));
+    return {};
+  }
+  const moveSelector = createMoveSelector({
+    config,
+    fetch: (...args) => fetch(...args),
+    breaker: moveBreaker,
+    onFailure: (error) => logMoveError("selector", error),
+  });
+  return { moveSelector, moveQuota };
+}
 
 async function readBody(request: Request) {
   try {
@@ -43,6 +77,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/games/[id]/
       rollDie: () => randomInt(1, 7), // 1..6, solo en el servidor
       newToken: () => randomUUID(),
       random: () => randomInt(0, 2 ** 32) / 2 ** 32, // [0, 1) para el azar acotado de Chispa
+      ...moveSelectorFromEnv(),
+      signal: request.signal,
+      // Los fallos del propio selector ya los registra su `onFailure`; aquí, solo los rechazos de la validación.
+      onMoveFallback: (reason) => {
+        if (reason !== "fallo del selector") logMoveError("estrategia local", Object.assign(new Error(reason), { name: reason }));
+      },
     });
 
     switch (result.kind) {
