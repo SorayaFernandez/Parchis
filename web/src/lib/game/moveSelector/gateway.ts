@@ -68,6 +68,11 @@ export interface MoveSelectorDeps {
   timeoutMs?: number;
   /** Aviso de cada fallo, para el registro (`logMoveError`). */
   onFailure?: (error: MoveLlmError) => void;
+  /**
+   * Tras un 429 del proveedor, con la duración del corte (`Retry-After` acotado, o 60 s): activa el bloqueo
+   * global compartido con el chat (limitador de `src/lib/llm/`). No reintenta.
+   */
+  onRateLimited?: (durationMs: number) => void | Promise<void>;
 }
 
 export interface MoveSelector {
@@ -143,6 +148,7 @@ export function createMoveSelector(deps: MoveSelectorDeps): MoveSelector {
       if (!response.ok) {
         const cooldown = cooldownFor(response.status, response.headers.get("Retry-After"));
         if (cooldown > 0) deps.breaker.blockedUntil = Math.max(deps.breaker.blockedUntil, now() + cooldown);
+        if (response.status === 429) await Promise.resolve(deps.onRateLimited?.(cooldown)).catch(() => {});
         const detail = await describeHttpError(response, deps.config.apiKey).catch(() => "cuerpo=ilegible");
         return fail(new MoveLlmError("http", `AI Gateway respondió ${response.status}`, response.status, detail));
       }

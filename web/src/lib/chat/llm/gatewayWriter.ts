@@ -56,6 +56,15 @@ export interface GatewayWriterDeps {
   now?: () => number;
   /** Aviso de fallo (solo tipo y código HTTP), para el registro. */
   onFailure?: (error: ChatLlmError) => void;
+  /**
+   * Permiso del limitador global de AI Gateway (compartido con el selector de movimientos; ver
+   * `src/lib/llm/`), justo antes de enviar la petición. Si no lo concede (límite, bloqueo tras un 429 o
+   * Redis no disponible), no se llama al modelo y el servicio usa la frase local. `schedule.ts` no crea el
+   * escritor LLM sin limitador; sin esta dependencia (solo en pruebas), se llama como antes.
+   */
+  acquire?: () => Promise<boolean>;
+  /** Tras un 429, con la duración del corte: activa el bloqueo global compartido. No reintenta. */
+  onRateLimited?: (durationMs: number) => void | Promise<void>;
 }
 
 /** `Retry-After` en segundos (entero) → ms, acotado; `null` si falta o no es válido. */
@@ -395,6 +404,13 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
         ...(deps.config.provider ? { providerOptions: { gateway: { only: [deps.config.provider] } } } : {}),
       };
 
+      // Límite global, justo antes de enviar. Una petición ya cancelada no gasta hueco.
+      if (deps.acquire) {
+        if (signal.aborted) fail(new ChatLlmError("aborted", "cancelada o fuera de tiempo"));
+        const allowed = await deps.acquire().catch(() => false);
+        if (!allowed) fail(new ChatLlmError("cooldown", "límite global de AI Gateway"));
+      }
+
       let response: Response;
       try {
         response = await deps.fetch(CHAT_LLM.endpoint, {
@@ -412,6 +428,8 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       if (!response.ok) {
         const cooldown = cooldownFor(response.status, response.headers.get("Retry-After"));
         if (cooldown > 0) deps.breaker.blockedUntil = Math.max(deps.breaker.blockedUntil, now() + cooldown);
+        // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
+        if (response.status === 429) await Promise.resolve(deps.onRateLimited?.(cooldown)).catch(() => {});
         // Corte temporal ya aplicado. Se lee un resumen saneado del error (limitado) para el registro.
         const detail = await describeHttpError(response, deps.config.apiKey).catch(() => "cuerpo=ilegible");
         fail(new ChatLlmError("http", `AI Gateway respondió ${response.status}`, response.status, detail));

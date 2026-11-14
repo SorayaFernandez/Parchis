@@ -8,6 +8,7 @@ import "server-only";
 
 import { randomInt, randomUUID } from "node:crypto";
 import { after } from "next/server";
+import { getGatewayLimiter } from "@/lib/llm/gatewayLimiter";
 import { readChatLlmConfig } from "./llm/env";
 import { createGatewayWriter, createImportantOnlyWriter, createLlmBreaker } from "./llm/gatewayWriter";
 import { logChatError } from "./log";
@@ -22,8 +23,8 @@ const llmBreaker = createLlmBreaker();
 
 /**
  * Escritores del procesador. El local es siempre la reserva. Si el LLM está activo y bien
- * configurado (`CHAT_LLM_ENABLED=true`, clave y modelo permitido), las intervenciones importantes
- * las escribe el LLM y el resto el local; si no, todo lo escribe el local.
+ * configurado (`CHAT_LLM_ENABLED=true`, clave y modelo permitido) y hay limitador global (Upstash), las
+ * intervenciones importantes las escribe el LLM y el resto el local; si no, todo lo escribe el local.
  */
 export function chatWriters(env: Readonly<Record<string, string | undefined>> = process.env): { writer: ChatWriter; fallbackWriter: ChatWriter } {
   const local = createLocalWriter(random);
@@ -33,11 +34,21 @@ export function chatWriters(env: Readonly<Record<string, string | undefined>> = 
     if (config.reason !== "off") logChatError("configuración del LLM", Object.assign(new Error(config.reason), { name: `LLM ${config.reason}` }));
     return { writer: local, fallbackWriter: local };
   }
+  // El LLM exige el limitador global de AI Gateway (Upstash), compartido con el selector de movimientos:
+  // sin él, todo lo escribe el local (falla cerrado).
+  const limiter = getGatewayLimiter(env);
+  if (!limiter) {
+    logChatError("configuración del LLM", Object.assign(new Error("sin_upstash"), { name: "LLM sin_upstash" }));
+    return { writer: local, fallbackWriter: local };
+  }
   const llm = createGatewayWriter({
     config,
     fetch: (...args) => fetch(...args),
     breaker: llmBreaker,
     onFailure: (error) => logChatError("escritor LLM", error),
+    acquire: async () => (await limiter.acquire({ consumer: "chat" })).kind === "allowed",
+    // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
+    onRateLimited: (durationMs) => limiter.reportRateLimited(durationMs),
   });
   return { writer: createImportantOnlyWriter(llm, local), fallbackWriter: local };
 }

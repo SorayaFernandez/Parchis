@@ -12,6 +12,10 @@
 //   (`consumeQuota`, 20 por partida en Upstash). Solo ahí: nunca al tirar, sin movimientos, con una sola
 //   opción ni sin selector. Si el cupo se ha agotado, no está disponible o falta, se usa la estrategia
 //   local sin consultar (falla cerrado). La consulta consumida cuenta aunque el modelo falle o tarde.
+// - Límite global (corrección de los 429): el mismo permiso incluye el límite global compartido con el
+//   chat (4 por minuto, 2 de movimientos) y el bloqueo tras un 429; si lo deniega, estrategia local sin
+//   consultar y sin gastar cupo. Si el proveedor responde 429, la consulta de la partida se devuelve una
+//   vez (`refund`); los errores de red, los timeouts y los 5xx no la devuelven.
 
 import { applyAction, getAvailableMoves, type GameAction, type GameState } from "@/lib/engine";
 import { decideAction, type RandomSource } from "@/lib/game/ai";
@@ -32,7 +36,9 @@ export type MoveFallbackReason =
   /** Ya se han hecho las 20 consultas de la partida (no se consulta). */
   | "cupo agotado"
   /** No se pudo confirmar el cupo (Redis falla, tarda o no está configurado): no se consulta. */
-  | "cupo no disponible";
+  | "cupo no disponible"
+  /** Límite global de llamadas al modelo (compartido con el chat) o bloqueo tras un 429: no se consulta. */
+  | "límite global";
 
 export interface DecideWithSelectorDeps {
   rollDie: () => number;
@@ -80,6 +86,7 @@ export async function decideActionWithSelector(state: GameState, deps: DecideWit
     quota = { kind: "unavailable" };
   }
   if (quota.kind === "exhausted") return fallback("cupo agotado");
+  if (quota.kind === "rate_limited") return fallback("límite global");
   if (quota.kind !== "allowed") return fallback("cupo no disponible");
 
   // Las opciones (con sus simulaciones) se construyen solo cuando se va a consultar: agotado el cupo, la
@@ -94,7 +101,18 @@ export async function decideActionWithSelector(state: GameState, deps: DecideWit
   } catch {
     return fallback("excepción del selector");
   }
-  if (!selection.ok) return fallback("fallo del selector");
+  if (!selection.ok) {
+    // El proveedor no la atendió (429): se devuelve la consulta de la partida, una sola vez. El hueco de la
+    // ventana global no se devuelve. Red, timeout y 5xx no la devuelven (pudo procesarse).
+    if (selection.error.kind === "http" && selection.error.status === 429 && quota.refund) {
+      try {
+        await quota.refund();
+      } catch {
+        // Nunca impide avanzar.
+      }
+    }
+    return fallback("fallo del selector");
+  }
 
   // La elección debe ser exactamente una opción de ESTA decisión (identificador y ficha juntos).
   const option = decision.options.find((o) => o.id === selection.id && o.pieceIndex === selection.pieceIndex);

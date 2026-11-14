@@ -926,3 +926,48 @@ describe("final de la partida: el servicio pasa el estado real al validador", ()
     expect(local.write.mock.calls[0][0]).not.toHaveProperty("gameStatus");
   });
 });
+
+describe("limitador global de AI Gateway (compartido con el selector de movimientos)", () => {
+  const ok = () => completion("¡A casa, Chispa! Hoy no se me escapa nadie.");
+
+  it("pide permiso justo antes de enviar: concedido → se llama; denegado → no se llama y falla con cooldown", async () => {
+    const allowed = vi.fn(async () => true);
+    const f1 = fakeFetch(ok);
+    const w1 = createGatewayWriter({ config, fetch: f1.fetch, breaker: createLlmBreaker(), acquire: allowed });
+    expect(await w1.write(request())).toMatchObject({ source: "llm" });
+    expect(allowed).toHaveBeenCalledTimes(1);
+    expect(f1.calls).toHaveLength(1);
+
+    for (const acquire of [vi.fn(async () => false), vi.fn(async () => { throw new Error("redis"); })]) {
+      const f = fakeFetch(ok);
+      const w = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), acquire });
+      await expect(w.write(request())).rejects.toMatchObject({ kind: "cooldown" });
+      expect(f.calls).toHaveLength(0);
+    }
+  });
+
+  it("con la petición ya cancelada no pide permiso (no gasta hueco); con el corte local activo, tampoco", async () => {
+    const acquire = vi.fn(async () => true);
+    const f = fakeFetch(ok);
+    const w = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), acquire });
+    await expect(w.write(request({ signal: AbortSignal.abort() }))).rejects.toMatchObject({ kind: "aborted" });
+    const blocked = createGatewayWriter({ config, fetch: f.fetch, breaker: { blockedUntil: Number.MAX_SAFE_INTEGER }, acquire });
+    await expect(blocked.write(request())).rejects.toMatchObject({ kind: "cooldown" });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it("429: avisa del bloqueo global con su Retry-After (o 60 s); otros errores no", async () => {
+    for (const [response, expected] of [
+      [() => new Response("{}", { status: 429, headers: { "Retry-After": "40" } }), [40_000]],
+      [() => new Response("{}", { status: 429 }), [CHAT_LLM.rateLimitCooldownMs]],
+      [() => new Response("{}", { status: 503 }), []],
+      [() => new Response("{}", { status: 400 }), []],
+    ] as const) {
+      const onRateLimited = vi.fn(async (_ms: number) => {});
+      const w = createGatewayWriter({ config, fetch: fakeFetch(response).fetch, breaker: createLlmBreaker(), acquire: async () => true, onRateLimited });
+      await expect(w.write(request())).rejects.toMatchObject({ kind: "http" });
+      expect(onRateLimited.mock.calls.map(([ms]) => ms)).toEqual(expected);
+    }
+  });
+});
