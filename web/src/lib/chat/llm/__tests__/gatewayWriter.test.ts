@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyAction, createGame, type GameEvent } from "@/lib/engine";
 import { createSeededRandom, decideAction } from "@/lib/game/ai";
-import { CHARACTER_IDS } from "@/lib/game/characters";
+import { CHARACTERS, CHARACTER_IDS } from "@/lib/game/characters";
 import { CHAT_LIMITS, CHAT_LLM } from "../../config";
 import type { Utterance } from "../../director";
 import { drainChat, type ChatDeps } from "../../service";
@@ -1029,6 +1029,37 @@ describe("integración: dirección de la captura y el propio nombre (conversaci�
       const own = row.character_id === "ai-purple" ? "Don Ernesto" : "Abuela Pilar";
       expect(row.text, row.text).not.toContain(own);
     }
+    expect(memory.queue).toEqual([]);
+  });
+});
+
+describe("integración: una respuesta a una captura que habla de otra cosa (partida real)", () => {
+  it("si el LLM responde «Tengo otra en meta, qué suerte.», se publican las frases locales de captura, con la réplica enlazada a su mensaje", async () => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Tengo otra en meta, qué suerte." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const localWrite = vi.fn(createLocalWriter(createSeededRandom(1)).write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    // Azar 0: hablan los dos (mensaje de Brava y réplica de Abuela Pilar).
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Brava le come una ficha a Abuela Pilar.
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-pink", victimId: "ai-green", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    expect(memory.rows).toHaveLength(2);
+    const [main, reply] = memory.rows;
+    for (const failure of failures) expect(failure).toMatchObject({ kind: "invalid_response", message: "no responde a la captura" });
+    // Mensaje de Brava (quien captura) y réplica de Pilar (quien pierde la ficha), enlazada al mensaje.
+    expect(main).toMatchObject({ character_id: "ai-pink", trigger: "capture", seq: 0, reply_to_seq: null, source: "local" });
+    expect(reply).toMatchObject({ character_id: "ai-green", trigger: "capture", seq: 1, reply_to_seq: 0, source: "local" });
+    // Las frases locales son de captura (de su tipo y su papel), nunca de la meta.
+    const rendered = (id: string, kind: "capture_boast" | "capture_lament", rival: string) =>
+      CHARACTERS.find((c) => c.id === id)!.chat.lines[kind].map((l) => l.replaceAll("{rival}", rival));
+    expect(rendered("ai-pink", "capture_boast", "Abuela Pilar")).toContain(main.text);
+    expect(rendered("ai-green", "capture_lament", "Brava")).toContain(reply.text);
+    for (const row of memory.rows) expect(row.text).not.toMatch(/meta/i);
     expect(memory.queue).toEqual([]);
   });
 });

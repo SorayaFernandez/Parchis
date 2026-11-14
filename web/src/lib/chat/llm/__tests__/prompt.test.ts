@@ -88,7 +88,7 @@ describe("buildChatPrompt", () => {
       const [system] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival })));
       expect(system.content).toContain("Una sola frase corta en español");
       expect(system.content).toContain("Habla en primera persona");
-      expect(system.content).toContain(`Si nombras a alguien, solo a ${CHARACTERS.find((x) => x.id === rival)!.name}, con el nombre completo; a ti no te nombres.`);
+      expect(system.content).toContain(`Si nombras a alguien, solo a ${CHARACTERS.find((x) => x.id === rival)!.name} (nombre completo), nunca a ti.`);
       expect(system.content).not.toContain(`a ti (${c.name})`);
       expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
       expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso.");
@@ -130,9 +130,9 @@ describe("buildChatPrompt", () => {
 
   it("papeles explícitos: quién captura y quién pierde la ficha, también en las rachas y la victoria ajena", () => {
     const [, boast] = buildChatPrompt(request(utterance("ai-pink", "capture_boast", { rival: "ai-blue" })));
-    expect(boast.content).toContain("Tú capturas y Chispa pierde la ficha: dilo desde tu lado («te comí», «he comido tu ficha»); no te lamentes ni digas que la mala suerte es tuya.");
+    expect(boast.content).toContain("Tú capturas y Chispa pierde la ficha. Habla solo de eso, desde tu lado («te comí», «he comido tu ficha»); no te lamentes ni digas que la mala suerte es tuya.");
     const [, lament] = buildChatPrompt(request(utterance("ai-blue", "capture_lament", { rival: "ai-pink" })));
-    expect(lament.content).toContain("Tú pierdes la ficha y Brava la captura: dilo desde tu lado («me comiste», «me has comido una ficha»); no presumas ni digas que la mala suerte es de Brava.");
+    expect(lament.content).toContain("Tú pierdes la ficha y Brava la captura. Habla solo de eso, desde tu lado («me comiste», «me has comido una ficha»); no presumas ni digas que la mala suerte es de Brava.");
     const [, hunted] = buildChatPrompt(request(utterance("ai-green", "streak_lament", { rival: "ai-blue", streak: { count: 2, consecutive: true } })));
     expect(hunted.content).toContain("Te han capturado dos veces seguidas. Tú pierdes la ficha y Chispa la captura");
     const [, reply] = buildChatPrompt(request(utterance("ai-purple", "victory_reply", { rival: "ai-pink" })));
@@ -370,12 +370,12 @@ describe("captura: la forma correcta desde el lado de quien habla, sin nombrarse
 
   it("quien captura recibe «te comí» y quien pierde la ficha «me comiste»; Don Ernesto, las formas de usted", () => {
     const [, boast] = promptFor("ai-green", "ai-purple", "capture_boast");
-    expect(boast.content).toContain("Tú capturas y Don Ernesto pierde la ficha: dilo desde tu lado («te comí», «he comido tu ficha»)");
+    expect(boast.content).toContain("Tú capturas y Don Ernesto pierde la ficha. Habla solo de eso, desde tu lado («te comí», «he comido tu ficha»)");
     const [, lament] = promptFor("ai-purple", "ai-green", "capture_lament");
-    expect(lament.content).toContain("Tú pierdes la ficha y Abuela Pilar la captura: dilo desde tu lado («me ha comido una ficha»)");
+    expect(lament.content).toContain("Tú pierdes la ficha y Abuela Pilar la captura. Habla solo de eso, desde tu lado («me ha comido una ficha»)");
     expect(lament.content).not.toMatch(/«me comiste»|«te comí»/);
     const [, ernestoWins] = promptFor("ai-purple", "ai-green", "capture_boast");
-    expect(ernestoWins.content).toContain("dilo desde tu lado («le he comido una ficha», «he comido su ficha»)");
+    expect(ernestoWins.content).toContain("Habla solo de eso, desde tu lado («le he comido una ficha», «he comido su ficha»)");
   });
 
   it("la regla general ya no da a la vez las formas de los dos lados, y nadie recibe su propio nombre para nombrarse", () => {
@@ -383,8 +383,20 @@ describe("captura: la forma correcta desde el lado de quien habla, sin nombrarse
       const rival = CHARACTERS.find((x) => x.id !== c.id)!;
       const [system] = promptFor(c.id, rival.id, "capture_boast");
       expect(system.content).not.toContain("«te comí», «me comiste»");
-      expect(system.content).toContain(`Si nombras a alguien, solo a ${rival.name}, con el nombre completo; a ti no te nombres.`);
+      expect(system.content).toContain(`Si nombras a alguien, solo a ${rival.name} (nombre completo), nunca a ti.`);
       expect(system.content).not.toMatch(new RegExp(`nombra solo a ti|a ti \\(${c.name}\\)`));
     }
+  });
+});
+
+describe("captura: hablar solo de esa captura", () => {
+  it("la situación de una captura pide hablar solo de ella, desde el lado de quien habla, en mensajes y réplicas", () => {
+    const lament = buildChatPrompt({
+      utterance: { speaker: "ai-green", kind: "capture_lament", trigger: "capture", rival: "ai-pink", replyTo: 0, important: true },
+      recent: [{ speaker: "ai-pink", text: "Te he comido." }],
+      replyToText: "Te he comido.",
+    })[1].content;
+    expect(lament).toContain("Tú pierdes la ficha y Brava la captura. Habla solo de eso, desde tu lado («me comiste», «me has comido una ficha»)");
+    expect(lament).toContain("Respondes a lo que acaba de decir Brava: «Te he comido.»");
   });
 });

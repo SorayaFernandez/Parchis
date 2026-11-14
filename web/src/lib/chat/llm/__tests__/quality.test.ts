@@ -475,8 +475,8 @@ describe("cada regla nueva por separado", () => {
     const twice = factsOf([cap(10, "ai-blue", "ai-pink"), cap(20, "ai-blue", "ai-pink")], "ai-pink");
     expect(checkQuality(pairText, say("ai-pink", "ai-blue", { ...hunted(2, true), captures: twice }))).toBeNull();
     expect(checkQuality("¡3er captura, Chispa!", say("ai-pink", "ai-blue", streakOf(2, true)))?.term).toBe("cifra 3 (real 2)");
-    // Cifras que no son ordinales: «2 a casa», «de 1 a 3 casillas», «3 o 4 casillas», «la 2 de la meta».
-    for (const text of ["Con un 5 salgo y 2 a casa, Chispa.", "De 1 a 3 casillas me separan, Chispa.", "Me faltan 3 o 4 casillas, Chispa.", "La casilla 2 de la meta es mía, Chispa."]) {
+    // Cifras que no son ordinales: «2 a casa», «de 1 a 3 casillas», «3 o 4 casillas», «la casilla 2».
+    for (const text of ["Con un 5 salgo y 2 a casa, Chispa.", "De 1 a 3 casillas me separan, Chispa.", "Me faltan 3 o 4 casillas, Chispa.", "La casilla 2 es mía, Chispa."]) {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toBeNull();
     }
     // «1ª vez» y «primera vez» no cuentan capturas.
@@ -501,8 +501,8 @@ describe("cada regla nueva por separado", () => {
 
   it("D: no rechaza números que no hablan de capturas", () => {
     for (const text of [
-      "Me faltan cinco casillas para la meta, Chispa.",
-      "Con un 5 salgo de casa, ya verás, Chispa.",
+      "Cinco casillas más y estoy a salvo, Chispa.",
+      "Con un 5 me vengo, ya verás, Chispa.",
       "Dos fichas en casa y todavía sonrío, Chispa.",
       "Una vez más, a casa esa ficha, Chispa.",
       "Otra vez tú, Chispa. Qué manía.",
@@ -807,7 +807,7 @@ describe("cada regla nueva por separado", () => {
       expect(checkQuality("Me has mandado dos de mis fichas a casa, Brava.", one)).toEqual(unsupported("cifra 2 (real 1, del rival a quien habla)"));
       const three = at(CHISPA, BRAVA, [cap(10, BRAVA, CHISPA), cap(20, BRAVA, CHISPA), cap(30, BRAVA, CHISPA)], { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 });
       expect(checkQuality("Me has comido tres fichas, Brava.", three)).toBeNull();
-      for (const text of ["Me quedan dos fichas en casa, Brava.", "Llevo dos fichas en la meta, Brava.", "Tengo tres fichas fuera, Brava."]) {
+      for (const text of ["Me quedan dos fichas en casa, Brava.", "Llevo dos fichas en el pasillo, Brava.", "Tengo tres fichas fuera, Brava."]) {
         expect(checkQuality(text, one), text).toBeNull();
       }
     });
@@ -826,7 +826,7 @@ describe("cada regla nueva por separado", () => {
       expect(checkQuality("Llevas cinco y no paras, Brava.", active())).toEqual(unsupported("cifra 5 (real 3, hechas por el rival)"));
       expect(checkQuality("Ya van dos, Chispa.", say(BRAVA, CHISPA, { kind: "victory_reply", trigger: "victory", replyTo: 0 }))).toEqual(unsupported("cifra 2 (real sin racha)"));
       // Números incidentales: con sustantivo detrás, otras cosas u otras horas, no son cifras de capturas.
-      for (const text of ["Llevo dos fichas en la meta, Brava.", "Van dos fichas en casa, Brava.", "Ya son las tres, Brava.", "Con un 5 salgo, Brava."]) {
+      for (const text of ["Llevo dos fichas en el pasillo, Brava.", "Van dos fichas en casa, Brava.", "Ya son las tres, Brava.", "Con un 5 salgo, Brava."]) {
         expect(checkQuality(text, active()), text).toBeNull();
       }
     });
@@ -1743,5 +1743,103 @@ describe("disculpas de quien pierde la ficha: solo se rechazan si se atribuye la
     const log = [cap(5, "ai-blue", "ai-pink"), cap(8, "ai-blue", "ai-pink"), cap(10, "ai-pink", "ai-blue")];
     expect(checkQuality("Perdona, Brava, no tenía otra opción.", victimOf("ai-blue", "ai-pink", log))).toMatchObject({ reason: DIRECTION });
     expect(checkQuality("Perdona, Brava, pero la próxima es mía.", victimOf("ai-blue", "ai-pink", log))).toBeNull();
+  });
+});
+
+describe("partida real: «quitar» fichas, «de libro», distancias a la meta y respuestas que no hablan de la captura", () => {
+  const UNNATURAL = "expresión poco natural";
+  const OFF_TOPIC = "no responde a la captura";
+  const NAMES: Record<string, string> = { "ai-pink": "Brava", "ai-purple": "Don Ernesto", "ai-green": "Abuela Pilar", "ai-blue": "Chispa" };
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string, extra: Partial<Utterance> = {}) =>
+    say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker), ...extra });
+  const goal = (speaker: string) => say(speaker, null, { kind: "goal", trigger: "goal", important: false });
+
+  it("«Te la he quitado», «Me ha quitado una ficha» y variantes se rechazan; «comer» se acepta", () => {
+    expect(reject("Te la he quitado, Abuela Pilar.", capturer("ai-pink", "ai-green"))).toEqual({ reason: UNNATURAL, detail: "termino=quitar una ficha" });
+    expect(reject("Me ha quitado una ficha, Abuela Pilar.", victimOf("ai-purple", "ai-green"))).toEqual({ reason: UNNATURAL, detail: "termino=quitar una ficha" });
+    for (const text of ["Me han quitado una ficha, Brava.", "Te he quitado la ficha, Chispa.", "¡Te quité esa, Chispa!", "Me quitaste la ficha, Brava."]) {
+      expect(checkQuality(text, capturer("ai-pink", "ai-blue"))?.term, text).toBe("quitar una ficha");
+    }
+    expect(reject("Te he comido, Abuela Pilar.", capturer("ai-pink", "ai-green"))).toBeNull();
+    expect(reject("He comido tu ficha, Abuela Pilar.", capturer("ai-pink", "ai-green"))).toBeNull();
+    expect(reject("Me has comido una ficha, Brava.", victimOf("ai-blue", "ai-pink"))).toBeNull();
+    // Don Ernesto, de usted.
+    expect(reject("He comido su ficha, Abuela Pilar.", capturer("ai-purple", "ai-green"))).toBeNull();
+    expect(reject("Me ha comido una ficha, Abuela Pilar.", victimOf("ai-purple", "ai-green"))).toBeNull();
+  });
+
+  it("«Una captura de libro» y otras frases de comentarista se rechazan", () => {
+    expect(reject("Una captura de libro, Abuela Pilar.", capturer("ai-purple", "ai-green"))).toEqual({ reason: UNNATURAL, detail: "termino=de libro" });
+    expect(checkQuality("Jugada de manual, Chispa.", capturer("ai-pink", "ai-blue"))?.term).toBe("de libro");
+    expect(hasDiscardedExpression("Una captura de libro. Nada personal, Brava.")).toBe(true);
+  });
+
+  it("nadie anuncia cuántas casillas le quedan para la meta; celebrar que llega o que está cerca, sí", () => {
+    for (const text of ["Y ahora a la meta en seis.", "Me quedan cinco casillas.", "Estoy a tres de la meta.", "A dos casillas de la meta, ya casi.", "Me faltan 4 casillas para entrar.", "Con un seis, a la meta.", "Otro cinco y a la meta."]) {
+      expect(checkQuality(text, goal("ai-blue")), text).toEqual({ reason: "afirmación no respaldada", term: "distancia a la meta" });
+    }
+    for (const text of ["¡Una más en la meta!", "Ya casi estoy en la meta.", "¡Esta ficha está cerquísima de la meta!", "Llegué a la meta."]) {
+      expect(checkQuality(text, goal("ai-blue")), text).toBeNull();
+    }
+  });
+
+  it("caso real: Brava le come a Abuela Pilar y ella responde «Tengo otra en meta, qué suerte» → se rechaza", () => {
+    const reply = victimOf("ai-green", "ai-pink", { replyTo: 0 });
+    expect(reject("Tengo otra en meta, qué suerte.", reply)).toEqual({ reason: OFF_TOPIC, detail: "termino=meta" });
+    // Otros acontecimientos o buena suerte propia, tampoco.
+    expect(checkQuality("Ahora saco otra ficha de casa, Brava.", reply)).toEqual({ reason: OFF_TOPIC, term: "sacar ficha" });
+    expect(checkQuality("Qué suerte la mía, Brava.", reply)).toEqual({ reason: OFF_TOPIC, term: "buena suerte propia" });
+    expect(checkQuality("Estoy de suerte, Brava.", reply)).toEqual({ reason: OFF_TOPIC, term: "buena suerte propia" });
+    // Reacciones a la captura, con el carácter de Pilar: sí.
+    for (const text of ["Ay, Brava, me has comido una ficha.", "Qué mala suerte, Brava. Paciencia.", "¡Qué suerte tienes, Brava!", "Me has comido, Brava, pero esto no ha acabado."]) {
+      expect(reject(text, reply), text).toBeNull();
+    }
+  });
+
+  it("quien captura tampoco cambia de tema; sí puede celebrar su suerte", () => {
+    expect(checkQuality("Te comí, y ya tengo dos en meta, Chispa.", capturer("ai-pink", "ai-blue"))).toEqual({ reason: OFF_TOPIC, term: "meta" });
+    expect(checkQuality("¡Qué suerte! Te comí, Chispa.", capturer("ai-pink", "ai-blue"))).toBeNull();
+  });
+
+  it("en una captura simple, quien la pierde nombra a quien se la come (nada de «me han comido» impersonal); en una mala racha, sí", () => {
+    expect(checkQuality("Me han comido, qué rabia.", victimOf("ai-blue", "ai-pink"))).toEqual({ reason: OFF_TOPIC, term: "me han comido (impersonal)" });
+    const badStreak = say("ai-blue", "ai-pink", {
+      kind: "streak_lament",
+      trigger: "bad_streak",
+      captures: factsOf([cap(10, "ai-green", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-blue"),
+    });
+    expect(checkQuality("¡Me han comido otra vez! Qué día.", badStreak)?.reason).not.toBe(OFF_TOPIC);
+  });
+
+  it("fuera de las capturas no se comprueba el tema", () => {
+    expect(checkQuality("¡Una más en la meta!", goal("ai-green"))).toBeNull();
+  });
+
+  it("catálogo: ninguna frase con «quitar», «de libro» o distancias a la meta, y las de captura hablan de la captura", () => {
+    const kindTrigger: Record<string, ChatTrigger> = {
+      victory_win: "victory", victory_reply: "victory", capture_boast: "capture", capture_lament: "capture",
+      streak_boast: "capture_streak", streak_lament: "bad_streak", third_six_self: "third_six", third_six_tease: "third_six",
+      goal: "goal", finish_place: "finish_place", ambient_lead: "ambient", ambient_ahead: "ambient", ambient_behind: "ambient",
+    };
+    for (const c of CHARACTERS) {
+      const rival = Object.keys(NAMES).find((id) => id !== c.id)!;
+      for (const [kind, lines] of Object.entries(c.chat.lines)) {
+        for (const line of lines) {
+          expect(line, `${c.name}: ${line}`).not.toMatch(/de libro|de manual/i);
+          const text = line.replaceAll("{rival}", NAMES[rival]).replaceAll("{Count}", "Dos").replaceAll("{count}", "dos").replaceAll("{ritmo}", "seguidas");
+          const issue = checkQuality(text, say(c.id, rival, { kind: kind as Utterance["kind"], trigger: kindTrigger[kind] }));
+          expect(issue?.term, `${c.name}/${kind}: ${text}`).not.toBe("distancia a la meta");
+          expect(issue?.term, `${c.name}/${kind}: ${text}`).not.toBe("quitar una ficha");
+          expect(issue?.reason, `${c.name}/${kind}: ${text}`).not.toBe(OFF_TOPIC);
+        }
+      }
+    }
+    expect(CHARACTERS.find((c) => c.id === "ai-purple")!.chat.lines.capture_boast).toContain("He comido su ficha, {rival}. Nada personal.");
+    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.lines.capture_lament).toContain("¡Me has comido! Mal día para dejarme el amuleto, {rival}.");
+  });
+
+  it("el motivo nuevo está en la lista que se registra", () => {
+    expect(INVALID_RESPONSE_REASONS).toContain(OFF_TOPIC);
   });
 });

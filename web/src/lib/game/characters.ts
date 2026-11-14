@@ -292,7 +292,7 @@ export const CHARACTERS: readonly Character[] = [
         capture_boast: [
           "Previsible, {rival}. Ha dejado esa ficha sola.",
           "Lo siento, {rival}. Era la mejor jugada.",
-          "Una captura de libro. Nada personal, {rival}.",
+          "He comido su ficha, {rival}. Nada personal.",
           "{rival}, le recomiendo no dejar fichas sueltas.",
           "Me como su ficha, {rival}. Lo tenía calculado.",
         ],
@@ -519,7 +519,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         capture_lament: [
           "¡Noooo! {rival}, eso ha dolido.",
-          "¡Me han comido! Mal día para dejarme el amuleto, {rival}.",
+          "¡Me has comido! Mal día para dejarme el amuleto, {rival}.",
           "¡Qué jugada, {rival}! Bueno, para ti.",
           "Vale, {rival}, esta me la apunto.",
           "¡Qué mala pata! Bien visto, {rival}.",

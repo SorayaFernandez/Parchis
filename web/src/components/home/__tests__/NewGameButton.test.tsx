@@ -63,3 +63,11 @@ describe("portada", () => {
     expect(renderToStaticMarkup(<NewGameButton />)).toContain("Nueva partida");
   });
 });
+
+describe("portada: comentario de ejemplo de Abuela Pilar", () => {
+  it("muestra «Ay, Chispa, me has comido la ficha.» y no la frase antigua", async () => {
+    const html = renderToStaticMarkup(await Home());
+    expect(html).toContain("Ay, Chispa, me has comido la ficha.");
+    expect(html).not.toContain("No hay mal que por bien no venga");
+  });
+});
