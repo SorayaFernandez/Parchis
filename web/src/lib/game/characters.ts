@@ -223,7 +223,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Una dentro! Las demás van detrás.",
           "¡Meta! Esto va en serio.",
           "Una menos. Temblad.",
-          "¡Dentro! Y sin pedir permiso.",
+          "¡Otra en la meta! Esto marcha.",
         ],
         finish_place: [
           "¡Terminé! Y no me he rendido ni un momento.",
@@ -238,7 +238,7 @@ export const CHARACTERS: readonly Character[] = [
           "{rival}, ¿te espero? Te has quedado muy atrás.",
         ],
         ambient_ahead: [
-          "Sigo aquí, y con ganas.",
+          "Todavía no he terminado. ¡Queda partida!",
           "Sigo en la pelea. Ojo conmigo.",
           "¡Aquí no se rinde nadie! Y yo, menos.",
           "{rival}, espabila, que te estás quedando atrás.",
@@ -425,14 +425,14 @@ export const CHARACTERS: readonly Character[] = [
         streak_lament: [
           "Otra vez a casa… Ay, Señor, dame paciencia.",
           "¿Pero qué os he hecho yo, cariños? Ya van {count}.",
-          "{Count} veces a casita {ritmo}. Paciencia, Pilar.",
+          "{Count} veces a casita {ritmo}. Paciencia y buena cara.",
           "Ya van {count}… Esto me pasa por fiarme, {rival}.",
         ],
         third_six_self: [
           "Tres seises… Ay, la avaricia rompe el saco.",
           "Ya decía yo que tanta suerte no era normal.",
           "Bueno, turno perdido. Sin prisa.",
-          "Ay, qué disgusto. Paciencia, Pilar, paciencia.",
+          "Ay, qué disgusto. Paciencia, mucha paciencia.",
         ],
         third_six_tease: [
           "Las prisas nunca son buenas, {rival}.",

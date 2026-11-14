@@ -41,7 +41,7 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain("comentas en voz alta lo que acaba de pasar, como una persona más sentada a la mesa");
       expect(system.content).toContain("Sin saludos, explicaciones ni resumen de la jugada.");
       // Las demás reglas y el carácter del personaje se mantienen.
-      expect(system.content).toContain("Sin comillas, emojis ni tu nombre delante.");
+      expect(system.content).toContain("Sin comillas ni emojis.");
       expect(system.content).toMatch(/no inventes jugadas, cifras, posiciones ni rachas/);
       expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);
       expect(user.content.split("\n").at(-1)).toBe("Tu frase (una sola y corta):");
@@ -88,7 +88,8 @@ describe("buildChatPrompt", () => {
       const [system] = buildChatPrompt(request(utterance(c.id, "capture_boast", { rival })));
       expect(system.content).toContain("Una sola frase corta en español");
       expect(system.content).toContain("Habla en primera persona");
-      expect(system.content).toContain(`nombra solo a ti (${c.name}) y a ${CHARACTERS.find((x) => x.id === rival)!.name}, siempre con el nombre completo.`);
+      expect(system.content).toContain(`Si nombras a alguien, solo a ${CHARACTERS.find((x) => x.id === rival)!.name}, con el nombre completo; a ti no te nombres.`);
+      expect(system.content).not.toContain(`a ti (${c.name})`);
       expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
       expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso.");
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.");
@@ -101,7 +102,7 @@ describe("buildChatPrompt", () => {
     }
     // Sin rival (victoria), solo su propio nombre.
     const [win] = buildChatPrompt(request(utterance("ai-green", "victory_win", { rival: null })));
-    expect(win.content).toContain("nombra solo a ti (Abuela Pilar), siempre con el nombre completo.");
+    expect(win.content).toContain("Habla en primera persona. No te nombres.");
   });
 
   it("sin contradicciones: nadie es comentarista ni recibe deportes, retransmisiones, otros juegos ni «cree en las rachas»", () => {
@@ -129,9 +130,9 @@ describe("buildChatPrompt", () => {
 
   it("papeles explícitos: quién captura y quién pierde la ficha, también en las rachas y la victoria ajena", () => {
     const [, boast] = buildChatPrompt(request(utterance("ai-pink", "capture_boast", { rival: "ai-blue" })));
-    expect(boast.content).toContain("Tú capturas y Chispa pierde la ficha: no te lamentes ni digas que la mala suerte es tuya.");
+    expect(boast.content).toContain("Tú capturas y Chispa pierde la ficha: dilo desde tu lado («te comí», «he comido tu ficha»); no te lamentes ni digas que la mala suerte es tuya.");
     const [, lament] = buildChatPrompt(request(utterance("ai-blue", "capture_lament", { rival: "ai-pink" })));
-    expect(lament.content).toContain("Tú pierdes la ficha y Brava la captura: no presumas ni digas que la mala suerte es de Brava.");
+    expect(lament.content).toContain("Tú pierdes la ficha y Brava la captura: dilo desde tu lado («me comiste», «me has comido una ficha»); no presumas ni digas que la mala suerte es de Brava.");
     const [, hunted] = buildChatPrompt(request(utterance("ai-green", "streak_lament", { rival: "ai-blue", streak: { count: 2, consecutive: true } })));
     expect(hunted.content).toContain("Te han capturado dos veces seguidas. Tú pierdes la ficha y Chispa la captura");
     const [, reply] = buildChatPrompt(request(utterance("ai-purple", "victory_reply", { rival: "ai-pink" })));
@@ -360,5 +361,30 @@ describe("frases citadas: contexto, no modelo de estilo", () => {
     const [, user] = buildChatPrompt(request(capture, { recent }));
     expect(user.content).toContain("Ya has dicho hace poco (no lo repitas): «Dos» «Cuatro»");
     expect(user.content).toContain("No repitas estas frases recientes: «Tres» «Cinco»");
+  });
+});
+
+describe("captura: la forma correcta desde el lado de quien habla, sin nombrarse a sí mismo", () => {
+  const promptFor = (speaker: string, rival: string, kind: "capture_boast" | "capture_lament") =>
+    buildChatPrompt({ utterance: { speaker, kind, trigger: "capture", rival, replyTo: null, important: true }, recent: [], replyToText: null });
+
+  it("quien captura recibe «te comí» y quien pierde la ficha «me comiste»; Don Ernesto, las formas de usted", () => {
+    const [, boast] = promptFor("ai-green", "ai-purple", "capture_boast");
+    expect(boast.content).toContain("Tú capturas y Don Ernesto pierde la ficha: dilo desde tu lado («te comí», «he comido tu ficha»)");
+    const [, lament] = promptFor("ai-purple", "ai-green", "capture_lament");
+    expect(lament.content).toContain("Tú pierdes la ficha y Abuela Pilar la captura: dilo desde tu lado («me ha comido una ficha»)");
+    expect(lament.content).not.toMatch(/«me comiste»|«te comí»/);
+    const [, ernestoWins] = promptFor("ai-purple", "ai-green", "capture_boast");
+    expect(ernestoWins.content).toContain("dilo desde tu lado («le he comido una ficha», «he comido su ficha»)");
+  });
+
+  it("la regla general ya no da a la vez las formas de los dos lados, y nadie recibe su propio nombre para nombrarse", () => {
+    for (const c of CHARACTERS) {
+      const rival = CHARACTERS.find((x) => x.id !== c.id)!;
+      const [system] = promptFor(c.id, rival.id, "capture_boast");
+      expect(system.content).not.toContain("«te comí», «me comiste»");
+      expect(system.content).toContain(`Si nombras a alguien, solo a ${rival.name}, con el nombre completo; a ti no te nombres.`);
+      expect(system.content).not.toMatch(new RegExp(`nombra solo a ti|a ti \\(${c.name}\\)`));
+    }
   });
 });

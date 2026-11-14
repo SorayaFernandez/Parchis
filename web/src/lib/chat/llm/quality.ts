@@ -29,6 +29,8 @@ export const QUALITY_REASONS = [
   "demasiadas frases",
   "no concuerda el género del destinatario",
   "expresión poco natural",
+  "se dirige a sí mismo",
+  "contradice quién captura",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -283,6 +285,21 @@ const SELF_NAMES: Readonly<Record<string, readonly string[]>> = {
   "ai-green": ["abuela pilar", "pilar"],
   "ai-blue": ["chispa"],
 };
+/**
+ * El propio nombre (o alias) como destinatario: un vocativo al principio de la frase o entre signos
+ * («He comido su ficha, Don Ernesto.», «Pues nada, Don Ernesto, …», «Chispa, ¡qué suerte!» dicho por
+ * Chispa). Nadie se habla a sí mismo: se nombra, si acaso, al rival. «¡Gol de Chispa!» o «Soy Brava» no
+ * son vocativos.
+ */
+function checkSelfAddress(text: string, speaker: string): QualityIssue | null {
+  const t = normalize(text);
+  for (const name of SELF_NAMES[speaker] ?? []) {
+    const re = new RegExp(String.raw`(?:^|[,;:.!?¡¿…—-])\s*(?:(?:oye|mira|ay|venga|pues|pues nada|vamos)\s*,?\s*)?${name.replace(/\s+/g, "\\s+")}\s*(?:[,;:.!?…—-]|$)`, "u");
+    if (re.test(t)) return { reason: "se dirige a sí mismo", term: name };
+  }
+  return null;
+}
+
 /**
  * Verbos y partículas en tercera persona que, justo después del propio nombre, forman una frase sobre
  * sí mismo («Chispa ha caído», «Brava nunca falla»). Solo construcciones inequívocas.
@@ -990,6 +1007,9 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   },
   { term: "contratiempo", re: /(?<![\p{L}])contratiempos?(?![\p{L}])/u },
   { term: "en cabeza", re: /(?<![\p{L}])en\s+cabeza(?![\p{L}])/u },
+  // Giros artificiales retirados del catálogo: «Sigo aquí, y con ganas.» y «¡Dentro! Y sin pedir permiso.».
+  { term: "sigo aquí y con ganas", re: /(?<![\p{L}])sigo\s+aqui\s*,?\s+y\s+con\s+ganas(?![\p{L}])/u },
+  { term: "sin pedir permiso", re: /(?<![\p{L}])sin\s+pedir(?:le|les)?\s+permiso(?![\p{L}])/u },
 ];
 /**
  * «Tirarse un número» («me tiré un cuatro», «se tiró un seis»): no es como se dice. Lo natural es «he
@@ -1024,6 +1044,73 @@ function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue
   const ordinal = ORDINAL_GOAL.exec(t);
   if (ordinal) return { reason: "afirmación no respaldada", term: `objetivo ${ordinal[1]}` };
   return null;
+}
+
+// ── Dirección de la captura ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Quien habla y su papel en la captura de ESTA versión salen de los datos reales del evento: los hechos
+ * de captura (`captures.selfRole`, en mensajes y réplicas) o, si faltan, el tipo de intervención (las de
+ * quien captura son `capture_boast` y `streak_boast`; las de quien la pierde, `capture_lament` y
+ * `streak_lament`). Fuera de capturas y rachas no hay dirección que comprobar.
+ */
+function captureRole(request: ChatWriteRequest): "by" | "victim" | null {
+  const { utterance } = request;
+  if (!["capture", "capture_streak", "bad_streak"].includes(utterance.trigger)) return null;
+  if (utterance.captures) return utterance.captures.selfRole;
+  if (utterance.kind === "capture_boast" || utterance.kind === "streak_boast") return "by";
+  if (utterance.kind === "capture_lament" || utterance.kind === "streak_lament") return "victim";
+  return null;
+}
+
+/** Quien habla PIERDE la ficha: «me comiste», «me has comido», «me ha comido usted», «X se come mi ficha». */
+const SPEAKER_LOST: readonly RegExp[] = [
+  /(?<![\p{L}])me\s+(?:(?:has|ha|habeis|han)\s+)?(?:comid[oa]|comiste|comio|comisteis|comieron|comes|come|comeis|comen|pillad[oa]|pillaste|pillo|pillas|pilla|cazad[oa]|cazaste|cazo|cazas|caza|capturad[oa]|capturaste|capturo|capturas|captura|mandad[oa]|mandaste|mando)(?![\p{L}])/u,
+  /(?<![\p{L}])(?:(?:se\s+)?(?:(?:has|ha|han)\s+)?(?:comid[oa]|comiste|comio|come|comes)|se\s+(?:ha\s+)?(?:llevado|lleva))\s+(?:a\s+)?mi\s+ficha(?![\p{L}])/u,
+];
+/** Quien habla CAPTURA: «te comí», «le he comido», «he comido tu/su ficha», «me como tu ficha». */
+const SPEAKER_CAPTURED: readonly RegExp[] = [
+  /(?<![\p{L}])(?:te|le|os|les)\s+(?:(?:he|hemos)\s+)?(?:comi|comido|como|pille|pillado|cace|cazado|capture|capturado|mande|mandado)(?![\p{L}])/u,
+  /(?<![\p{L}])(?:(?:me\s+)?(?:he|hemos)\s+comido|(?:me\s+)?comi|me\s+como)\s+(?:a\s+)?(?:tu|su|vuestra)\s+ficha(?![\p{L}])/u,
+];
+/** Disculpas («lo siento», «perdona», «disculpe»…). Por sí solas no contradicen a nadie: ver `CAPTURE_EXCUSE`. */
+const APOLOGY = /(?<![\p{L}])(?:lo\s+siento|perdon|perdona|perdone|disculpa|disculpe)(?![\p{L}])/u;
+/**
+ * Justificaciones de quien ha decidido la captura: «era la mejor jugada», «no tenía otra opción», «tenía
+ * que hacerlo», «nada personal», «no me lo tengas en cuenta». Junto a una disculpa, atribuyen a quien habla
+ * la decisión de capturar («Lo siento, Abuela Pilar. Era la mejor jugada»). Sin disculpa son ambiguas
+ * («Era la mejor jugada» puede ser un elogio al rival), así que solas no cuentan.
+ */
+const CAPTURE_EXCUSE =
+  /(?<![\p{L}])(?:(?:era|fue|es)\s+(?:la|mi)\s+(?:mejor|unica)\s+(?:jugada|opcion|salida)|no\s+(?:tenia|tuve|habia|hubo|me\s+quedaba)\s+(?:otra|otra\s+opcion|mas\s+remedio|alternativa|eleccion)|(?:tenia|tuve)\s+que\s+hacerlo|(?:nada|no\s+es|no\s+era)\s+personal|no\s+me\s+lo\s+(?:tengas|tenga|tengais)\s+en\s+cuenta|no\s+podia\s+dejarla?\s+pasar|estaba\s+a\s+tiro)(?![\p{L}])/u;
+
+/**
+ * La frase debe hablar desde el lado de quien habla en la captura de ESTA versión. Si captura, no puede
+ * decir que le han comido ni contar la captura al revés; si la pierde, no puede decir que ha comido al
+ * rival, ni disculparse justificando una captura que no ha hecho (`CAPTURE_EXCUSE`); una disculpa natural
+ * («Perdona, pero la próxima es mía», «Lo siento, hoy no hay suerte») sí vale. No mira el historial: una
+ * frase sobre esta captura con la dirección cambiada se rechaza aunque antes hubiera capturas en el otro
+ * sentido (así no se confunde quién comió a quién).
+ */
+function checkCaptureDirection(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const role = captureRole(request);
+  if (!role) return null;
+  const t = normalize(text);
+  if (role === "by") {
+    for (const re of SPEAKER_LOST) {
+      const match = re.exec(t);
+      if (match) return { reason: "contradice quién captura", term: `pierde la ficha: ${match[0].replace(/\s+/g, " ")}` };
+    }
+    return null;
+  }
+  for (const re of SPEAKER_CAPTURED) {
+    const match = re.exec(t);
+    if (match) return { reason: "contradice quién captura", term: `captura: ${match[0].replace(/\s+/g, " ")}` };
+  }
+  // Disculparse solo contradice el evento si además se justifica una captura (la decisión es del rival).
+  const apology = APOLOGY.exec(t);
+  const excuse = apology ? CAPTURE_EXCUSE.exec(t) : null;
+  return excuse ? { reason: "contradice quién captura", term: `disculpa de quien captura: ${excuse[0].replace(/\s+/g, " ")}` } : null;
 }
 
 // ── Capturas repetidas ────────────────────────────────────────────────────────────────────────────
@@ -1161,7 +1248,10 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkGameTalk(text, request) ??
     checkRepeatedCapture(text, request) ??
     checkNaturalness(text, request) ??
-    checkDiminutives(text, request)
+    checkDiminutives(text, request) ??
+    // Las últimas: no cambian el diagnóstico de ninguna regla anterior.
+    checkSelfAddress(text, request.utterance.speaker) ??
+    checkCaptureDirection(text, request)
   );
 }
 

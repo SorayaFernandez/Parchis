@@ -35,13 +35,28 @@ describe("NewGameButtonView", () => {
 });
 
 describe("portada", () => {
-  it("muestra «Nueva partida» y mantiene el acceso al tablero de demostración", () => {
-    const html = renderToStaticMarkup(<Home />);
+  it("muestra «Nueva partida» y mantiene el acceso al tablero de demostración", async () => {
+    const html = renderToStaticMarkup(await Home());
     expect(html).toMatch(/<button[^>]*>Nueva partida<\/button>/);
     expect(html).toContain('href="/tablero"');
-    expect(html).toContain("Ver el tablero (demo)");
-    // Sin registro, login ni participación humana.
-    expect(html).not.toMatch(/iniciar sesión|registr|login|<input/i);
+    expect(html).toContain("Ver una partida de demostración");
+    // Sin registro, login ni participación humana (el «Sin registro» informa de que no hace falta).
+    expect(html).not.toMatch(/iniciar sesión|registrarse|login|<input/i);
+  });
+
+  it("presenta un juego terminado: sin «En construcción», con los cuatro personajes y solo enlaces que funcionan", async () => {
+    const html = renderToStaticMarkup(await Home());
+    expect(html).not.toMatch(/en construcción|próximamente|beta/i);
+    for (const name of ["Brava", "Don Ernesto", "Abuela Pilar", "Chispa"]) expect(html).toContain(name);
+    for (const tagline of ["Agresiva y competitiva", "Estratega y calculador", "Prudente y entrañable", "Imprevisible y divertido"]) expect(html).toContain(tagline);
+    expect(html).toContain("Ellos juegan. Tú miras.");
+    // Las dos llamadas a la acción, arriba y al final: la partida real (botón) y la demostración (/tablero).
+    expect(html.match(/<button[^>]*>Nueva partida<\/button>/g)).toHaveLength(2);
+    const hrefs = [...html.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(hrefs)).toEqual(new Set(["/tablero"]));
+    // El tablero real con fichas de una partida a mitad de juego.
+    expect(html).toContain('aria-label="Tablero de Parchís"');
+    expect(html.match(/<title>Ficha /g)).toHaveLength(16);
   });
 
   it("NewGameButton se puede renderizar en el servidor (estado inicial)", () => {
