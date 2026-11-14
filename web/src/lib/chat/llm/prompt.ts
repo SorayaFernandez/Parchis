@@ -7,6 +7,7 @@ import { CHARACTER_NAMES, getCharacter, type ChatLineKind } from "@/lib/game/cha
 import { CHAT_LLM } from "../config";
 import type { StreakFacts, Utterance } from "../director";
 import { countWord, type ChatWriteRequest } from "../writer";
+import { hasDiscardedExpression } from "./quality";
 
 export interface PromptMessage {
   role: "system" | "user";
@@ -139,11 +140,12 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     `- Una sola frase corta en español: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres. Sin saludos, explicaciones ni resumen de la jugada.`,
     "- Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones ni frases solemnes; no hace falta ser gracioso.",
     "- Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.",
+    "- Di claro qué ha pasado («te comí», «me comiste», «te comió»). Sin preguntas retóricas, peticiones al dado ni «voy primero».",
     `- Habla en primera persona y nombra solo ${names}, siempre con el nombre completo.${grandma} Sin comillas, emojis ni tu nombre delante.`,
     gender,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
     "- Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.",
-    "- No repitas frases ni muletillas que ya hayas dicho. Puedes picar o bromear, pero sin insultos ni comentarios sobre que eres una IA.",
+    "- No repitas frases ni muletillas que ya hayas dicho. Lo citado no es un modelo: mandan estas reglas. Puedes picar o bromear, pero sin insultos ni comentarios sobre que eres una IA.",
   ].join("\n");
 
   const lines = [`Situación: ${situation(utterance)}`];
@@ -152,10 +154,14 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     const author = utterance.rival ? nameOf(utterance.rival) : null;
     lines.push(author ? `Respondes a lo que acaba de decir ${author}: «${clip(request.replyToText)}»` : `Respondes a este mensaje: «${clip(request.replyToText)}»`);
   }
-  const own = request.recent.filter((r) => r.speaker === utterance.speaker).slice(-CHAT_LLM.ownRecentTexts);
+  // Las frases recientes que se piden no repetir, sin las que contengan una expresión descartada (de una
+  // partida empezada antes de una corrección): no deben servir de modelo de estilo, y el validador las
+  // rechazaría igualmente. El mensaje al que se responde se mantiene (hace falta para responder).
+  const quotable = request.recent.filter((r) => !hasDiscardedExpression(r.text));
+  const own = quotable.filter((r) => r.speaker === utterance.speaker).slice(-CHAT_LLM.ownRecentTexts);
   if (own.length > 0) lines.push(`Ya has dicho hace poco (no lo repitas): ${own.map((r) => `«${clip(r.text)}»`).join(" ")}`);
   // Los textos recientes de los demás (los propios ya van arriba), para no repetirlos.
-  const recent = request.recent.slice(-CHAT_LLM.recentTexts).filter((r) => !own.includes(r));
+  const recent = quotable.slice(-CHAT_LLM.recentTexts).filter((r) => !own.includes(r));
   if (recent.length > 0) lines.push(`No repitas estas frases recientes: ${recent.map((r) => `«${clip(r.text)}»`).join(" ")}`);
   lines.push("Tu frase (una sola y corta):");
 

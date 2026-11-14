@@ -28,6 +28,7 @@ export const QUALITY_REASONS = [
   "habla de sí mismo en tercera persona",
   "demasiadas frases",
   "no concuerda el género del destinatario",
+  "expresión poco natural",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -930,6 +931,95 @@ function checkGameOverClaim(text: string, request: ChatWriteRequest): QualityIss
   return GAME_OVER.test(normalize(text)) ? { reason: "afirmación no respaldada", term: "fin de la partida" } : null;
 }
 
+// ── Naturalidad: expresiones artificiales vistas en Preview ──────────────────────────────────────────
+
+/**
+ * Pedirle algo al dado como si alguien pudiera dárselo («¡Dadme ese seis, por favor!», «dame un seis»),
+ * sin tildes, tras `normalize`.
+ */
+const DICE_REQUEST = [
+  /(?<![\p{L}])(?:dadme|dame|deme|denme|dadnos|danos)\s+(?:un|ese|el|otro|algun)\s+(?:seis|cinco|uno|dos|tres|cuatro)(?![\p{L}])/u,
+  /(?:seis|cinco|dado)[^.!?…]*por\s+favor|por\s+favor[^.!?…]*(?:seis|cinco|dado)/u,
+];
+/**
+ * Expresiones que no son naturales para lo que pasa en el parchís: «golpe» (salvo «de golpe» y «golpe de
+ * suerte», que sí lo son) y «da sus frutos».
+ */
+const UNNATURAL: readonly { term: string; re: RegExp }[] = [
+  { term: "golpe", re: /(?<![\p{L}])(?<!de\s)golpes?(?![\p{L}])(?!\s+de\s+suerte)/u },
+  { term: "da sus frutos", re: /(?<![\p{L}])(?:da|dan|dar|dio|dieron|ha\s+dado|han\s+dado)\s+sus\s+frutos(?![\p{L}])/u },
+];
+/** En una captura, «no me la quites» no tiene sentido: la ficha ya se ha perdido (o es la que se come). */
+const KEEP_IT = /(?<![\p{L}])no\s+me\s+la\s+quites(?![\p{L}])/u;
+/**
+ * Objetivo con un ordinal y sin sustantivo («¡Vamos por la quinta!», «a por la tercera»): supone un recuento
+ * de capturas que no está en los datos. Con sustantivo («la tercera vez», «la segunda captura») ya lo
+ * comprueba `checkCountClaims`.
+ */
+const ORDINAL_GOAL = new RegExp(
+  `(?<![\\p{L}])(?:a\\s+)?por\\s+la\\s+(${Object.keys(ORDINALS).filter((o) => o.endsWith("a")).join("|")})(?![\\p{L}])(?!\\s+(?:vez|captura|ficha))`,
+  "u",
+);
+
+/**
+ * Naturalidad (regla nueva tras la partida de Preview con «¡Dadme ese seis, por favor!», «Otro golpe,
+ * Chispa», «¡Vamos por la quinta!» y «¡Mía! No me la quites»): se rechaza pedirle algo al dado, «golpe» y
+ * «da sus frutos», y «no me la quites» en una captura (`expresión poco natural`); y un objetivo con un
+ * ordinal sin respaldo (`afirmación no respaldada`). Va la última del conjunto: no cambia el motivo de
+ * ningún rechazo anterior.
+ */
+function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const t = normalize(text);
+  if (DICE_REQUEST.some((re) => re.test(t))) return { reason: "expresión poco natural", term: "petición al dado" };
+  for (const { term, re } of UNNATURAL) if (re.test(t)) return { reason: "expresión poco natural", term };
+  if (CAPTURE_TRIGGERS.has(request.utterance.trigger) && KEEP_IT.test(t)) return { reason: "expresión poco natural", term: "no me la quites" };
+  const ordinal = ORDINAL_GOAL.exec(t);
+  if (ordinal) return { reason: "afirmación no respaldada", term: `objetivo ${ordinal[1]}` };
+  return null;
+}
+
+// ── Expresiones descartadas (para no citarlas en el prompt) ─────────────────────────────────────────
+
+/**
+ * Expresiones artificiales que se han quitado del catálogo o que se vieron en las pruebas (sin tildes, tras
+ * `normalize`). El validador ya rechaza las que puede escribir el LLM; esta lista sirve para que tampoco
+ * lleguen al prompt como frase citada (ver `hasDiscardedExpression`).
+ */
+const DISCARDED_EXPRESSIONS = [
+  "sin frenar",
+  "no pienso aflojar",
+  "quien me sigue",
+  "esto es todo lo que teneis",
+  "presion constante",
+  "que tiemble el tablero",
+  "captura ejecutada",
+  "contratiempo tactico",
+  "eficacia demostrada",
+  "estoy recalculando",
+  "necesitas un mapa",
+  "aqui hay partido",
+  "sin querer queriendo",
+  "señores",
+  "en directo",
+];
+
+/**
+ * El texto contiene una expresión descartada: las de naturalidad (petición al dado, «golpe», «da sus
+ * frutos», «no me la quites», objetivos ordinales), las de otros juegos y deportes, o las de
+ * `DISCARDED_EXPRESSIONS`. `buildChatPrompt` no cita esos textos (las frases recientes que se piden no
+ * repetir), para que no sirvan de modelo de estilo; el validador seguiría rechazándolos.
+ */
+export function hasDiscardedExpression(text: string): boolean {
+  const t = normalize(text);
+  return (
+    DICE_REQUEST.some((re) => re.test(t)) ||
+    UNNATURAL.some(({ re }) => re.test(t)) ||
+    KEEP_IT.test(t) ||
+    ORDINAL_GOAL.test(t) ||
+    [...OTHER_GAMES, ...SPORTS_METAPHORS, ...DISCARDED_EXPRESSIONS].some((term) => wordsRe(term).test(t))
+  );
+}
+
 // ── Conjunto ───────────────────────────────────────────────────────────────────────────────────────
 
 /** Comprobaciones nuevas de calidad, en orden. Devuelve el primer problema o `null`. */
@@ -947,7 +1037,8 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkRepeatedCatchphrase(text, request) ??
     checkCountClaims(text, request) ??
     checkStreakEnd(text, request) ??
-    checkGameTalk(text, request)
+    checkGameTalk(text, request) ??
+    checkNaturalness(text, request)
   );
 }
 

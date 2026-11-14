@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { CHARACTERS } from "@/lib/game/characters";
 import { captureFacts, type Utterance } from "../../director";
 import type { RecentText } from "../../writer";
 import { ChatLlmError, cleanLlmText, INVALID_RESPONSE_REASONS } from "../gatewayWriter";
-import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences } from "../quality";
+import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences, hasDiscardedExpression } from "../quality";
 
 const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = [], usedCatchphrases?: number[]) => ({
   utterance: { speaker, kind: "capture_boast", rival, trigger: "capture", replyTo: null, important: true, ...extra } as Utterance,
@@ -1215,5 +1216,87 @@ describe("D1 y D2: la excepción del dado y la de la suerte exigen que no haya v
     expect(reject("¡Mala racha, Don Ernesto! Hoy no es mi día.", say("ai-blue", "ai-purple"))).toEqual({ reason: NO, detail: "termino=racha" });
     expect(checkQuality("Vaya mala racha llevo hoy, Brava.", contexts[1])).toBeNull();
     expect(checkQuality("Vaya mala racha llevo hoy, Brava.", contexts[3])).toBeNull();
+  });
+});
+
+describe("naturalidad: expresiones artificiales de la partida de Preview (frases del LLM)", () => {
+  const capture = [{ v: 10, by: "ai-pink", victim: "ai-blue" }];
+  const facts = (speaker: string) => captureFacts(capture, 10, "ai-pink", "ai-blue", speaker);
+  const bravaBoast = say("ai-pink", "ai-blue", { kind: "capture_boast", captures: facts("ai-pink") });
+  const chispaLament = say("ai-blue", "ai-pink", { kind: "capture_lament", captures: facts("ai-blue") });
+  const pilarReply = say("ai-green", "ai-blue", { kind: "capture_boast", replyTo: 0 });
+  const ernestoBoast = say("ai-purple", "ai-pink", { kind: "capture_boast" });
+
+  it("los ejemplos vistos se rechazan con su motivo", () => {
+    expect(checkQuality("¡Dadme ese seis, por favor!", chispaLament)).toEqual({ reason: "expresión poco natural", term: "petición al dado" });
+    expect(checkQuality("Otro golpe, Chispa. No te rindas aún.", pilarReply)).toEqual({ reason: "expresión poco natural", term: "golpe" });
+    expect(checkQuality("Qué bien lo haces, Brava. ¡Vamos por la quinta!", chispaLament)).toEqual({ reason: "afirmación no respaldada", term: "objetivo quinta" });
+    expect(checkQuality("¡Mía! No me la quites.", chispaLament)).toEqual({ reason: "expresión poco natural", term: "no me la quites" });
+    expect(checkQuality("La presión constante da sus frutos, Brava.", ernestoBoast)).toEqual({ reason: "expresión poco natural", term: "da sus frutos" });
+  });
+
+  it("variantes con otra puntuación, mayúsculas y en réplicas", () => {
+    for (const [text, ctx] of [
+      ["Dame un seis, dado, que lo necesito.", chispaLament],
+      ["DADME ESE SEIS POR FAVOR", chispaLament],
+      ["Venga, dado, por favor: un seis.", pilarReply],
+      ["Vaya golpe, Chispa…", pilarReply],
+      ["Menudos golpes me das, Brava.", chispaLament],
+    ] as const) {
+      expect(checkQuality(text, ctx), text).toMatchObject({ reason: "expresión poco natural" });
+    }
+    for (const text of ["¡A por la tercera!", "Vamos a por la segunda, Brava."]) {
+      expect(checkQuality(text, chispaLament), text).toMatchObject({ reason: "afirmación no respaldada", term: expect.stringMatching(/^objetivo /) });
+    }
+  });
+
+  it("se aceptan las expresiones naturales del parchís y los usos correctos de esas palabras", () => {
+    for (const [text, ctx] of [
+      ["¡Te comí, Chispa!", bravaBoast],
+      ["Me comiste, Brava. Ya te pillaré.", chispaLament],
+      ["Le comí la ficha, Brava. Era de esperar.", ernestoBoast],
+      ["Golpe de suerte con el dado, Chispa.", pilarReply],
+      ["Me he quedado sin ficha de golpe, Brava.", chispaLament],
+      ["Venga, a ver si sale un seis.", chispaLament],
+      ["Por favor, Brava, no corras tanto.", chispaLament],
+    ] as const) {
+      expect(checkQuality(text, ctx), text).toBeNull();
+    }
+    // «no me la quites» solo se rechaza en una captura.
+    expect(checkQuality("No me la quites, que es mía.", say("ai-blue", "ai-pink", { kind: "victory_reply", trigger: "victory" }))).toBeNull();
+  });
+
+  it("el motivo nuevo está en la lista que se registra", () => {
+    expect(INVALID_RESPONSE_REASONS).toContain("expresión poco natural");
+  });
+});
+
+describe("hasDiscardedExpression: expresiones descartadas que no se citan en el prompt", () => {
+  it("reconoce las de Preview y las quitadas del catálogo, con cualquier puntuación", () => {
+    for (const text of [
+      "¡En cabeza y sin frenar! ¿Quién me sigue?",
+      "Voy primera y no pienso aflojar.",
+      "¿Esto es todo lo que tenéis?",
+      "La presión constante da sus frutos, Brava.",
+      "¡Dadme ese seis, por favor!",
+      "Otro golpe, Chispa. No te rindas aún.",
+      "Qué bien lo haces, Chispa. ¡Vamos por la quinta!",
+      "¡Mía! No me la quites.",
+      "¡Que tiemble el tablero!",
+      "Esto es Parchís, señores.",
+      "Jaque mate, Brava.",
+      "¡Gol de Chispa!",
+    ]) {
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no descarta las expresiones naturales ni ninguna frase actual del catálogo", () => {
+    for (const text of ["¡Te comí, Chispa!", "Me comiste, Brava.", "Golpe de suerte con el dado.", "Me he quedado sin ficha de golpe.", "Por favor, Brava, no corras tanto."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+    for (const c of CHARACTERS) {
+      for (const lines of Object.values(c.chat.lines)) for (const line of lines) expect(hasDiscardedExpression(line), `${c.name}: ${line}`).toBe(false);
+    }
   });
 });

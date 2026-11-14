@@ -209,6 +209,32 @@ describe("frases locales: las que también puede escribir el LLM pasan el valida
   });
 });
 
+describe("frases locales: sin las expresiones artificiales de la partida de Preview", () => {
+  // Preguntas retóricas de narrador, peticiones al dado, solemnidad y metáforas, y muletillas de liderazgo.
+  const ARTIFICIAL_PATTERNS: readonly [string, RegExp][] = [
+    ["pregunta retórica de liderazgo", /¿qui[eé]n me sigue|¿esto es todo lo que ten[eé]is/iu],
+    ["petición al dado", /\b(?:dadme|dame|deme|danos)\s+(?:un|ese|el|otro)\s+(?:seis|cinco)\b|(?:seis|dado)[^.!?…]*por favor/iu],
+    ["golpe", /(?<![\p{L}])(?<!de\s)golpes?(?![\p{L}])(?!\s+de\s+suerte)/iu],
+    ["solemnidad", /da sus frutos|presi[oó]n constante/iu],
+    ["muletilla de liderazgo", /sin frenar|no pienso aflojar|tengo que ganar/iu],
+    ["objetivo ordinal", /\bpor la (?:segunda|tercera|cuarta|quinta)\b(?!\s+(?:vez|captura|ficha))/iu],
+    ["frase suelta sin acontecimiento", /no me la quites/iu],
+  ];
+
+  it("ninguna frase local contiene esos patrones", () => {
+    for (const { c, kind, line } of everyLine()) {
+      for (const [name, re] of ARTIFICIAL_PATTERNS) expect(re.test(line), `${c.name}/${kind} (${name}): ${line}`).toBe(false);
+    }
+  });
+
+  it("las frases corregidas: Brava sin preguntas retóricas de liderazgo y Don Ernesto sin solemnidad", () => {
+    expect(BRAVA.chat.lines.ambient_lead).toContain("Voy delante. Así me gusta.");
+    expect(BRAVA.chat.lines.ambient_lead).toContain("Voy en cabeza. Hoy me salen las tiradas.");
+    expect(BRAVA.chat.lines.ambient_ahead).toContain("Sigo aquí, y con ganas.");
+    expect(ERNESTO.chat.lines.streak_boast).toContain("Le he vuelto a comer, {rival}. Era de esperar.");
+  });
+});
+
 describe("frases locales: el género de los apelativos concuerda con el destinatario", () => {
   it("ninguna frase de ningún personaje, con ningún rival, usa un apelativo del género contrario al del destinatario", () => {
     const streak = { count: 2, consecutive: true };
@@ -245,6 +271,7 @@ describe("prompt: registro de España, la situación real y el nombre «Abuela»
       expect(system.content).toMatch(/como se habla en España jugando al parchís/);
       expect(system.content).toMatch(/ficha, dado, comer, casa, meta, seis, turno/);
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar.");
+      expect(system.content).toContain("- Di claro qué ha pasado («te comí», «me comiste», «te comió»). Sin preguntas retóricas, peticiones al dado ni «voy primero».");
       expect(system.content).toContain("no inventes jugadas, cifras, posiciones ni rachas");
       expect(system.content).not.toMatch(/señores|comentarista|retransmi|partido|deport/i);
     }
