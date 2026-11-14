@@ -322,3 +322,43 @@ describe("concordancia de género en el prompt", () => {
     for (const c of CHARACTERS) expect(system(c.id, c.id === "ai-blue" ? "ai-pink" : "ai-blue")).not.toMatch(/hijit|hija|hijo|guap|maj[oa]/i);
   });
 });
+
+describe("frases citadas: contexto, no modelo de estilo", () => {
+  const capture = utterance("ai-pink", "capture_boast", { rival: "ai-blue", replyTo: 0 });
+
+  it("las reglas mandan sobre lo citado (en el mensaje de sistema, antes de cualquier cita)", () => {
+    const [system, user] = buildChatPrompt(request(capture, { replyToText: "¡Te comí, Brava!" }));
+    expect(system.content).toContain("Lo citado no es un modelo: mandan estas reglas.");
+    expect(user.content).not.toContain("mandan estas reglas");
+  });
+
+  it("no se citan frases recientes con expresiones descartadas; las válidas y el mensaje al que se responde, sí", () => {
+    const recent = [
+      { speaker: "ai-pink", text: "¡En cabeza y sin frenar! ¿Quién me sigue?" },
+      { speaker: "ai-pink", text: "¡Te comí, Chispa!" },
+      { speaker: "ai-blue", text: "Otro golpe, Chispa. No te rindas aún." },
+      { speaker: "ai-green", text: "La presión constante da sus frutos, Brava." },
+      { speaker: "ai-blue", text: "¡Dadme ese seis, por favor!" },
+      { speaker: "ai-purple", text: "Qué bien lo haces, Chispa. ¡Vamos por la quinta!" },
+      { speaker: "ai-blue", text: "Me comiste, Brava. Ya te pillaré." },
+    ];
+    const [, user] = buildChatPrompt(request(capture, { recent, replyToText: "Me comiste, Brava. Ya te pillaré." }));
+    for (const bad of ["sin frenar", "golpe", "da sus frutos", "Dadme ese seis", "por la quinta"]) expect(user.content, bad).not.toContain(bad);
+    expect(user.content).toContain("Ya has dicho hace poco (no lo repitas): «¡Te comí, Chispa!»");
+    expect(user.content).toContain("«Me comiste, Brava. Ya te pillaré.»");
+    expect(user.content).toContain("Respondes a lo que acaba de decir Chispa: «Me comiste, Brava. Ya te pillaré.»");
+  });
+
+  it("sin expresiones descartadas, se citan como antes (los 2 propios y los 3 últimos de los demás)", () => {
+    const recent = [
+      { speaker: "ai-blue", text: "Uno" },
+      { speaker: "ai-pink", text: "Dos" },
+      { speaker: "ai-green", text: "Tres" },
+      { speaker: "ai-pink", text: "Cuatro" },
+      { speaker: "ai-purple", text: "Cinco" },
+    ];
+    const [, user] = buildChatPrompt(request(capture, { recent }));
+    expect(user.content).toContain("Ya has dicho hace poco (no lo repitas): «Dos» «Cuatro»");
+    expect(user.content).toContain("No repitas estas frases recientes: «Tres» «Cinco»");
+  });
+});
