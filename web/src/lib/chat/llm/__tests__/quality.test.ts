@@ -1062,3 +1062,158 @@ describe("final de la partida (con el estado real)", () => {
     }
   });
 });
+
+describe("«racha» y «seguidos» coloquiales: suerte y dado frente a afirmaciones sobre capturas", () => {
+  const NO = "afirmación no respaldada";
+  const capture = [{ v: 10, by: "ai-pink", victim: "ai-blue" }];
+  // Brava acaba de capturar a Chispa (una sola captura: nadie está de racha).
+  const boast = say("ai-pink", "ai-blue", { kind: "capture_boast", captures: captureFacts(capture, 10, "ai-pink", "ai-blue", "ai-pink") });
+  const lament = say("ai-blue", "ai-pink", { kind: "capture_lament", captures: captureFacts(capture, 10, "ai-pink", "ai-blue", "ai-blue") });
+  // Réplicas: Chispa (víctima) responde a Brava, y Brava (quien captura) responde a Chispa.
+  const replyLament = say("ai-blue", "ai-pink", { kind: "capture_lament", replyTo: 0, captures: captureFacts(capture, 10, "ai-pink", "ai-blue", "ai-blue") });
+  const replyBoast = say("ai-pink", "ai-blue", { kind: "capture_boast", replyTo: 0, captures: captureFacts(capture, 10, "ai-pink", "ai-blue", "ai-pink") });
+  const incomplete = say("ai-blue", "ai-pink", { kind: "capture_lament", captures: { history: "incomplete", selfRole: "victim" } });
+
+  it("se aceptan la suerte y el dado en mensajes principales y réplicas, con distintas puntuaciones", () => {
+    const anyRole = [
+      "¡Qué racha de suerte con el dado!",
+      "¡Qué racha de suerte con el dado!!",
+      "qué racha de suerte con el dado",
+      "Qué racha de buena suerte.",
+      "¿Qué racha de suerte con el dado, eh?",
+      "Menuda racha con el dado.",
+      "Dos seises seguidos.",
+      "¡Dos seises seguidos!",
+      "dos seises seguidos",
+      "¿Dos seises seguidos?",
+      "Tres tiradas seguidas sin sacar nada.",
+      "El dado no está de mi parte.",
+    ];
+    for (const ctx of [boast, lament, replyLament, replyBoast]) {
+      for (const text of anyRole) expect(checkQuality(text, ctx), `${ctx.utterance.kind}${ctx.utterance.replyTo === null ? "" : " (réplica)"}: ${text}`).toBeNull();
+    }
+  });
+
+  it("«mala racha» se acepta en el lado que pierde (mensaje y réplica), también con el historial incompleto", () => {
+    for (const text of ["Vaya mala racha llevo hoy.", "¡Vaya mala racha llevo hoy!", "vaya mala racha llevo hoy", "Vaya mala racha llevo hoy…", "Qué racha de mala suerte."]) {
+      for (const ctx of [lament, replyLament, incomplete]) expect(checkQuality(text, ctx), `${ctx.utterance.kind}: ${text}`).toBeNull();
+    }
+    // Con el historial incompleto, la suerte y el dado tampoco se rechazan (no hablan de capturas).
+    expect(checkQuality("¡Qué racha de suerte con el dado!", incomplete)).toBeNull();
+    expect(checkQuality("Dos seises seguidos.", incomplete)).toBeNull();
+  });
+
+  it("«mala racha» dicha por quien acaba de capturar es contradictoria y se sigue rechazando (#23)", () => {
+    for (const ctx of [boast, replyBoast]) {
+      expect(checkQuality("Vaya mala racha llevo hoy.", ctx)).toEqual({ reason: NO, term: "racha" });
+    }
+    expect(reject("¡Mala racha, Don Ernesto! Hoy no es mi día.", say("ai-blue", "ai-purple"))).toEqual({ reason: NO, detail: "termino=racha" });
+  });
+
+  it("se siguen rechazando las afirmaciones sobre capturas, rachas reales y su estado", () => {
+    for (const [text, term] of [
+      ["Llevo tres capturas seguidas.", "cifra 3 (real 1, hechas por quien habla)"],
+      ["¡Llevo tres capturas seguidas!", "cifra 3 (real 1, hechas por quien habla)"],
+      ["Ya van dos fichas seguidas.", "seguidas (sin racha)"],
+      ["Tu racha de capturas continúa.", "racha que sigue"],
+      ["Se ha terminado tu racha.", "fin de racha"],
+      ["¡Vaya racha!", "racha"],
+      ["Mi racha de suerte sigue, Chispa.", "racha que sigue"],
+      ["Qué racha de suerte: te he comido otra vez.", "racha"],
+      ["Dos seises seguidos y tres capturas seguidas.", "cifra 3 (real sin racha)"],
+    ] as const) {
+      expect(checkQuality(text, boast), text).toEqual({ reason: NO, term });
+    }
+    // En la réplica de quien pierde, igual.
+    expect(checkQuality("Ya van dos fichas seguidas.", replyLament)).toEqual({ reason: NO, term: "seguidas (sin racha)" });
+    expect(checkQuality("Se ha terminado tu racha.", replyLament)).toEqual({ reason: NO, term: "fin de racha" });
+  });
+
+  it("por el flujo completo (cleanLlmText): la suerte y el dado se publican; una racha sin respaldo, no", () => {
+    expect(reject("¡Qué racha de suerte con el dado, Chispa!", boast)).toBeNull();
+    expect(reject("Dos seises seguidos, Brava. Qué nervios.", lament)).toBeNull();
+    expect(reject("Vaya mala racha llevo hoy, Brava.", lament)).toBeNull();
+    expect(reject("Tu racha de capturas continúa, Chispa.", boast)).toEqual({ reason: NO, detail: "termino=racha que sigue" });
+  });
+});
+
+describe("D1 y D2: la excepción del dado y la de la suerte exigen que no haya vocabulario de capturas", () => {
+  const NO = "afirmación no respaldada";
+  const capture = [{ v: 10, by: "ai-pink", victim: "ai-blue" }];
+  const facts = (speaker: string) => captureFacts(capture, 10, "ai-pink", "ai-blue", speaker);
+  // Mensajes principales y réplicas de los dos lados (Brava acaba de capturar a Chispa: una sola captura).
+  const contexts = [
+    say("ai-pink", "ai-blue", { kind: "capture_boast", captures: facts("ai-pink") }),
+    say("ai-blue", "ai-pink", { kind: "capture_lament", captures: facts("ai-blue") }),
+    say("ai-pink", "ai-blue", { kind: "capture_boast", replyTo: 0, captures: facts("ai-pink") }),
+    say("ai-blue", "ai-pink", { kind: "capture_lament", replyTo: 0, captures: facts("ai-blue") }),
+  ];
+  const incomplete = [
+    say("ai-pink", "ai-blue", { kind: "capture_boast", captures: { history: "incomplete", selfRole: "by" } }),
+    say("ai-blue", "ai-pink", { kind: "capture_lament", replyTo: 0, captures: { history: "incomplete", selfRole: "victim" } }),
+  ];
+  const where = (ctx: (typeof contexts)[number]) => `${ctx.utterance.kind}${ctx.utterance.replyTo === null ? "" : " (réplica)"}${ctx.utterance.captures?.history === "incomplete" ? " incompleto" : ""}`;
+
+  it("D1: las secuencias del dado sin capturas se siguen aceptando (historial completo e incompleto, puntuación variada)", () => {
+    for (const text of [
+      "Dos seises seguidos.",
+      "¡Dos seises seguidos!",
+      "Tres tiradas seguidas sin sacar nada.",
+      "tres tiradas seguidas sin sacar nada…",
+      "Dos cincos seguidos.",
+      "¿Dos cincos seguidos? Qué cosas.",
+      "Uf. Dos seises seguidos, y yo sin moverme.",
+    ]) {
+      for (const ctx of [...contexts, ...incomplete]) expect(checkQuality(text, ctx), `${where(ctx)}: ${text}`).toBeNull();
+    }
+  });
+
+  it("D1: con vocabulario de capturas, «seguidas» tras una palabra del dado se comprueba y se rechaza (completo e incompleto)", () => {
+    for (const text of [
+      "Te he capturado en dos tiradas seguidas.",
+      "Te pillo dos tiradas seguidas, Chispa.",
+      "Dos tiradas seguidas comiéndote.",
+      "¡Dos tiradas seguidas comiéndote!",
+      "Dos tiradas seguidas: te he comido, Chispa.",
+      "Dos tiradas seguidas… y a casa otra vez.",
+      "Dos seises seguidos. Te cacé, Chispa.",
+    ]) {
+      for (const ctx of contexts) expect(checkQuality(text, ctx), `${where(ctx)}: ${text}`).toMatchObject({ reason: NO });
+      for (const ctx of incomplete) expect(checkQuality(text, ctx), `${where(ctx)}: ${text}`).toMatchObject({ reason: NO });
+    }
+    // El término identifica la palabra comprobada (con historial completo la rechaza `checkGameTalk`: no hay
+    // ninguna racha que respalde «seguidas»; con el incompleto, ya `checkCountClaims`).
+    expect(checkQuality("Te he capturado en dos tiradas seguidas.", contexts[0])).toEqual({ reason: NO, term: "seguidas" });
+    expect(checkQuality("Te he capturado en dos tiradas seguidas.", incomplete[0])).toEqual({ reason: NO, term: "seguidas (historial incompleto)" });
+  });
+
+  it("D1: la excepción nunca elude las cifras de capturas", () => {
+    expect(checkQuality("Llevo tres capturas en tres tiradas seguidas.", contexts[0])).toEqual({ reason: NO, term: "cifra 3 (real 1, hechas por quien habla)" });
+    expect(checkQuality("Dos seises seguidos y tres capturas seguidas.", contexts[0])).toMatchObject({ reason: NO, term: expect.stringMatching(/^cifra 3/) });
+  });
+
+  it("D2: «a casita» y «cazar» con c (cacé, caces, cacemos, cacen) son vocabulario de capturas, también con la suerte", () => {
+    for (const text of [
+      "¡Qué racha de suerte! A casita, Chispa.",
+      "Qué racha de suerte… a casita, cariño.",
+      "¡Qué racha de suerte! Te cacé, Chispa.",
+      "Qué racha de suerte: si te caces sola, mejor.",
+      "Qué racha de suerte, ya te cacemos luego.",
+      "Qué racha de suerte. Que te cacen otros.",
+      "Qué racha de suerte con el dado, y a casita que te vas.",
+    ]) {
+      expect(checkQuality(text, contexts[0]), text).toEqual({ reason: NO, term: "racha" });
+      expect(checkQuality(text, contexts[2]), `réplica: ${text}`).toEqual({ reason: NO, term: "racha" });
+    }
+    // Sin vocabulario de capturas, la suerte se sigue aceptando (palabras parecidas no cuentan).
+    for (const text of ["¡Qué racha de suerte con el dado!", "Qué racha de suerte en esta casa.", "Qué racha de suerte, cacharro de dado."]) {
+      expect(checkQuality(text, contexts[0]), text).toBeNull();
+    }
+  });
+
+  it("lo que ya funcionaba sigue igual: #23 rechazado y la mala racha en el lado que pierde aceptada", () => {
+    expect(reject("¡Mala racha, Don Ernesto! Hoy no es mi día.", say("ai-blue", "ai-purple"))).toEqual({ reason: NO, detail: "termino=racha" });
+    expect(checkQuality("Vaya mala racha llevo hoy, Brava.", contexts[1])).toBeNull();
+    expect(checkQuality("Vaya mala racha llevo hoy, Brava.", contexts[3])).toBeNull();
+  });
+});

@@ -201,7 +201,29 @@ const STATE_CLAIMS: readonly RegExp[] = [
 const RESULT_CLAIM =
   /(?<![\p{L}])(?:he|has|ha|hemos|habeis|han)\s+(?:ganado(?:\s+la\s+partida)?(?=\s*(?:$|[!.?,;…])|\s+la\s+partida)|perdido\s+la\s+partida)/u;
 /** Hablar de rachas o de capturas seguidas: solo con una racha que lo respalde (`hasStreakContext`). */
-const STREAK_CLAIM = /(?<![\p{L}])(?:racha|rachas|seguidas|seguidos|consecutivas|consecutivos)(?![\p{L}])/u;
+const STREAK_CLAIM = /(?<![\p{L}])(?:racha|rachas|seguidas|seguidos|consecutivas|consecutivos)(?![\p{L}])/gu;
+
+/**
+ * Primera palabra de racha («racha», «seguidas»…) que afirma algo sobre capturas, o `null`. No cuentan las
+ * menciones coloquiales de la suerte o del dado (`isLuckMention`) ni «seguidos» detrás de una palabra
+ * del dado («dos seises seguidos»).
+ */
+function unsupportedStreakWord(t: string, request: ChatWriteRequest): string | null {
+  for (const piece of t.matchAll(/[^.!?;:…]+[.!?;:…]*/gu)) {
+    const sentence = piece[0];
+    for (const m of sentence.matchAll(STREAK_CLAIM)) {
+      const start = m.index ?? 0;
+      if (m[0].startsWith("racha")) {
+        const mention = [...sentence.matchAll(MENTION)].find((x) => (x.index ?? 0) <= start && start < (x.index ?? 0) + x[0].length);
+        if (mention && isLuckMention(sentence, mention, request, t)) continue;
+      } else if (isDiceSequence(sentence, start, t)) {
+        continue;
+      }
+      return m[0];
+    }
+  }
+  return null;
+}
 
 function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | null {
   const t = normalize(text);
@@ -209,8 +231,10 @@ function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | 
   if (request.utterance.speaker !== COMMENTATOR) {
     for (const term of SPORTS_METAPHORS) if (wordsRe(term).test(t)) return { reason: "expresión ajena al parchís", term };
   }
-  const streak = STREAK_CLAIM.exec(t);
-  if (streak && !hasStreakContext(request)) return { reason: "afirmación no respaldada", term: streak[0] };
+  if (!hasStreakContext(request)) {
+    const term = unsupportedStreakWord(t, request);
+    if (term) return { reason: "afirmación no respaldada", term };
+  }
   for (const re of STATE_CLAIMS) {
     const match = re.exec(t);
     if (match) return { reason: "afirmación no respaldada", term: match[0].replace(/\s+/g, " ") };
@@ -339,6 +363,18 @@ const ORDINAL_WORD = new RegExp(`(?<![\\p{L}])(${Object.keys(ORDINALS).join("|")
 const ORDINAL_DIGIT = /(?<![\p{L}\p{N}])(\d+)(?:ª|º|°|era|er|ero|a|o)\s+(captura|vez)(?![\p{L}])/gu;
 const STREAK_WORD = new RegExp(`(?<![\\p{L}])(${STREAK_WORDS})(?![\\p{L}])`, "u");
 const STREAK_WORD_ALL = new RegExp(STREAK_WORD.source, "gu");
+/**
+ * Palabra del dado justo delante de «seguidos/as» o «consecutivos/as» (sin tildes, tras `normalize`):
+ * «dos seises seguidos», «tres tiradas seguidas». Habla del dado, no de capturas seguidas, así que no se
+ * compara con ninguna racha (no se puede verificar con los hechos de captura).
+ */
+const DICE_BEFORE = /(?<![\p{L}])(?:seises|cincos|unos|doses|treses|cuatros|dados?|tiradas?)\s+$/u;
+/**
+ * «seguidos» detrás de una palabra del dado, y sin vocabulario de capturas en TODO el texto (`text`,
+ * normalizado): «Te he capturado en dos tiradas seguidas» o «Dos tiradas seguidas comiéndote» afirman
+ * capturas seguidas y se comprueban como tales.
+ */
+const isDiceSequence = (sentence: string, start: number, text: string) => DICE_BEFORE.test(sentence.slice(0, start)) && !CAPTURE_VOCAB.test(text);
 /** Disparadores en los que acaba de haber una captura (no la victoria). */
 const CAPTURE_TRIGGERS: ReadonlySet<ChatTrigger> = new Set(["capture", "capture_streak", "bad_streak"]);
 
@@ -583,6 +619,7 @@ function checkCountClaims(text: string, request: ChatWriteRequest): QualityIssue
       const start = m.index ?? 0;
       const end = start + m[0].length;
       if (claims.some((c) => c.start <= start && end <= c.end)) continue;
+      if (isDiceSequence(sentence, start, t)) continue; // «dos seises seguidos»: del dado, no de capturas
       const { scope, fact } = resolve(nearestScope(cues, start, end));
       if (!fact?.consecutive) return notConsecutive(m[1], scope, fact);
     }
@@ -653,6 +690,39 @@ function pilarCallsOthersAbuela(text: string, speaker: string): QualityIssue | n
  * que afirma de ella: que termina, que sigue o nada (solo la nombra).
  */
 const MENTION = new RegExp(`(?<![\\p{L}])(?:(mi|tu|su|la|esta|esa|una|vaya|que|menuda)\\s+)?(mala\\s+)?rachas?(\\s+${BAD_SUFFIX})?(?![\\p{L}])`, "gu");
+/** Lo que sigue a «racha» cuando habla de la suerte o del dado: «racha de suerte», «racha con el dado». */
+const LUCK_AFTER = /^\s+(?:de\s+(?:buena\s+|mala\s+)?suerte|(?:con|de)\s+(?:el\s+|los\s+)?dados?|del\s+dado|de\s+(?:seises|cincos|tiradas))(?![\p{L}])/u;
+/**
+ * Vocabulario de capturas en el texto (normalizado: sin tildes): si aparece, «racha» o «seguidos» pueden
+ * hablar de capturas y se comprueban. Incluye «cazar» con c delante de e («cacé», «caces», «cacemos»,
+ * «cacen»), los gerundios («comiéndote», «cazándote») y «a casita».
+ */
+const CAPTURE_VOCAB =
+  /(?<![\p{L}])(?:captur\p{L}*|pill\p{L}*|caz(?:a|as|o|ar|aste|ado|ada|ados|adas|amos|an|ais)|cac(?:e|es|emos|eis|en)|cazand\p{L}*|comid\p{L}*|comer\p{L}*|comiend\p{L}*|(?:te|le|la|lo|me|os|les)\s+com\p{L}*|fichas?|a\s+casa|a\s+casita)(?![\p{L}])/u;
+
+/** Quien habla está en el lado que pierde: le acaban de capturar o responde a la victoria de otro. */
+const LOSING_KINDS: ReadonlySet<string> = new Set(["capture_lament", "streak_lament", "victory_reply"]);
+const isLosingSide = (request: ChatWriteRequest) =>
+  LOSING_KINDS.has(request.utterance.kind) || request.utterance.captures?.selfRole === "victim";
+
+/**
+ * Mención coloquial de la suerte o del dado, que no afirma nada sobre capturas: «¡Qué racha de suerte con
+ * el dado!», «Vaya mala racha llevo hoy», «menuda racha de seises». Solo si dice de qué habla (suerte,
+ * dado o «mala racha»), sin dueño («mi», «tu», «su»: entonces es la racha de alguien y se comprueba) y sin
+ * vocabulario de capturas en TODO el texto (no solo en su frase: «Qué racha de suerte: te he comido otra
+ * vez» habla de capturas). «¡Vaya racha!» a secas no lo es.
+ * La MALA suerte («mala racha», «racha de mala suerte») solo encaja en el lado que pierde: dicha por quien
+ * acaba de capturar o de ganar es contradictoria («¡Mala racha, Don Ernesto! Hoy no es mi día», dicho por
+ * Chispa al capturar, partida 707c3c6d…) y se sigue comprobando como una racha.
+ */
+function isLuckMention(sentence: string, m: RegExpMatchArray, request: ChatWriteRequest, text: string): boolean {
+  if (m[1] === "mi" || m[1] === "tu" || m[1] === "su") return false;
+  const after = sentence.slice((m.index ?? 0) + m[0].length);
+  const badLuck = Boolean(m[2]) || /mala|negra|adversa/.test(m[3] ?? "") || /^\s+de\s+mala\s+suerte/.test(after);
+  const aboutLuck = LUCK_AFTER.test(after) || badLuck || /suerte/.test(m[3] ?? "");
+  if (!aboutLuck || CAPTURE_VOCAB.test(text)) return false;
+  return !badLuck || isLosingSide(request);
+}
 const END_VERBS_PAST = "acabo|termino|rompio|corto|ha\\s+(?:acabado|terminado|roto|cortado)|han\\s+(?:roto|cortado)|he\\s+(?:roto|cortado)|rompi|acabe\\s+con|acabaste\\s+con|acabo\\s+con";
 /** Delante de la mención: «se acabó tu racha», «se te ha cortado la racha», «fin de su racha», «adiós a tu racha». */
 const END_VERBS_PRESENT = "acaba|termina|rompe|corta";
@@ -768,6 +838,9 @@ function checkStreakEnd(text: string, request: ChatWriteRequest): QualityIssue |
       const context = aligned ? lower.slice(offset + clause.from, offset + clause.to) : sentence.slice(clause.from, clause.to);
       const hedged = inQuestion(sentence, start) || HYPOTHETICAL.test(context);
 
+      // Una mención coloquial de la suerte o del dado, sin dueño ni verbo de seguir o acabar, no habla de
+      // ninguna racha de capturas: no se compara con los hechos.
+      if (claim === "mention" && owner === null && isLuckMention(sentence, m, request, t)) continue;
       if (c?.history === "incomplete") return unsupported("racha (historial incompleto)");
       if (claim !== "mention" && hedged) continue;
       if (!c) {
