@@ -13,6 +13,22 @@ vi.mock("../store", async (importOriginal) => {
   return { ...original, getChatStore: () => ({ claim, commit: vi.fn(), release: vi.fn() }) };
 });
 
+// Limitador global de AI Gateway: un doble controlable (sin red). Existe solo si hay credenciales de Upstash.
+const limiterState = vi.hoisted(() => ({ allowed: true, acquired: 0, blocked: [] as number[] }));
+vi.mock("@/lib/llm/gatewayLimiter", () => ({
+  getGatewayLimiter: (env: Record<string, string | undefined>) =>
+    env.UPSTASH_REDIS_REST_URL
+      ? {
+          acquire: async () => {
+            limiterState.acquired++;
+            return limiterState.allowed ? { kind: "allowed", grant: null } : { kind: "rate_limited" };
+          },
+          reportRateLimited: async (ms: number) => void limiterState.blocked.push(ms),
+          refundMovesGrant: async () => false,
+        }
+      : null,
+}));
+
 const { scheduleDrain, runDrainInBackground, chatWriters } = await import("../schedule");
 const { logChatError } = await import("../log");
 const { ChatStoreError } = await import("../store");
@@ -63,14 +79,20 @@ describe("scheduleDrain / runDrainInBackground", () => {
 
 describe("chatWriters (escritor LLM o local según las variables)", () => {
   const KEY = "clave-secreta-de-prueba-123";
-  const enabled = { CHAT_LLM_ENABLED: "true", AI_GATEWAY_API_KEY: KEY, CHAT_LLM_MODEL: "nvidia/nemotron-3.5-lightning-free" };
+  const UPSTASH = { UPSTASH_REDIS_REST_URL: "https://ejemplo.upstash.io", UPSTASH_REDIS_REST_TOKEN: "token-falso-de-upstash" };
+  const enabled = { CHAT_LLM_ENABLED: "true", AI_GATEWAY_API_KEY: KEY, CHAT_LLM_MODEL: "nvidia/nemotron-3.5-lightning-free", ...UPSTASH };
   const request = (important: boolean) => ({
     utterance: { speaker: "ai-pink", kind: "goal" as const, rival: null, trigger: "goal" as const, replyTo: null, important },
     recent: [],
     replyToText: null,
   });
 
-  beforeEach(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    limiterState.allowed = true;
+    limiterState.acquired = 0;
+    limiterState.blocked = [];
+  });
 
   it("sin activar (lo normal hoy): todo con el escritor local y sin registrar nada", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -88,6 +110,39 @@ describe("chatWriters (escritor LLM o local según las variables)", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(await writer.write(request(true))).toMatchObject({ source: "llm" });
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(limiterState.acquired).toBe(1); // solo lo que va al modelo pide permiso
+  });
+
+  it("activo pero sin Upstash: todo local (el LLM exige el limitador global) y un registro sin valores", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const { UPSTASH_REDIS_REST_URL: _u, UPSTASH_REDIS_REST_TOKEN: _t, ...withoutUpstash } = enabled;
+    const { writer, fallbackWriter } = chatWriters(withoutUpstash);
+    expect(writer).toBe(fallbackWriter);
+    expect(await writer.write(request(true))).toMatchObject({ source: "local" });
+    expect(fetch).not.toHaveBeenCalled();
+    const output = log.mock.calls.flat().join(" ");
+    expect(output).toMatch(/sin_upstash/);
+    expect(output).not.toContain(KEY);
+  });
+
+  it("sin permiso del limitador global: no se llama al modelo (el servicio usará la frase local)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    limiterState.allowed = false;
+    const { writer } = chatWriters(enabled);
+    await expect(writer.write(request(true))).rejects.toMatchObject({ kind: "cooldown" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("un 429 del modelo activa el bloqueo global con su Retry-After", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 429, headers: { "Retry-After": "25" } })));
+    const { writer } = chatWriters(enabled);
+    await expect(writer.write(request(true))).rejects.toMatchObject({ kind: "http", status: 429 });
+    expect(limiterState.blocked).toEqual([25_000]);
   });
 
   it("mal configurado (p. ej. modelo no permitido o clave pública): local y un registro sin la clave", () => {

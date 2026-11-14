@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { MOVES_LLM } from "../config";
 import { readMoveLlmConfig } from "../env";
-import { MOVES_LLM_QUOTA, getMoveQuota } from "../quota";
+import { getGatewayLimiter } from "@/lib/llm/gatewayLimiter";
+import { MOVES_LLM_QUOTA } from "../quota";
 
 vi.mock("server-only", () => ({}));
 
@@ -44,7 +45,7 @@ describe("web/.env.example: selector de movimientos", () => {
 
   it("con el ejemplo en Vercel Preview y MOVES_LLM_ENABLED=true, el selector se activa y hay cupo", () => {
     expect(readMoveLlmConfig(previewWithExample)).toMatchObject({ enabled: true, model: MOVES_LLM.model, provider: null });
-    expect(getMoveQuota(previewWithExample)).not.toBeNull();
+    expect(getGatewayLimiter(previewWithExample)).not.toBeNull();
   });
 
   it("Production (y Development o local) sigue desactivado aunque estén todas las variables", () => {
@@ -56,7 +57,7 @@ describe("web/.env.example: selector de movimientos", () => {
   it("sin Upstash no hay cupo (y la ruta no crea el selector)", () => {
     const withoutUpstash = { ...previewWithExample, UPSTASH_REDIS_REST_URL: undefined, UPSTASH_REDIS_REST_TOKEN: undefined };
     expect(readMoveLlmConfig(withoutUpstash).enabled).toBe(true);
-    expect(getMoveQuota(withoutUpstash)).toBeNull();
+    expect(getGatewayLimiter(withoutUpstash)).toBeNull();
   });
 
   it("las variables del chat no activan por sí solas el selector", () => {

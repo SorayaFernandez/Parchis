@@ -11,7 +11,8 @@ import { EngineRejectedActionError, advanceGame } from "@/lib/game/advance";
 import { readMoveLlmConfig } from "@/lib/game/moveSelector/env";
 import { createMoveBreaker, createMoveSelector, type MoveSelector } from "@/lib/game/moveSelector/gateway";
 import { logMoveError } from "@/lib/game/moveSelector/log";
-import { getMoveQuota, type MoveQuota } from "@/lib/game/moveSelector/quota";
+import { createLimitedMoveQuota, type MoveQuota } from "@/lib/game/moveSelector/quota";
+import { getGatewayLimiter } from "@/lib/llm/gatewayLimiter";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
 import { guardAdvance } from "@/lib/security/guards";
@@ -25,7 +26,8 @@ const moveBreaker = createMoveBreaker();
 
 /**
  * Selector estratégico con LLM y su cupo por partida, solo si su configuración lo activa (Vercel Preview,
- * `MOVES_LLM_ENABLED`, clave y modelo exacto) **y** hay Upstash para el cupo de 20 consultas (F4). Si no,
+ * `MOVES_LLM_ENABLED`, clave y modelo exacto) **y** hay Upstash para el limitador global compartido con el
+ * chat y el cupo de 20 consultas por partida. Si no,
  * sin selector: se usa la estrategia local como siempre. Un error de configuración se registra sin
  * valores (como mucho una vez por minuto); `off` es lo normal.
  */
@@ -35,17 +37,20 @@ function moveSelectorFromEnv(): { moveSelector?: MoveSelector; moveQuota?: MoveQ
     if (config.reason !== "off") logMoveError("configuración", Object.assign(new Error(config.reason), { name: `configuración ${config.reason}` }));
     return {};
   }
-  // Sin cupo verificable no se consulta al modelo (falla cerrado).
-  const moveQuota = getMoveQuota(process.env);
-  if (!moveQuota) {
+  // Sin limitador global (sin Upstash) no se consulta al modelo (falla cerrado).
+  const limiter = getGatewayLimiter(process.env);
+  if (!limiter) {
     logMoveError("configuración", Object.assign(new Error("sin_upstash"), { name: "configuración sin_upstash" }));
     return {};
   }
+  const moveQuota = createLimitedMoveQuota(limiter);
   const moveSelector = createMoveSelector({
     config,
     fetch: (...args) => fetch(...args),
     breaker: moveBreaker,
     onFailure: (error) => logMoveError("selector", error),
+    // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
+    onRateLimited: (durationMs) => limiter.reportRateLimited(durationMs),
   });
   return { moveSelector, moveQuota };
 }

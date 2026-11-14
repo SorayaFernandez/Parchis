@@ -239,3 +239,22 @@ describe("el selector nunca lanza", () => {
     await expect(selector.select(state, decision)).resolves.toMatchObject({ ok: false, error: { kind: "network" } });
   });
 });
+
+describe("bloqueo global tras un 429 (limitador compartido con el chat)", () => {
+  it("429: avisa con su Retry-After (o 60 s); 5xx, 400 y red no avisan; no reintenta", async () => {
+    for (const [respond, expected] of [
+      [() => new Response("{}", { status: 429, headers: { "Retry-After": "30" } }), [30_000]],
+      [() => new Response("{}", { status: 429 }), [MOVES_LLM.rateLimitCooldownMs]],
+      [() => new Response("{}", { status: 503 }), []],
+      [() => new Response("{}", { status: 400 }), []],
+      [() => "network" as const, []],
+    ] as const) {
+      const onRateLimited = vi.fn(async (_ms: number) => {});
+      const f = fakeFetch(respond as () => Response | "network");
+      const selector = createMoveSelector({ config, fetch: f.fetch, breaker: createMoveBreaker(), onRateLimited });
+      expect((await selector.select(state, decision)).ok).toBe(false);
+      expect(onRateLimited.mock.calls.map(([ms]) => ms)).toEqual(expected);
+      expect(f.calls).toHaveLength(1);
+    }
+  });
+});

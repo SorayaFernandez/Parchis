@@ -1,5 +1,6 @@
-// Fase 8.3, F4: el cupo de 20 consultas por partida dentro de `advanceGame`, con el repositorio en
-// memoria, un doble de Redis que reproduce el script atómico y sin llamar a AI Gateway.
+// Fase 8.3: el cupo de 20 consultas por partida y el limitador global (compartido con el chat) dentro de
+// `advanceGame`, con el repositorio en memoria, el limitador real sobre un doble de Redis con la semántica
+// de sus scripts Lua y sin llamar a AI Gateway.
 import { describe, expect, it, vi } from "vitest";
 import { createGame, getAvailableMoves, type GameState } from "@/lib/engine";
 import { setup } from "@/lib/engine/__tests__/helpers";
@@ -9,7 +10,10 @@ import { CHARACTER_IDS } from "../characters";
 import { MOVES_LLM } from "../moveSelector/config";
 import type { MoveFallbackReason } from "../moveSelector/decide";
 import { createMoveBreaker, createMoveSelector, MoveLlmError, type MoveSelector } from "../moveSelector/gateway";
-import { QUOTA_SCRIPT, createMoveQuota, type MoveQuota, type QuotaRedis, type QuotaResult } from "../moveSelector/quota";
+import { createLimitedMoveQuota, type MoveQuota, type QuotaResult } from "../moveSelector/quota";
+import { createGatewayLimiter, type GatewayLimiterOptions } from "@/lib/llm/gatewayLimiter";
+import { LIMITER_KEYS } from "@/lib/llm/limiterScripts";
+import { memoryLimiterRedis } from "@/lib/llm/__tests__/memoryLimiterRedis";
 import { createMemoryRepository } from "./memoryRepository";
 
 vi.mock("server-only", () => ({}));
@@ -18,25 +22,15 @@ const [BRAVA] = CHARACTER_IDS;
 const twoOptions = (): GameState => ({ ...setup({ pink: [20, 30, -1, -1] }, CHARACTER_IDS), turn: BRAVA, dice: 3 });
 const oneOption = (): GameState => ({ ...setup({ pink: [20, -1, -1, -1] }, CHARACTER_IDS), turn: BRAVA, dice: 3 });
 
-/** Redis en memoria con la semántica atómica de QUOTA_SCRIPT. */
-function memoryRedis(): QuotaRedis & { values: Map<string, number> } {
-  const values = new Map<string, number>();
-  return {
-    values,
-    async eval(script, [key], [limit]) {
-      if (script !== QUOTA_SCRIPT) throw new Error("script desconocido");
-      await Promise.resolve();
-      const used = values.get(key) ?? 0;
-      if (used >= Number(limit)) return -1;
-      values.set(key, used + 1);
-      return used + 1;
-    },
-  };
-}
+/** Doble de Redis del limitador (sin latencia: partidas completas). */
+const memoryRedis = () => memoryLimiterRedis(undefined, { latency: false });
+/** Sin límite global efectivo: estas pruebas miden el cupo por partida (el límite global, más abajo). */
+const ROOMY: GatewayLimiterOptions = { globalLimit: 1_000_000, consumerLimit: 1_000_000 };
 
-/** Cupo real (sobre el doble de Redis) que cuenta cuántas veces se intenta consumir. */
-function countingQuota(redis = memoryRedis()) {
-  const inner = createMoveQuota(redis, { prefix: "parchis:rl:test" });
+/** Cupo real (limitador sobre el doble de Redis) que cuenta cuántas veces se intenta consumir. */
+function countingQuota(m = memoryRedis(), options: GatewayLimiterOptions = ROOMY) {
+  const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now, ...options });
+  const inner = createLimitedMoveQuota(limiter);
   const attempts: QuotaResult[] = [];
   const quota: MoveQuota = {
     tryConsume: async (id) => {
@@ -45,7 +39,7 @@ function countingQuota(redis = memoryRedis()) {
       return result;
     },
   };
-  return { quota, attempts, redis };
+  return { quota, attempts, m, limiter };
 }
 
 async function newGame(state: GameState) {
@@ -121,7 +115,8 @@ describe("F4: cuándo se consume cupo", () => {
       const result = await advanceGame(id, 1, deps(repository, { moveSelector: selector, moveQuota: q.quota }));
       expect(result).toMatchObject({ kind: "advanced", action: { type: "move", pieceIndex: chooseMove(state, getAvailableMoves(state)) } });
       expect(fetch).toHaveBeenCalledTimes(1);
-      expect(q.attempts).toEqual([{ kind: "allowed", used: 1 }]);
+      expect(q.attempts).toHaveLength(1);
+      expect(q.attempts[0]).toMatchObject({ kind: "allowed", used: 1 });
     }
   });
 });
@@ -129,8 +124,9 @@ describe("F4: cuándo se consume cupo", () => {
 describe("F4: sin cupo, estrategia local sin consultar al modelo", () => {
   it.each([
     ["cupo agotado", (): MoveQuota => ({ tryConsume: async () => ({ kind: "exhausted" }) }), "cupo agotado"],
-    ["Redis no disponible", (): MoveQuota => createMoveQuota({ eval: async () => { throw new Error("caído"); } }, { prefix: "p" }), "cupo no disponible"],
-    ["respuesta inesperada de Redis", (): MoveQuota => createMoveQuota({ eval: async () => "OK" }, { prefix: "p" }), "cupo no disponible"],
+    ["Redis no disponible", (): MoveQuota => createLimitedMoveQuota(createGatewayLimiter({ eval: async () => { throw new Error("caído"); } })), "cupo no disponible"],
+    ["respuesta inesperada de Redis", (): MoveQuota => createLimitedMoveQuota(createGatewayLimiter({ eval: async () => "OK" })), "cupo no disponible"],
+    ["límite global (ventana llena)", (): MoveQuota => ({ tryConsume: async () => ({ kind: "rate_limited" }) }), "límite global"],
     ["cupo que lanza (no debería)", (): MoveQuota => ({ tryConsume: async () => { throw new Error("x"); } }), "cupo no disponible"],
   ])("%s: jugada local, sin llamar al selector, y la partida avanza sin errores", async (_, makeQuota, reason) => {
     const state = twoOptions();
@@ -184,7 +180,7 @@ describe("F4: integración con F3 en partidas completas", () => {
     expect(q.attempts.filter((a) => a.kind === "allowed")).toHaveLength(20);
     expect(q.attempts.filter((a) => a.kind === "exhausted").length).toBeGreaterThan(0);
     expect(reasons.every((r) => r === "cupo agotado")).toBe(true);
-    expect(q.redis.values.get(`parchis:rl:test:moves-llm:${id}`)).toBe(20);
+    expect(q.m.getString(LIMITER_KEYS.movesQuota(id))?.value).toBe("20");
   });
 
   it("dos partidas en paralelo con el mismo Redis: cada una con su cupo de 20", { timeout: 60_000 }, async () => {
@@ -201,8 +197,8 @@ describe("F4: integración con F3 en partidas completas", () => {
       play(6, { moveSelector: b.selector, moveQuota: qb.quota }, memory, exhausted(qb)),
     ]);
     expect(ga.id).not.toBe(gb.id);
-    expect(redis.values.get(`parchis:rl:test:moves-llm:${ga.id}`)).toBe(20);
-    expect(redis.values.get(`parchis:rl:test:moves-llm:${gb.id}`)).toBe(20);
+    expect(redis.getString(LIMITER_KEYS.movesQuota(ga.id))?.value).toBe("20");
+    expect(redis.getString(LIMITER_KEYS.movesQuota(gb.id))?.value).toBe("20");
     expect(a.calls()).toBe(20);
     expect(b.calls()).toBe(20);
   });
@@ -220,5 +216,76 @@ describe("F4: integración con F3 en partidas completas", () => {
     await play(8, { moveSelector: failing, moveQuota: q.quota }, undefined, () => q.attempts.filter((x) => x.kind === "exhausted").length >= 30);
     expect(selects).toBe(20);
     expect(q.attempts.filter((x) => x.kind === "allowed")).toHaveLength(20);
+  });
+});
+
+describe("límite global y 429 del proveedor", () => {
+  /** Selector real de F2 con un fetch simulado que responde lo indicado. */
+  function realSelector(respond: () => Response | "hang", onRateLimited?: (ms: number) => Promise<void>) {
+    const fetch = vi.fn(async (_u: RequestInfo | URL, init?: RequestInit) => {
+      const r = respond();
+      if (r === "hang") return new Promise<Response>((_, reject) => init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason)));
+      return r;
+    });
+    const selector = createMoveSelector({
+      config: { enabled: true, apiKey: "clave-de-prueba", model: MOVES_LLM.model, provider: null },
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      breaker: createMoveBreaker(),
+      timeoutMs: 20,
+      onRateLimited,
+    });
+    return { selector, fetch };
+  }
+
+  it("con la ventana de movimientos llena: jugada local sin llamar al modelo y sin gastar cupo", async () => {
+    const m = memoryRedis();
+    const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now });
+    // Dos consultas de movimientos de otra partida llenan la parte de movimientos de la ventana.
+    await limiter.acquire({ consumer: "moves", gameId: "3f39156e-12ec-4bd0-86af-58a5ccf8cd66" });
+    await limiter.acquire({ consumer: "moves", gameId: "3f39156e-12ec-4bd0-86af-58a5ccf8cd66" });
+    const s = lastOptionSelector();
+    const state = twoOptions();
+    const { repository, id } = await newGame(state);
+    const reasons: MoveFallbackReason[] = [];
+    const result = await advanceGame(id, 1, deps(repository, { moveSelector: s.selector, moveQuota: createLimitedMoveQuota(limiter), onMoveFallback: (r) => reasons.push(r) }));
+    expect(result).toMatchObject({ kind: "advanced", action: { type: "move", pieceIndex: chooseMove(state, getAvailableMoves(state)) } });
+    expect(s.calls()).toBe(0);
+    expect(reasons).toEqual(["límite global"]);
+    expect(m.getString(LIMITER_KEYS.movesQuota(id))).toBeUndefined();
+  });
+
+  it("429 del proveedor: bloqueo global (chat y movimientos), la consulta de la partida se devuelve una vez y el hueco global no", async () => {
+    const m = memoryRedis();
+    const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now });
+    const { selector, fetch } = realSelector(
+      () => new Response("{}", { status: 429, headers: { "Retry-After": "30" } }),
+      (ms) => limiter.reportRateLimited(ms),
+    );
+    const state = twoOptions();
+    const { repository, id } = await newGame(state);
+    const result = await advanceGame(id, 1, deps(repository, { moveSelector: selector, moveQuota: createLimitedMoveQuota(limiter) }));
+    expect(result).toMatchObject({ kind: "advanced", action: { type: "move", pieceIndex: chooseMove(state, getAvailableMoves(state)) } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(m.getString(LIMITER_KEYS.movesQuota(id))?.value).toBe("0"); // devuelta
+    expect(m.windowMembers(LIMITER_KEYS.window)).toHaveLength(1); // el hueco global sigue ocupado
+    // Bloqueo global de 30 s: ni chat ni movimientos.
+    expect((await limiter.acquire({ consumer: "chat" })).kind).toBe("blocked");
+    expect((await limiter.acquire({ consumer: "moves", gameId: id })).kind).toBe("blocked");
+    m.clock.now += 30_000;
+    expect((await limiter.acquire({ consumer: "chat" })).kind).toBe("allowed");
+  });
+
+  it("5xx y timeout no devuelven la consulta de la partida (pudo procesarse) ni bloquean a los demás", async () => {
+    for (const respond of [() => new Response("{}", { status: 503 }), () => "hang" as const]) {
+      const m = memoryRedis();
+      const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now });
+      const blocked = vi.fn(async (ms: number) => limiter.reportRateLimited(ms));
+      const { selector } = realSelector(respond, blocked);
+      const { repository, id } = await newGame(twoOptions());
+      await advanceGame(id, 1, deps(repository, { moveSelector: selector, moveQuota: createLimitedMoveQuota(limiter) }));
+      expect(m.getString(LIMITER_KEYS.movesQuota(id))?.value).toBe("1");
+      expect(blocked).not.toHaveBeenCalled();
+      expect((await limiter.acquire({ consumer: "chat" })).kind).toBe("allowed");
+    }
   });
 });
