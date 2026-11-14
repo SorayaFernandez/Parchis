@@ -46,7 +46,10 @@ export const LIMITER_KEYS = {
   movesGrant: (grantId: string) => `${TAG}:moves-grant:${grantId}`,
 } as const;
 
-/** Códigos que devuelve `ACQUIRE_SCRIPT` (enteros). */
+/**
+ * Códigos que devuelve `ACQUIRE_SCRIPT`, como primer elemento de `{código, reloj}` (el reloj: 1 = `TIME`
+ * de Redis, 0 = hora del cliente; ver `NOW`).
+ */
 export const ACQUIRE_CODES = {
   /** Concedida al chat (sin cupo por partida). */
   allowedChat: 0,
@@ -61,14 +64,19 @@ export const ACQUIRE_CODES = {
   // 1…movesPerGame: concedida a movimientos; es la consulta número N de la partida.
 } as const;
 
-/** Hora del servidor de Redis (igual para todas las instancias); si no se puede leer, la del cliente. */
+/**
+ * Hora del servidor de Redis (igual para todas las instancias); si no se puede leer, la del cliente.
+ * `clock` deja constancia de cuál se ha usado: 1 = `TIME` de Redis, 0 = hora del cliente.
+ */
 const NOW = `
 local now
+local clock = 1
 local ok, t = pcall(redis.call, 'TIME')
 if ok and type(t) == 'table' then
   now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 else
   now = tonumber(ARGV[3])
+  clock = 0
 end
 `;
 
@@ -80,25 +88,26 @@ end
  * KEYS: ventana, bloqueo[, cupo de la partida, marca de la concesión]
  * ARGV: consumidor, id de la concesión, hora del cliente (ms), límite global, límite por consumidor,
  *       ventana (ms), cupo por partida, caducidad del cupo (ms), vida de la marca (ms)
+ * Devuelve `{código, reloj}` (ver `ACQUIRE_CODES` y `NOW`).
  */
 export const ACQUIRE_SCRIPT = `${NOW}
 local consumer = ARGV[1]
 local blocked = tonumber(redis.call('GET', KEYS[2]) or '0')
-if blocked > now then return ${ACQUIRE_CODES.blocked} end
+if blocked > now then return {${ACQUIRE_CODES.blocked}, clock} end
 local windowMs = tonumber(ARGV[6])
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - windowMs)
 local entries = redis.call('ZRANGE', KEYS[1], 0, -1)
-if #entries >= tonumber(ARGV[4]) then return ${ACQUIRE_CODES.globalLimited} end
+if #entries >= tonumber(ARGV[4]) then return {${ACQUIRE_CODES.globalLimited}, clock} end
 local mine = 0
 local prefix = consumer .. ':'
 for _, member in ipairs(entries) do
   if string.sub(member, 1, #prefix) == prefix then mine = mine + 1 end
 end
-if mine >= tonumber(ARGV[5]) then return ${ACQUIRE_CODES.consumerLimited} end
+if mine >= tonumber(ARGV[5]) then return {${ACQUIRE_CODES.consumerLimited}, clock} end
 local result = ${ACQUIRE_CODES.allowedChat}
 if #KEYS >= 4 then
   local used = tonumber(redis.call('GET', KEYS[3]) or '0')
-  if used >= tonumber(ARGV[7]) then return ${ACQUIRE_CODES.quotaExhausted} end
+  if used >= tonumber(ARGV[7]) then return {${ACQUIRE_CODES.quotaExhausted}, clock} end
   used = redis.call('INCR', KEYS[3])
   if used == 1 then redis.call('PEXPIRE', KEYS[3], ARGV[8]) end
   local ttl = redis.call('PTTL', KEYS[3])
@@ -109,7 +118,7 @@ if #KEYS >= 4 then
 end
 redis.call('ZADD', KEYS[1], now, prefix .. ARGV[2])
 redis.call('PEXPIRE', KEYS[1], windowMs)
-return result
+return {result, clock}
 `;
 
 /**

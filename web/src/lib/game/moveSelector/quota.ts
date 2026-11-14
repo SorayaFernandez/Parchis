@@ -28,8 +28,11 @@ export type QuotaResult =
   | { kind: "allowed"; used: number; refund?: () => Promise<boolean> }
   /** Ya se han hecho las 20: estrategia local sin consultar. */
   | { kind: "exhausted" }
-  /** Límite global o de movimientos en la ventana, o bloqueo tras un 429: estrategia local sin consultar. */
-  | { kind: "rate_limited" }
+  /**
+   * Sin permiso del limitador global: `global` (4 entre chat y movimientos en 60 s), `consumer` (2 de
+   * movimientos en 60 s) o `blocked` (bloqueo tras un 429). Estrategia local sin consultar.
+   */
+  | { kind: "rate_limited"; reason: "global" | "consumer" | "blocked" }
   /** Redis no responde, falla o responde algo inesperado: estrategia local (no se asume que haya cupo). */
   | { kind: "unavailable" };
 
@@ -53,8 +56,9 @@ export function createLimitedMoveQuota(limiter: GatewayLimiter): MoveQuota {
         case "quota_exhausted":
           return { kind: "exhausted" };
         case "blocked":
+          return { kind: "rate_limited", reason: "blocked" };
         case "rate_limited":
-          return { kind: "rate_limited" };
+          return { kind: "rate_limited", reason: result.scope };
         default:
           return { kind: "unavailable" };
       }

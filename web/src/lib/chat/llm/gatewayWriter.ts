@@ -49,6 +49,30 @@ export interface LlmBreaker {
 
 export const createLlmBreaker = (): LlmBreaker => ({ blockedUntil: 0 });
 
+/** Resultado del permiso del limitador global para el chat (ver `src/lib/llm/`). */
+export type ChatAcquireOutcome =
+  | "allowed"
+  /** 4 llamadas en 60 s entre chat y movimientos. */
+  | "global"
+  /** 2 llamadas del chat en 60 s. */
+  | "consumer"
+  /** Bloqueo global tras un 429. */
+  | "blocked"
+  /** Upstash no responde, falla o responde algo inesperado. */
+  | "unavailable";
+
+/**
+ * Motivos (textos fijos) de un `cooldown` del chat: el corte temporal local de este proceso o cada
+ * denegación del limitador global. `logChatError` los muestra; cualquier otro texto, no.
+ */
+export const COOLDOWN_REASONS = {
+  local: "corte temporal local",
+  global: "límite global",
+  consumer: "límite del chat",
+  blocked: "bloqueo global",
+  unavailable: "limitador no disponible",
+} as const;
+
 export interface GatewayWriterDeps {
   config: Extract<ChatLlmConfig, { enabled: true }>;
   fetch: typeof fetch;
@@ -62,7 +86,7 @@ export interface GatewayWriterDeps {
    * Redis no disponible), no se llama al modelo y el servicio usa la frase local. `schedule.ts` no crea el
    * escritor LLM sin limitador; sin esta dependencia (solo en pruebas), se llama como antes.
    */
-  acquire?: () => Promise<boolean>;
+  acquire?: () => Promise<ChatAcquireOutcome>;
   /** Tras un 429, con la duración del corte: activa el bloqueo global compartido. No reintenta. */
   onRateLimited?: (durationMs: number) => void | Promise<void>;
 }
@@ -383,7 +407,7 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
 
   return {
     async write(request: ChatWriteRequest): Promise<WrittenText | null> {
-      if (now() < deps.breaker.blockedUntil) fail(new ChatLlmError("cooldown", "corte temporal activo"));
+      if (now() < deps.breaker.blockedUntil) fail(new ChatLlmError("cooldown", COOLDOWN_REASONS.local));
 
       // Respeta la cancelación del servicio y, además, su propio `timeoutMs`.
       const timeoutMs = Math.max(1, Math.min(request.timeoutMs ?? CHAT_LIMITS.writerTimeoutMs, CHAT_LIMITS.writerTimeoutMs));
@@ -407,8 +431,8 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       // Límite global, justo antes de enviar. Una petición ya cancelada no gasta hueco.
       if (deps.acquire) {
         if (signal.aborted) fail(new ChatLlmError("aborted", "cancelada o fuera de tiempo"));
-        const allowed = await deps.acquire().catch(() => false);
-        if (!allowed) fail(new ChatLlmError("cooldown", "límite global de AI Gateway"));
+        const outcome = await deps.acquire().catch((): ChatAcquireOutcome => "unavailable");
+        if (outcome !== "allowed") fail(new ChatLlmError("cooldown", COOLDOWN_REASONS[outcome] ?? COOLDOWN_REASONS.unavailable));
       }
 
       let response: Response;

@@ -27,8 +27,9 @@ describe("createLimitedMoveQuota", () => {
     expect(allowed).toMatchObject({ kind: "allowed", used: 7 });
     expect(typeof (allowed as { refund?: unknown }).refund).toBe("function");
     expect(await createLimitedMoveQuota(fixed({ kind: "quota_exhausted" })).tryConsume(GAME)).toEqual({ kind: "exhausted" });
-    expect(await createLimitedMoveQuota(fixed({ kind: "rate_limited" })).tryConsume(GAME)).toEqual({ kind: "rate_limited" });
-    expect(await createLimitedMoveQuota(fixed({ kind: "blocked" })).tryConsume(GAME)).toEqual({ kind: "rate_limited" });
+    expect(await createLimitedMoveQuota(fixed({ kind: "rate_limited", scope: "global" })).tryConsume(GAME)).toEqual({ kind: "rate_limited", reason: "global" });
+    expect(await createLimitedMoveQuota(fixed({ kind: "rate_limited", scope: "consumer" })).tryConsume(GAME)).toEqual({ kind: "rate_limited", reason: "consumer" });
+    expect(await createLimitedMoveQuota(fixed({ kind: "blocked" })).tryConsume(GAME)).toEqual({ kind: "rate_limited", reason: "blocked" });
     expect(await createLimitedMoveQuota(fixed({ kind: "unavailable" })).tryConsume(GAME)).toEqual({ kind: "unavailable" });
     // Una concesión sin datos de la partida no se da por buena.
     expect(await createLimitedMoveQuota(fixed({ kind: "allowed", grant: null })).tryConsume(GAME)).toEqual({ kind: "unavailable" });
@@ -46,6 +47,6 @@ describe("createLimitedMoveQuota", () => {
     expect(await refund()).toBe(false);
     expect(m.getString(LIMITER_KEYS.movesQuota(GAME))?.value).toBe("1");
     // La tercera de movimientos en la misma ventana se deniega (2 por consumidor): el hueco no se devolvió.
-    expect(await quota.tryConsume(GAME)).toEqual({ kind: "rate_limited" });
+    expect(await quota.tryConsume(GAME)).toEqual({ kind: "rate_limited", reason: "consumer" });
   });
 });

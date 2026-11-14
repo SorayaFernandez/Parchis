@@ -124,10 +124,12 @@ describe("F4: cuándo se consume cupo", () => {
 describe("F4: sin cupo, estrategia local sin consultar al modelo", () => {
   it.each([
     ["cupo agotado", (): MoveQuota => ({ tryConsume: async () => ({ kind: "exhausted" }) }), "cupo agotado"],
-    ["Redis no disponible", (): MoveQuota => createLimitedMoveQuota(createGatewayLimiter({ eval: async () => { throw new Error("caído"); } })), "cupo no disponible"],
-    ["respuesta inesperada de Redis", (): MoveQuota => createLimitedMoveQuota(createGatewayLimiter({ eval: async () => "OK" })), "cupo no disponible"],
-    ["límite global (ventana llena)", (): MoveQuota => ({ tryConsume: async () => ({ kind: "rate_limited" }) }), "límite global"],
-    ["cupo que lanza (no debería)", (): MoveQuota => ({ tryConsume: async () => { throw new Error("x"); } }), "cupo no disponible"],
+    ["Redis no disponible", (): MoveQuota => createLimitedMoveQuota(createGatewayLimiter({ eval: async () => { throw new Error("caído"); } })), "limitador no disponible"],
+    ["respuesta inesperada de Redis", (): MoveQuota => createLimitedMoveQuota(createGatewayLimiter({ eval: async () => "OK" })), "limitador no disponible"],
+    ["límite global", (): MoveQuota => ({ tryConsume: async () => ({ kind: "rate_limited", reason: "global" }) }), "límite global"],
+    ["límite de movimientos", (): MoveQuota => ({ tryConsume: async () => ({ kind: "rate_limited", reason: "consumer" }) }), "límite de movimientos"],
+    ["bloqueo global", (): MoveQuota => ({ tryConsume: async () => ({ kind: "rate_limited", reason: "blocked" }) }), "bloqueo global"],
+    ["cupo que lanza (no debería)", (): MoveQuota => ({ tryConsume: async () => { throw new Error("x"); } }), "limitador no disponible"],
   ])("%s: jugada local, sin llamar al selector, y la partida avanza sin errores", async (_, makeQuota, reason) => {
     const state = twoOptions();
     const { repository, id, rows } = await newGame(state);
@@ -146,7 +148,7 @@ describe("F4: sin cupo, estrategia local sin consultar al modelo", () => {
     const reasons: MoveFallbackReason[] = [];
     await advanceGame(id, 1, deps(repository, { moveSelector: s.selector, onMoveFallback: (r) => reasons.push(r) }));
     expect(s.calls()).toBe(0);
-    expect(reasons).toEqual(["cupo no disponible"]);
+    expect(reasons).toEqual(["limitador no disponible"]);
   });
 });
 
@@ -237,7 +239,7 @@ describe("límite global y 429 del proveedor", () => {
     return { selector, fetch };
   }
 
-  it("con la ventana de movimientos llena: jugada local sin llamar al modelo y sin gastar cupo", async () => {
+  it("con la parte de movimientos de la ventana llena: «límite de movimientos», jugada local sin llamar y sin gastar cupo", async () => {
     const m = memoryRedis();
     const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now });
     // Dos consultas de movimientos de otra partida llenan la parte de movimientos de la ventana.
@@ -250,8 +252,45 @@ describe("límite global y 429 del proveedor", () => {
     const result = await advanceGame(id, 1, deps(repository, { moveSelector: s.selector, moveQuota: createLimitedMoveQuota(limiter), onMoveFallback: (r) => reasons.push(r) }));
     expect(result).toMatchObject({ kind: "advanced", action: { type: "move", pieceIndex: chooseMove(state, getAvailableMoves(state)) } });
     expect(s.calls()).toBe(0);
-    expect(reasons).toEqual(["límite global"]);
+    expect(reasons).toEqual(["límite de movimientos"]);
     expect(m.getString(LIMITER_KEYS.movesQuota(id))).toBeUndefined();
+  });
+
+  it("con la ventana global llena (2 del chat y 2 de movimientos): «límite global»; tras un 429, «bloqueo global»", async () => {
+    const m = memoryRedis();
+    const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now });
+    await limiter.acquire({ consumer: "chat" });
+    await limiter.acquire({ consumer: "chat" });
+    await limiter.acquire({ consumer: "moves", gameId: "3f39156e-12ec-4bd0-86af-58a5ccf8cd66" });
+    const s = lastOptionSelector();
+    const reasons: MoveFallbackReason[] = [];
+    // 2 del chat y 2 de movimientos: la ventana tiene 4 y el script comprueba el límite global antes que
+    // el del consumidor, así que el motivo es «límite global».
+    await limiter.acquire({ consumer: "moves", gameId: "3f39156e-12ec-4bd0-86af-58a5ccf8cd66" });
+    const a = await newGame(twoOptions());
+    await advanceGame(a.id, 1, deps(a.repository, { moveSelector: s.selector, moveQuota: createLimitedMoveQuota(limiter), onMoveFallback: (r) => reasons.push(r) }));
+    m.clock.now += 60_000;
+    await limiter.reportRateLimited(30_000);
+    const b = await newGame(twoOptions());
+    await advanceGame(b.id, 1, deps(b.repository, { moveSelector: s.selector, moveQuota: createLimitedMoveQuota(limiter), onMoveFallback: (r) => reasons.push(r) }));
+    expect(reasons).toEqual(["límite global", "bloqueo global"]);
+    expect(s.calls()).toBe(0);
+  });
+
+  it("corte temporal local del selector y petición cancelada: sus motivos, sin pedir permiso al limitador", async () => {
+    const q = countingQuota();
+    const breakerSelector = createMoveSelector({
+      config: { enabled: true, apiKey: "clave-de-prueba", model: MOVES_LLM.model, provider: null },
+      fetch: vi.fn() as unknown as typeof globalThis.fetch,
+      breaker: { blockedUntil: Number.MAX_SAFE_INTEGER },
+    });
+    const reasons: MoveFallbackReason[] = [];
+    const a = await newGame(twoOptions());
+    await advanceGame(a.id, 1, deps(a.repository, { moveSelector: breakerSelector, moveQuota: q.quota, onMoveFallback: (r) => reasons.push(r) }));
+    const b = await newGame(twoOptions());
+    await advanceGame(b.id, 1, deps(b.repository, { moveSelector: lastOptionSelector().selector, moveQuota: q.quota, signal: AbortSignal.abort(), onMoveFallback: (r) => reasons.push(r) }));
+    expect(reasons).toEqual(["corte temporal local", "petición cancelada"]);
+    expect(q.attempts).toEqual([]);
   });
 
   it("429 del proveedor: bloqueo global (chat y movimientos), la consulta de la partida se devuelve una vez y el hueco global no", async () => {

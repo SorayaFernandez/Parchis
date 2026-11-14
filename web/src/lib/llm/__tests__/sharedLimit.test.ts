@@ -37,7 +37,10 @@ function world(respondChat: () => Response = () => Response.json({ choices: [{ m
     config: { enabled: true, apiKey: KEY, model: MOVES_LLM.model, provider: null },
     fetch: chatFetch as unknown as typeof fetch,
     breaker: createLlmBreaker(),
-    acquire: async () => (await limiter.acquire({ consumer: "chat" })).kind === "allowed",
+    acquire: async () => {
+      const r = await limiter.acquire({ consumer: "chat" });
+      return r.kind === "allowed" ? "allowed" : r.kind === "rate_limited" ? r.scope : r.kind === "blocked" ? "blocked" : "unavailable";
+    },
     onRateLimited: (ms) => limiter.reportRateLimited(ms),
   });
   const selector = createMoveSelector({

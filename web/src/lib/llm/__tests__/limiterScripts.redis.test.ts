@@ -108,9 +108,12 @@ describe.skipIf(!URL_)("limitador contra Redis real (Docker)", () => {
   });
   afterAll(() => connections.forEach((c) => c.close()));
 
-  it("el script usa la hora del servidor (TIME) y concede la primera llamada", async () => {
-    const [limiter] = await instances(1);
+  it("el script usa la hora del servidor (TIME), lo informa (sin aviso de reloj del cliente) y concede la primera llamada", async () => {
+    const lines: string[] = [];
+    const [limiter] = await instances(1, { log: (l: string) => lines.push(l), summaryIntervalMs: 0 });
     expect(await limiter.acquire({ consumer: "chat" })).toEqual({ kind: "allowed", grant: null });
+    expect(lines.some((l) => l.includes("aviso"))).toBe(false);
+    expect(lines.at(-1)).toContain("reloj redis=1 cliente=0");
     const members = (await admin.command("ZRANGE", LIMITER_KEYS.window, 0, -1, "WITHSCORES")) as string[];
     const serverNow = (await admin.command("TIME")) as string[];
     expect(Math.abs(Number(members[1]) - Number(serverNow[0]) * 1000)).toBeLessThan(5_000);
@@ -122,6 +125,10 @@ describe.skipIf(!URL_)("limitador contra Redis real (Docker)", () => {
       Array.from({ length: 60 }, (_, i) => limiters[i % 12].acquire(i % 2 ? { consumer: "chat" } : { consumer: "moves", gameId: GAME })),
     );
     expect(results.filter((r) => r.kind === "allowed")).toHaveLength(4);
+    // Cada denegación con su motivo: las del consumidor (cuando ese consumidor ya tiene 2) y las globales.
+    const denied = results.filter((r) => r.kind === "rate_limited") as { scope: string }[];
+    expect(denied).toHaveLength(56);
+    expect(denied.every((r) => r.scope === "global" || r.scope === "consumer")).toBe(true);
     const members = (await admin.command("ZRANGE", LIMITER_KEYS.window, 0, -1)) as string[];
     expect(members.filter((m) => m.startsWith("chat:"))).toHaveLength(2);
     expect(members.filter((m) => m.startsWith("moves:"))).toHaveLength(2);

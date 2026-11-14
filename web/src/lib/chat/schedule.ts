@@ -46,7 +46,12 @@ export function chatWriters(env: Readonly<Record<string, string | undefined>> = 
     fetch: (...args) => fetch(...args),
     breaker: llmBreaker,
     onFailure: (error) => logChatError("escritor LLM", error),
-    acquire: async () => (await limiter.acquire({ consumer: "chat" })).kind === "allowed",
+    acquire: async () => {
+      const result = await limiter.acquire({ consumer: "chat" });
+      if (result.kind === "allowed") return "allowed";
+      if (result.kind === "rate_limited") return result.scope;
+      return result.kind === "blocked" ? "blocked" : "unavailable";
+    },
     // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
     onRateLimited: (durationMs) => limiter.reportRateLimited(durationMs),
   });
