@@ -9,7 +9,7 @@
 import type { GameEvent, GameState, PlayerId } from "@/lib/engine";
 import { GameEventSchema, GameStateSchema } from "@/lib/game/schemas";
 import { CHAT_LIMITS, CHAT_STORAGE } from "./config";
-import { initialDirectorState, planChat, recordPublished, trackCaptures, type Random, type Utterance } from "./director";
+import { gameLeader, initialDirectorState, planChat, recordPublished, trackCaptures, type Random, type Utterance } from "./director";
 import { DirectorStateSchema, type DirectorState } from "./schemas";
 import type { ChatStore, ClaimedBatch, QueueItem, QueuedMessage } from "./store";
 import { validateChatText, type ChatWriteRequest, type ChatWriter, type RecentText, type WrittenText } from "./writer";
@@ -188,7 +188,8 @@ async function processItem(
   }
 
   const gameStatus = state.success ? state.data.status : undefined;
-  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective, gameStatus);
+  const leader = state.success ? gameLeader(state.data as GameState) : undefined;
+  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective, gameStatus, leader);
   next = recordPublished(
     next,
     item.version,
@@ -209,6 +210,7 @@ async function writeUtterances(
   lease: LeaseClock,
   minimal: boolean,
   gameStatus: GameState["status"] | undefined,
+  leader: PlayerId | null | undefined,
 ): Promise<{ message: QueuedMessage; lineId?: string }[]> {
   const recent: RecentText[] = [...director.recent];
   const messages: QueuedMessage[] = [];
@@ -224,6 +226,7 @@ async function writeUtterances(
       usedLines: director.usedLines[utterance.speaker] ?? [],
       usedCatchphrases: director.usedCatchphrases[utterance.speaker] ?? [],
       ...(gameStatus ? { gameStatus } : {}),
+      ...(leader !== undefined ? { leader } : {}),
     };
     let written = minimal ? await deps.fallbackWriter.write(request) : await writeWithFallback(request, deps, lease);
     let text = written ? validateChatText(written.text, recent) : null;

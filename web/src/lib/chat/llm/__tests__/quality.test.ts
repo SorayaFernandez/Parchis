@@ -882,7 +882,8 @@ describe("cada regla nueva por separado", () => {
         ] as const) {
           expect(checkQuality(text, byReq({ trigger: "capture_streak", kind: "streak_boast" })), text).toEqual(unsupported(`cifra ${n} (historial incompleto)`));
         }
-        expect(checkQuality("Me has pillado una vez más, Brava.", victimReq())).toBeNull(); // expresión hecha
+        // «una vez más» junto a la captura afirma que ya había pasado antes: sin historial, no es verificable.
+        expect(checkQuality("Me has pillado una vez más, Brava.", victimReq())).toEqual(unsupported("captura repetida"));
         expect(checkQuality("¡Capturas seguidas, Chispa!", byReq())).toEqual(unsupported("seguidas (historial incompleto)"));
       });
 
@@ -1297,7 +1298,7 @@ describe("hasDiscardedExpression: expresiones descartadas que no se citan en el 
       expect(hasDiscardedExpression(text), text).toBe(false);
     }
     for (const c of CHARACTERS) {
-      for (const lines of Object.values(c.chat.lines)) for (const line of lines) expect(hasDiscardedExpression(line, c.id), `${c.name}: ${line}`).toBe(false);
+      for (const lines of Object.values(c.chat.lines)) for (const line of lines) expect(hasDiscardedExpression(line), `${c.name}: ${line}`).toBe(false);
     }
   });
 });
@@ -1459,12 +1460,12 @@ describe("frases repetidas de las pruebas reales y «¡Voy ganando!» de Chispa"
     }
   });
 
-  it("Chispa no dice «voy en cabeza» (dice «¡Voy ganando!»)", () => {
-    // El LLM no puede afirmar su posición en ninguna intervención: se rechaza antes de llegar al chat.
+  it("nadie dice «voy en cabeza» (se dice «¡Voy ganando!»), ni se cita en el prompt", () => {
+    // Afirmar la posición sin respaldo se rechaza antes de llegar al chat.
     expect(reject("¡Voy en cabeza! Que no se acabe la suerte.", say("ai-blue", "ai-pink"))).toEqual({ reason: "afirmación no respaldada", detail: "termino=voy en cabeza" });
-    // Filtrado del historial que se cita en el prompt: el «voy en cabeza» de Chispa no se cita; el de Brava, sí.
-    expect(hasDiscardedExpression("¡Voy en cabeza! Que no se acabe la suerte.", "ai-blue")).toBe(true);
-    expect(hasDiscardedExpression("Voy en cabeza. Hoy me salen las tiradas.", "ai-pink")).toBe(false);
+    // Expresión retirada para todos, también en el historial citado.
+    expect(hasDiscardedExpression("¡Voy en cabeza! Que no se acabe la suerte.")).toBe(true);
+    expect(hasDiscardedExpression("Voy en cabeza. Hoy me salen las tiradas.")).toBe(true);
   });
 
   it("las frases antiguas se citaban como modelo y ya no se citan en el prompt", () => {
@@ -1485,5 +1486,98 @@ describe("frases repetidas de las pruebas reales y «¡Voy ganando!» de Chispa"
     }
     expect(chispa.chat.lines.ambient_lead).toContain("¡Voy ganando! Que no se acabe la suerte.");
     expect(chispa.chat.lines.ambient_lead.some((l) => /^¡?Voy ganando/.test(l))).toBe(true);
+  });
+});
+
+describe("expresiones retiradas, «Voy ganando» con respaldo y capturas repetidas", () => {
+  const UNNATURAL = "expresión poco natural";
+  const unsupportedIssue = (term: string) => ({ reason: "afirmación no respaldada", term });
+  const capture = (speaker: string, rival: string, extra: Partial<Utterance> = {}) => say(speaker, rival, extra);
+  const lament = (speaker: string, rival: string, extra: Partial<Utterance> = {}) => say(speaker, rival, { kind: "capture_lament", ...extra });
+  const withLeader = (request: Request, leader: string | null) => ({ ...request, leader });
+
+  it("«¡Me la he quedado!» y sus variantes se rechazan (y no se citan en el prompt)", () => {
+    for (const text of ["¡Me la he quedado!", "¡Esta me la quedo, Chispa!", "Me las quedo todas, Chispa.", "Voy a quedármela, Chispa.", "Me quedo con tu ficha, Chispa.", "¡Nos la quedamos!"]) {
+      expect(checkQuality(text, capture("ai-pink", "ai-blue")), text).toEqual({ reason: UNNATURAL, term: "me la he quedado" });
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    expect(reject("¡Me la he quedado, Chispa!", capture("ai-pink", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=me la he quedado" });
+    // Frases naturales parecidas.
+    for (const text of ["Me he quedado sin ficha, Brava.", "Me quedo con las ganas, Brava.", "Me quedo tranquila, Brava."]) {
+      expect(checkQuality(text, lament("ai-blue", "ai-pink")), text).toBeNull();
+    }
+  });
+
+  it("«contratiempo» (como «Un pequeño contratiempo, Chispa. Nada más.») se rechaza para todos", () => {
+    expect(reject("Un pequeño contratiempo, Chispa. Nada más.", lament("ai-purple", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=contratiempo" });
+    for (const text of ["Solo es un contratiempo, Brava.", "Menudo contratiempo, Brava."]) {
+      expect(checkQuality(text, lament("ai-blue", "ai-pink")), text).toEqual({ reason: UNNATURAL, term: "contratiempo" });
+    }
+    expect(hasDiscardedExpression("Un pequeño contratiempo, Chispa. Nada más.")).toBe(true);
+  });
+
+  it("«en cabeza» se rechaza siempre, aunque quien lo dice vaya ganando", () => {
+    expect(checkQuality("Voy en cabeza, Chispa.", withLeader(capture("ai-pink", "ai-blue"), "ai-pink"))).toEqual(unsupportedIssue("voy en cabeza"));
+    expect(checkQuality("La abuela va en cabeza, Chispa.", withLeader(capture("ai-green", "ai-blue"), "ai-green"))).toEqual(unsupportedIssue("va en cabeza"));
+    expect(checkQuality("¡En cabeza, Chispa!", withLeader(capture("ai-pink", "ai-blue"), "ai-pink"))).toEqual(unsupportedIssue("en cabeza"));
+    expect(hasDiscardedExpression("La abuela va en cabeza. Tomad nota, cariños.")).toBe(true);
+  });
+
+  it("«Voy ganando» solo si los datos reales dicen que quien habla va ganando (no por capturar)", () => {
+    const text = "¡Te comí, Chispa! Voy ganando.";
+    // Sin el dato, con otro en cabeza, o sin nadie en cabeza: no.
+    expect(checkQuality(text, capture("ai-pink", "ai-blue"))).toEqual(unsupportedIssue("voy ganando"));
+    expect(checkQuality(text, withLeader(capture("ai-pink", "ai-blue"), "ai-green"))).toEqual(unsupportedIssue("voy ganando"));
+    expect(checkQuality(text, withLeader(capture("ai-pink", "ai-blue"), null))).toEqual(unsupportedIssue("voy ganando"));
+    // Con Brava en cabeza de verdad, sí (flujo completo).
+    expect(reject(text, withLeader(capture("ai-pink", "ai-blue"), "ai-pink"))).toBeNull();
+    // «vas/va ganando» solo del rival, si es él quien va ganando.
+    expect(checkQuality("Vas ganando, Brava, pero esta es mía.", withLeader(lament("ai-blue", "ai-pink"), "ai-pink"))).toBeNull();
+    expect(checkQuality("Vas ganando, Brava, pero esta es mía.", withLeader(lament("ai-blue", "ai-pink"), "ai-blue"))).toEqual(unsupportedIssue("vas ganando"));
+    // El resto de afirmaciones de posición sigue rechazado aunque vaya ganando.
+    expect(checkQuality("Voy primera, Chispa.", withLeader(capture("ai-pink", "ai-blue"), "ai-pink"))).toEqual(unsupportedIssue("voy primera"));
+    expect(checkQuality("Vas perdiendo, Chispa.", withLeader(capture("ai-pink", "ai-blue"), "ai-pink"))).toEqual(unsupportedIssue("vas perdiendo"));
+  });
+
+  it("«me comiste la ficha de nuevo» y equivalentes solo con dos capturas reales de esa pareja", () => {
+    const once = factsOf([cap(10, "ai-pink", "ai-blue")], "ai-blue");
+    const twice = factsOf([cap(10, "ai-pink", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-blue");
+    const otherRival = factsOf([cap(10, "ai-green", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-blue");
+    const variants = [
+      "Maldición, me comiste la ficha de nuevo, Brava.",
+      "Otra vez me pillas, Brava.",
+      "Me has comido otra ficha, Brava.",
+      "Me vuelves a comer, Brava.",
+      "Me has mandado a casa otra vez, Brava.",
+    ];
+    for (const text of variants) {
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: once })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: otherRival })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: { history: "incomplete", selfRole: "victim" } })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: twice })), text).toBeNull();
+    }
+    // Desde quien captura: «te he comido otra vez» cuenta sus capturas a ese rival.
+    const brava = factsOf([cap(10, "ai-pink", "ai-blue")], "ai-pink");
+    expect(checkQuality("Te he comido otra vez, Chispa.", capture("ai-pink", "ai-blue", { captures: brava }))).toEqual(unsupportedIssue("captura repetida"));
+    // Sin repetición: la frase de Chispa, y «de nuevo» u «otra vez» lejos del verbo de captura.
+    expect(reject("Maldición, me comiste la ficha, Brava.", lament("ai-blue", "ai-pink", { captures: once }))).toBeNull();
+    expect(checkQuality("¡Te pillé, Brava! A empezar de nuevo.", capture("ai-blue", "ai-pink", { captures: factsOf([cap(10, "ai-blue", "ai-pink")], "ai-blue") }))).toBeNull();
+    expect(checkQuality("¿Otra vez? ¡Me tenéis manía!", lament("ai-pink", "ai-blue", { captures: factsOf([cap(10, "ai-blue", "ai-pink")], "ai-pink") }))).toBeNull();
+  });
+
+  it("catálogo: ninguna expresión retirada, «ganando» solo en `ambient_lead` y la frase de Chispa sin «de nuevo»", () => {
+    for (const c of CHARACTERS) {
+      for (const [kind, lines] of Object.entries(c.chat.lines)) {
+        for (const line of lines) {
+          expect(line, `${c.name}: ${line}`).not.toMatch(/en cabeza|contratiempo|me las? (he )?qued|quedármela|me comiste la ficha de nuevo|vuelto a comer/i);
+          expect(hasDiscardedExpression(line), `${c.name}: ${line}`).toBe(false);
+          if (/ganando/i.test(line)) expect(kind, `${c.name}: ${line}`).toBe("ambient_lead");
+        }
+      }
+    }
+    const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
+    expect(chispa.chat.lines.capture_lament).toContain("Maldición, me comiste la ficha, {rival}.");
+    expect(CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.ambient_lead).toContain("Voy ganando. Hoy me salen las tiradas.");
+    expect(CHARACTERS.find((c) => c.id === "ai-green")!.chat.lines.ambient_lead).toContain("La abuela va ganando. Tomad nota, cariños.");
   });
 });

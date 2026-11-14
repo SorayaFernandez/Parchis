@@ -42,6 +42,12 @@ export interface ChatWriteRequest {
    * válido, victoria en modo mínimo) no se sabe si la partida sigue: el validador no concluye nada.
    */
   gameStatus?: GameState["status"];
+  /**
+   * Quién va ganando según los datos reales (`gameLeader`: el primero en solitario por progreso mientras
+   * nadie ha terminado), o `null` si nadie. Sin él (estado no válido) no se sabe. Solo con él puede el
+   * validador aceptar un «voy ganando».
+   */
+  leader?: PlayerId | null;
 }
 
 export interface WrittenText {

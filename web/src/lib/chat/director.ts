@@ -286,9 +286,17 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
     return bypass || last === undefined || version - last >= CHAT_LIMITS.characterCooldown;
   };
 
+  // Las ganas de hablar (`talkativeness`) cuentan UNA sola vez: deciden quién habla (el peso de cada
+  // candidato) y, si solo hay un candidato posible, también si habla. Antes también se multiplicaban por la
+  // probabilidad del elegido, así que un personaje reservado se penalizaba dos veces cuando había varios
+  // candidatos (en una captura entre Don Ernesto y Brava, él hablaba un 13 % de las veces y ella un 29 %).
+  // Ahora la probabilidad de que alguien comente es la del más dispuesto, y después se elige quién.
   const choose = (trigger: ChatTrigger, triggerChance: number, candidates: Candidate[], important: boolean) => {
-    const main = pick(candidates.filter((c) => rested(c.speaker)), (c) => c.weight, random);
-    if (!main || !chance(triggerChance * talk(main.speaker), random)) return null;
+    const ready = candidates.filter((c) => rested(c.speaker) && c.weight > 0);
+    const willing = Math.max(0, ...ready.map((c) => talk(c.speaker)));
+    if (ready.length === 0 || !chance(triggerChance * willing, random)) return null;
+    const main = pick(ready, (c) => c.weight, random);
+    if (!main) return null;
     const utterances: Utterance[] = [
       { speaker: main.speaker, kind: main.kind, trigger, rival: main.rival, replyTo: null, important, ...(main.streak ? { streak: main.streak } : {}) },
     ];
@@ -405,6 +413,19 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
   }
 
   return done([]);
+}
+
+/**
+ * Quién va ganando la partida según los datos reales: el primero en solitario por progreso, solo mientras
+ * nadie ha terminado y la partida sigue (el mismo criterio que da `ambient_lead`). `null` si hay empate en
+ * cabeza o ya ha terminado alguien.
+ */
+export function gameLeader(state: GameState): PlayerId | null {
+  if (state.status !== "playing" || state.ranking.length > 0) return null;
+  const players = getPlayerSummaries(state);
+  const max = Math.max(...players.map((p) => p.progress));
+  const atMax = players.filter((p) => p.progress === max);
+  return players.length > 1 && atMax.length === 1 ? atMax[0].id : null;
 }
 
 /**

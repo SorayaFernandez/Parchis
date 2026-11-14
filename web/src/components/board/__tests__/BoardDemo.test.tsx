@@ -38,6 +38,9 @@ describe("/tablero: demo sobre GameView", () => {
     expect(html).toContain("Demostración local");
     expect(html).toContain("Demostración en este navegador");
     expect(html).not.toContain(">ID<");
+    expect(html).not.toContain("Versión");
+    // «Partida» va encima de «Últimas jugadas» desde lg (en móvil, el orden del HTML: debajo).
+    expect(html).toMatch(/aria-label="Datos de la partida" class="[^"]*\blg:order-first\b/);
     for (const button of ["Pausar", "Siguiente acción", "Lanzar dado", "Reiniciar demo", "Partida nueva", "Ejemplo"]) expect(html).toContain(button);
     // Empieza reproduciéndose.
     expect(html).toMatch(/aria-pressed="true"[^>]*>Pausar/);
@@ -50,6 +53,8 @@ describe("/tablero: demo sobre GameView", () => {
     expect(html).toContain(">ID<");
     expect(html).toContain("3f39156e-12ec-4bd0-86af-58a5ccf8cd66");
     expect(html).toContain("Actualizada");
+    expect(html).not.toContain("Versión");
+    expect(html).toMatch(/aria-label="Datos de la partida" class="[^"]*\blg:order-first\b/);
     expect(html).not.toContain("Demostración");
     expect(html).not.toContain("Siguiente acción");
     expect(renderToStaticMarkup(<GameView game={game()} demo={false} controls={undefined} />)).toBe(html);

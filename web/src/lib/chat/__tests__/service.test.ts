@@ -3,8 +3,8 @@ import { applyAction, createGame, type GameEvent, type GameState } from "@/lib/e
 import { createSeededRandom, decideAction } from "@/lib/game/ai";
 import { CHARACTERS, CHARACTER_IDS, CHARACTER_NAMES } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "../config";
-import { drainChat, type ChatDeps } from "../service";
-import { createLocalWriter, similarity, type ChatWriter } from "../writer";
+import { drainChat, processBatch, type ChatDeps } from "../service";
+import { createLocalWriter, similarity, type ChatWriter, type ChatWriteRequest } from "../writer";
 import { createMemoryChatStore } from "./memoryChatStore";
 
 const GAME = "751bb3b5-52dc-4e00-86eb-3085d4357dad";
@@ -907,5 +907,30 @@ describe("P4: continuidad del historial de punta a punta (procesador real, sin c
       // Los disparadores de racha siguen ocurriendo (no cambian), con frases sin datos.
       if (seed === 1) expect(streakRows.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("contexto de «voy ganando»: el escritor recibe quién va ganando según el estado real", () => {
+  const requestsFor = async (state: GameState) => {
+    const seen: ChatWriteRequest[] = [];
+    const local = createLocalWriter(createSeededRandom(1));
+    const writer: ChatWriter = { write: (request) => (seen.push(request), local.write(request)) };
+    const events: GameEvent[] = [{ type: "piece_captured", playerId: "ai-pink", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 }];
+    // Azar que siempre deja hablar: así hay al menos una petición al escritor.
+    await processBatch(
+      { items: [{ version: 101, events, state, isVictory: false, attempts: 1 }], lastVersion: 100, through: 101, latest: 101, messageCount: 0, directorState: null },
+      { store: {} as ChatDeps["store"], writer, fallbackWriter: writer, random: () => 0, newToken: () => "t" },
+    );
+    return seen;
+  };
+
+  it("con Brava primera en solitario, `leader` es Brava; sin nadie en cabeza, `null`", async () => {
+    const ahead = createGame([...CHARACTER_IDS]);
+    ahead.players[0].pieces[0] = { steps: 40, state: "track", arrivalOrder: 1 };
+    const brava = await requestsFor(ahead);
+    expect(brava.length).toBeGreaterThan(0);
+    for (const r of brava) expect(r.leader).toBe("ai-pink");
+    const even = await requestsFor(createGame([...CHARACTER_IDS]));
+    for (const r of even) expect(r.leader).toBeNull();
   });
 });

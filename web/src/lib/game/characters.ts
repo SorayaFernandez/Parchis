@@ -234,7 +234,7 @@ export const CHARACTERS: readonly Character[] = [
         ambient_lead: [
           "Voy ganando. ¡Que se note!",
           "Voy delante. Así me gusta.",
-          "Voy en cabeza. Hoy me salen las tiradas.",
+          "Voy ganando. Hoy me salen las tiradas.",
           "{rival}, ¿te espero? Te has quedado muy atrás.",
         ],
         ambient_ahead: [
@@ -274,7 +274,7 @@ export const CHARACTERS: readonly Character[] = [
     chat: {
       register: "Formal sin ser rígido: trata de usted, piensa en probabilidades y elogia con algo de condescendencia.",
       voice: "Estratega sereno, calculador y educado: siempre trata de usted y habla con precisión, con algo de cálculo y probabilidad, pero con naturalidad y sin tecnicismos.",
-      talkativeness: 0.6,
+      talkativeness: 0.8,
       lines: {
         victory_win: [
           "Victoria. Todo según lo previsto.",
@@ -306,7 +306,7 @@ export const CHARACTERS: readonly Character[] = [
           "{Count} capturas {ritmo}. Mi plan funciona mejor de lo esperado.",
           "{rival}, empieza a ser costumbre. Revise su defensa.",
           "Otra captura. Las cuentas salen.",
-          "Le he vuelto a comer, {rival}. Era de esperar.",
+          "Le he comido, {rival}. Era de esperar.",
           "Ya son {count} capturas. Y no por casualidad.",
           "{Count} capturas {ritmo}, {rival}. Le aconsejo más cuidado.",
         ],
@@ -387,7 +387,7 @@ export const CHARACTERS: readonly Character[] = [
     chat: {
       register: "Cariñosa y tranquila: diminutivos, «cariño», «hijos» y algún refrán de vez en cuando. Nunca se enfada de verdad.",
       voice: "Prudente, cariñosa y paciente, algo tradicional: habla con cercanía y calma y, de vez en cuando, usa un refrán, sin repetirlo. Solo dice «casita» si una ficha vuelve a casa.",
-      talkativeness: 0.6,
+      talkativeness: 0.65,
       lines: {
         victory_win: [
           "Ay, qué alegría. Despacito y buena letra, hijos.",
@@ -455,7 +455,7 @@ export const CHARACTERS: readonly Character[] = [
         ambient_lead: [
           "Ay, quién me lo iba a decir: la primera, y sin prisas.",
           "Delante de todos, hijos, y sin correr nada.",
-          "La abuela va en cabeza. Tomad nota, cariños.",
+          "La abuela va ganando. Tomad nota, cariños.",
           "{rival}, cariño, te espero en la meta.",
         ],
         ambient_ahead: [
@@ -525,6 +525,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Qué mala pata! Bien visto, {rival}.",
           "¡Mi ficha! {rival}, con lo bien que iba.",
           "¡Ay! {rival}, ya te pillaré yo.",
+          "Maldición, me comiste la ficha, {rival}.",
         ],
         streak_boast: [
           "¡Y van {count}! Hoy no hay quien me pare.",

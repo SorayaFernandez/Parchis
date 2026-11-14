@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createGame, type GameEvent, type GameState } from "@/lib/engine";
 import { createSeededRandom } from "@/lib/game/ai";
 import { CHARACTERS, CHARACTER_IDS } from "@/lib/game/characters";
-import { CHAT_LIMITS } from "../config";
+import { CHAT_LIMITS, TRIGGER_CHANCE } from "../config";
 import {
   ambientCandidates,
   captureFacts,
   FIRST_QUEUED_VERSION,
+  gameLeader,
   historyComplete,
   initialDirectorState,
   isChatCandidate,
@@ -647,5 +648,72 @@ describe("ambiente: liderazgo y posiciones reales", () => {
     expect(spoken.length).toBeGreaterThan(0);
     expect(spoken.some((u) => u!.kind === "ambient_lead")).toBe(false);
     expect(spoken.some((u) => u!.speaker === ERNESTO && u!.kind === "ambient_ahead")).toBe(true);
+  });
+});
+
+describe("participación: las ganas de hablar cuentan una sola vez", () => {
+  const BRAVA_ID = "ai-pink";
+  const ERNESTO_ID = "ai-purple";
+  const PILAR_ID = "ai-green";
+  const talkOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.talkativeness;
+  /** Muchas capturas aisladas (sin rachas ni pausas) entre `by` y `victim`: quién comenta y con qué frecuencia. */
+  const sample = (by: string, victim: string, n = 6000) => {
+    const random = createSeededRandom(11);
+    const counts: Record<string, number> = {};
+    let spoke = 0;
+    for (let i = 0; i < n; i++) {
+      const plan = planChat(
+        { version: 501, events: [{ type: "piece_captured", playerId: by, victimId: victim, victimPieceIndex: 0, cell: 30 }], state: createGame([...CHARACTER_IDS]), messageCount: 0, director: initialDirectorState() },
+        random,
+      );
+      if (plan.utterances.length === 0) continue;
+      spoke++;
+      const main = plan.utterances[0].speaker;
+      counts[main] = (counts[main] ?? 0) + 1;
+    }
+    return { rate: spoke / n, share: (id: string) => (counts[id] ?? 0) / spoke };
+  };
+
+  it("Don Ernesto y Abuela Pilar hablan más que Brava y Chispa, pero ellos siguen siendo los más habladores", () => {
+    expect(talkOf("ai-pink")).toBe(1);
+    expect(talkOf("ai-blue")).toBe(1);
+    expect(talkOf(ERNESTO_ID)).toBe(0.8);
+    expect(talkOf(PILAR_ID)).toBe(0.65);
+  });
+
+  it("en una captura con un personaje reservado, alguien comenta con la probabilidad del más dispuesto, y después se elige quién", () => {
+    // Don Ernesto captura a Brava: antes él hablaba en ~0,5 × 0,8 × 0,8/1,6 y Brava en ~0,5 × 1 × 0,8/1,6.
+    const { rate, share } = sample(ERNESTO_ID, BRAVA_ID);
+    expect(rate).toBeCloseTo(TRIGGER_CHANCE.capture * Math.max(talkOf(ERNESTO_ID), talkOf(BRAVA_ID)), 1);
+    // Pesos: quien captura, su ganas de hablar; la víctima, ×0,8 → Don Ernesto 0,8 frente a Brava 0,8: a medias.
+    expect(share(ERNESTO_ID)).toBeGreaterThan(0.45);
+    expect(share(ERNESTO_ID)).toBeLessThan(0.55);
+  });
+
+  it("entre dos reservados la conversación sigue siendo más tranquila", () => {
+    const quiet = sample(PILAR_ID, ERNESTO_ID).rate;
+    const lively = sample(BRAVA_ID, "ai-blue").rate;
+    expect(quiet).toBeCloseTo(TRIGGER_CHANCE.capture * talkOf(ERNESTO_ID), 1);
+    expect(quiet).toBeLessThan(lively);
+  });
+});
+
+describe("gameLeader: quién va ganando según los datos reales", () => {
+  const withProgress = (steps: Record<string, number>, ranking: string[] = []) => {
+    const state = createGame([...CHARACTER_IDS]);
+    for (const p of state.players) p.pieces[0] = { steps: steps[p.id] ?? -1, state: (steps[p.id] ?? -1) < 0 ? "base" : "track", arrivalOrder: 1 };
+    return { ...state, ranking } as GameState;
+  };
+
+  it("el primero en solitario por progreso, mientras nadie ha terminado", () => {
+    expect(gameLeader(withProgress({ "ai-pink": 30, "ai-blue": 10 }))).toBe("ai-pink");
+    expect(gameLeader(withProgress({ "ai-purple": 50, "ai-green": 49 }))).toBe("ai-purple");
+  });
+
+  it("nadie con un empate en cabeza, al empezar, tras la primera victoria ni con la partida terminada", () => {
+    expect(gameLeader(withProgress({ "ai-pink": 30, "ai-blue": 30 }))).toBeNull();
+    expect(gameLeader(createGame([...CHARACTER_IDS]))).toBeNull();
+    expect(gameLeader(withProgress({ "ai-pink": 30 }, ["ai-blue"]))).toBeNull();
+    expect(gameLeader({ ...withProgress({ "ai-pink": 30 }), status: "finished" } as GameState)).toBeNull();
   });
 });
