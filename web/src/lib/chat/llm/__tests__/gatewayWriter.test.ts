@@ -20,6 +20,7 @@ import {
   describeHttpError,
   INVALID_RESPONSE_REASONS,
   redactSecrets,
+  type ChatAcquireOutcome,
   type LlmBreaker,
 } from "../gatewayWriter";
 
@@ -931,28 +932,35 @@ describe("limitador global de AI Gateway (compartido con el selector de movimien
   const ok = () => completion("¡A casa, Chispa! Hoy no se me escapa nadie.");
 
   it("pide permiso justo antes de enviar: concedido → se llama; denegado → no se llama y falla con cooldown", async () => {
-    const allowed = vi.fn(async () => true);
+    const allowed = vi.fn(async (): Promise<ChatAcquireOutcome> => "allowed");
     const f1 = fakeFetch(ok);
     const w1 = createGatewayWriter({ config, fetch: f1.fetch, breaker: createLlmBreaker(), acquire: allowed });
     expect(await w1.write(request())).toMatchObject({ source: "llm" });
     expect(allowed).toHaveBeenCalledTimes(1);
     expect(f1.calls).toHaveLength(1);
 
-    for (const acquire of [vi.fn(async () => false), vi.fn(async () => { throw new Error("redis"); })]) {
+    // Cada denegación con su motivo fijo; un acquire que lanza cuenta como limitador no disponible.
+    for (const [acquire, message] of [
+      [async (): Promise<ChatAcquireOutcome> => "global", "límite global"],
+      [async (): Promise<ChatAcquireOutcome> => "consumer", "límite del chat"],
+      [async (): Promise<ChatAcquireOutcome> => "blocked", "bloqueo global"],
+      [async (): Promise<ChatAcquireOutcome> => "unavailable", "limitador no disponible"],
+      [async (): Promise<ChatAcquireOutcome> => { throw new Error("redis"); }, "limitador no disponible"],
+    ] as const) {
       const f = fakeFetch(ok);
       const w = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), acquire });
-      await expect(w.write(request())).rejects.toMatchObject({ kind: "cooldown" });
+      await expect(w.write(request())).rejects.toMatchObject({ kind: "cooldown", message });
       expect(f.calls).toHaveLength(0);
     }
   });
 
   it("con la petición ya cancelada no pide permiso (no gasta hueco); con el corte local activo, tampoco", async () => {
-    const acquire = vi.fn(async () => true);
+    const acquire = vi.fn(async (): Promise<ChatAcquireOutcome> => "allowed");
     const f = fakeFetch(ok);
     const w = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), acquire });
     await expect(w.write(request({ signal: AbortSignal.abort() }))).rejects.toMatchObject({ kind: "aborted" });
     const blocked = createGatewayWriter({ config, fetch: f.fetch, breaker: { blockedUntil: Number.MAX_SAFE_INTEGER }, acquire });
-    await expect(blocked.write(request())).rejects.toMatchObject({ kind: "cooldown" });
+    await expect(blocked.write(request())).rejects.toMatchObject({ kind: "cooldown", message: "corte temporal local" });
     expect(acquire).not.toHaveBeenCalled();
     expect(f.calls).toHaveLength(0);
   });
@@ -965,9 +973,32 @@ describe("limitador global de AI Gateway (compartido con el selector de movimien
       [() => new Response("{}", { status: 400 }), []],
     ] as const) {
       const onRateLimited = vi.fn(async (_ms: number) => {});
-      const w = createGatewayWriter({ config, fetch: fakeFetch(response).fetch, breaker: createLlmBreaker(), acquire: async () => true, onRateLimited });
+      const w = createGatewayWriter({ config, fetch: fakeFetch(response).fetch, breaker: createLlmBreaker(), acquire: async () => "allowed", onRateLimited });
       await expect(w.write(request())).rejects.toMatchObject({ kind: "http" });
       expect(onRateLimited.mock.calls.map(([ms]) => ms)).toEqual(expected);
+    }
+  });
+});
+
+describe("registro de los motivos de cooldown del chat", () => {
+  it("cada motivo fijo se distingue en el registro; un texto desconocido, no", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stage = "escritor LLM (prueba de cooldown)";
+      let t = 9_000_000;
+      for (const message of ["corte temporal local", "límite global", "límite del chat", "bloqueo global", "limitador no disponible", "otro texto"]) {
+        logChatError(stage, new ChatLlmError("cooldown", message), (t += 1));
+      }
+      expect(spy.mock.calls.map(([line]) => String(line))).toEqual([
+        `[chat] ${stage}: LLM cooldown: corte temporal local`,
+        `[chat] ${stage}: LLM cooldown: límite global`,
+        `[chat] ${stage}: LLM cooldown: límite del chat`,
+        `[chat] ${stage}: LLM cooldown: bloqueo global`,
+        `[chat] ${stage}: LLM cooldown: limitador no disponible`,
+        `[chat] ${stage}: LLM cooldown: motivo desconocido`,
+      ]);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

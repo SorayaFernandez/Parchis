@@ -165,7 +165,7 @@ describe("F3: cualquier fallo del selector → estrategia local exactamente una 
     expect(localCalls.count).toBe(1);
     expect(s.calls).toHaveLength(0);
     expect(consumed).toBe(0);
-    expect(reasons).toEqual(["fallo del selector"]);
+    expect(reasons).toEqual(["corte temporal local"]);
   });
 
   it("cancelación de la petición: estrategia local una vez y la partida avanza", async () => {

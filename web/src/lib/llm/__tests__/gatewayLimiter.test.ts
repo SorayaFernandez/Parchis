@@ -228,3 +228,67 @@ describe("getGatewayLimiter", () => {
     expect(getGatewayLimiter({ KV_REST_API_URL: "https://otro.upstash.io", KV_REST_API_TOKEN: "otro-token-largo" })).not.toBeNull();
   });
 });
+
+describe("observabilidad: motivo de cada denegación, reloj y resumen agregado", () => {
+  it("el límite se distingue: global (4 entre los dos) frente al del consumidor (2)", async () => {
+    const { limiter } = make();
+    await limiter.acquire(chat);
+    await limiter.acquire(chat);
+    expect(await limiter.acquire(chat)).toEqual({ kind: "rate_limited", scope: "consumer" });
+    await limiter.acquire(moves());
+    await limiter.acquire(moves());
+    expect(await limiter.acquire(chat)).toEqual({ kind: "rate_limited", scope: "global" });
+    expect(await limiter.acquire(moves())).toEqual({ kind: "rate_limited", scope: "global" });
+  });
+
+  it("si el script no usa TIME de Redis, lo deja dicho (una vez por minuto) y el permiso funciona igual", async () => {
+    const lines: string[] = [];
+    const m = memoryLimiterRedis(undefined, { redisClock: false });
+    const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now, log: (l) => lines.push(l) });
+    expect((await limiter.acquire(chat)).kind).toBe("allowed");
+    expect((await limiter.acquire(chat)).kind).toBe("allowed");
+    expect(lines).toEqual(["[llm-limiter] aviso: TIME de Redis no disponible en el script; se usa la hora del cliente"]);
+    m.clock.now += 60_000;
+    await limiter.acquire(moves());
+    expect(lines.filter((l) => l.includes("aviso"))).toHaveLength(2);
+  });
+
+  it("con TIME de Redis no hay aviso; una respuesta con un reloj desconocido es no disponible", async () => {
+    const lines: string[] = [];
+    const { limiter } = make(undefined, { log: (l: string) => lines.push(l) });
+    await limiter.acquire(chat);
+    expect(lines).toEqual([]);
+    for (const reply of [[0, 2], [0], [0, 1, 1], ["0", 1], 0]) {
+      expect((await createGatewayLimiter({ eval: async () => reply }, { log: () => {} }).acquire(chat)).kind, JSON.stringify(reply)).toBe("unavailable");
+    }
+  });
+
+  it("resumen agregado en memoria: por consumidor y resultado, con el reloj, como mucho una vez por intervalo y sin datos sensibles", async () => {
+    const lines: string[] = [];
+    const m = memoryLimiterRedis(undefined, { latency: false });
+    const limiter = createGatewayLimiter(m.redis, { now: () => m.clock.now, log: (l) => lines.push(l), summaryIntervalMs: 60_000 });
+    await limiter.acquire(chat); // concedida
+    await limiter.acquire(chat); // concedida
+    await limiter.acquire(chat); // límite del chat
+    await limiter.acquire(moves()); // concedida
+    await limiter.acquire(moves()); // concedida
+    await limiter.acquire(moves()); // límite global (ya hay 4)
+    await limiter.reportRateLimited(5_000);
+    expect(lines).toEqual([]); // aún dentro del intervalo
+    m.clock.now += 4_000;
+    await limiter.acquire(chat); // bloqueo
+    m.clock.now += 60_000;
+    await limiter.acquire({ consumer: "moves", gameId: "no-uuid" }); // no disponible; cierra el periodo
+    expect(lines).toEqual([
+      "[llm-limiter] resumen de este proceso (64 s): chat concedidas=2 límite-global=0 límite-consumidor=1 bloqueo=1 cupo-agotado=0 no-disponible=0 | movimientos concedidas=2 límite-global=1 límite-consumidor=0 bloqueo=0 cupo-agotado=0 no-disponible=1 | reloj redis=7 cliente=0",
+    ]);
+    // Ninguna llamada extra a Redis para el resumen: un EVAL por permiso (7 válidos) y uno del bloqueo.
+    expect(m.evals.map((e) => e.script)).toEqual(["acquire", "acquire", "acquire", "acquire", "acquire", "acquire", "block", "acquire"]);
+    for (const line of lines) expect(line).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|parchis-llm|clave/);
+    // El siguiente periodo empieza de cero.
+    m.clock.now += 60_000;
+    await limiter.acquire(chat);
+    expect(lines[1]).toContain("chat concedidas=1");
+    expect(lines[1]).toContain("movimientos concedidas=0");
+  });
+});

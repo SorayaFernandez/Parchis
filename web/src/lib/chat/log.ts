@@ -3,7 +3,7 @@
 // LLM añade su resumen saneado, que no forma parte del tipo: no multiplica los registros.
 
 import { SupabaseEnvError } from "@/lib/supabase/env";
-import { ChatLlmError, INVALID_RESPONSE_REASONS } from "./llm/gatewayWriter";
+import { COOLDOWN_REASONS, ChatLlmError, INVALID_RESPONSE_REASONS } from "./llm/gatewayWriter";
 import { ChatStoreError } from "./store";
 
 /** Un mismo tipo de error se registra como mucho una vez por minuto (p. ej., si faltan las tablas). */
@@ -23,6 +23,10 @@ export function logChatError(stage: string, error: unknown, now = Date.now()) {
     // formar parte del límite por minuto sin multiplicar los registros).
     if (error.kind === "invalid_response") {
       detail += `: ${(INVALID_RESPONSE_REASONS as readonly string[]).includes(error.message) ? error.message : "motivo desconocido"}`;
+    }
+    // Motivo del `cooldown` (corte local o denegación del limitador global): solo textos fijos.
+    if (error.kind === "cooldown") {
+      detail += `: ${(Object.values(COOLDOWN_REASONS) as string[]).includes(error.message) ? error.message : "motivo desconocido"}`;
     }
     if (error.detail) extra = ` ${error.detail}`;
   } else detail = error instanceof Error ? error.name : "error desconocido";

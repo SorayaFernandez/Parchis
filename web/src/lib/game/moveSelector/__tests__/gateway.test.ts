@@ -258,3 +258,13 @@ describe("bloqueo global tras un 429 (limitador compartido con el chat)", () => 
     }
   });
 });
+
+describe("registro de la estrategia local de movimientos (como lo escribe la ruta de avance)", () => {
+  it("cada motivo se distingue en el registro, con su texto fijo", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reasons = ["límite global", "límite de movimientos", "bloqueo global", "cupo agotado", "limitador no disponible", "corte temporal local", "petición cancelada"];
+    let t = 8_000_000;
+    for (const reason of reasons) logMoveError("estrategia local", Object.assign(new Error(reason), { name: reason }), (t += 1));
+    expect(spy.mock.calls.map(([line]) => String(line))).toEqual(reasons.map((r) => `[move-llm] estrategia local: ${r}`));
+  });
+});

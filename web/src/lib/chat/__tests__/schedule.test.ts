@@ -21,7 +21,7 @@ vi.mock("@/lib/llm/gatewayLimiter", () => ({
       ? {
           acquire: async () => {
             limiterState.acquired++;
-            return limiterState.allowed ? { kind: "allowed", grant: null } : { kind: "rate_limited" };
+            return limiterState.allowed ? { kind: "allowed", grant: null } : { kind: "rate_limited", scope: "consumer" };
           },
           reportRateLimited: async (ms: number) => void limiterState.blocked.push(ms),
           refundMovesGrant: async () => false,
@@ -133,7 +133,7 @@ describe("chatWriters (escritor LLM o local según las variables)", () => {
     vi.stubGlobal("fetch", fetch);
     limiterState.allowed = false;
     const { writer } = chatWriters(enabled);
-    await expect(writer.write(request(true))).rejects.toMatchObject({ kind: "cooldown" });
+    await expect(writer.write(request(true))).rejects.toMatchObject({ kind: "cooldown", message: "límite del chat" });
     expect(fetch).not.toHaveBeenCalled();
   });
 

@@ -79,7 +79,7 @@ export interface MoveSelector {
   /** Opción elegida por el modelo para `decision` (de `state`), o el fallo. Nunca lanza. */
   select(state: GameState, decision: MoveDecision, options?: { signal?: AbortSignal }): Promise<MoveSelection>;
   /**
-   * `false` si ahora mismo no se llamaría al modelo (corte temporal activo). Lo usa quien llama para no
+   * `false` si ahora mismo no se llamaría al modelo (corte temporal local activo). Lo usa quien llama para no
    * consumir cupo (F4) en una consulta que no se va a hacer. Opcional: sin él, se asume disponible.
    */
   isAvailable?(): boolean;

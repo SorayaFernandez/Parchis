@@ -10,7 +10,7 @@ interface Entry {
   expiresAt: number | null;
 }
 
-export function memoryLimiterRedis(clock = { now: 1_000_000 }, { latency = true } = {}) {
+export function memoryLimiterRedis(clock = { now: 1_000_000 }, { latency = true, redisClock = true } = {}) {
   const strings = new Map<string, Entry>();
   const zsets = new Map<string, { members: Map<string, number>; expiresAt: number | null }>();
   const evals: { script: "acquire" | "block" | "refund"; keys: string[]; args: (string | number)[] }[] = [];
@@ -88,7 +88,8 @@ export function memoryLimiterRedis(clock = { now: 1_000_000 }, { latency = true 
       if (!name) throw new Error("script desconocido");
       evals.push({ script: name, keys, args });
       if (latency) await new Promise((r) => setTimeout(r, Math.random() * 3));
-      const result = name === "acquire" ? acquire(keys, args) : name === "block" ? block(keys, args) : refund(keys);
+      // `acquire` responde `{código, reloj}` (1 = TIME de Redis; 0 = hora del cliente), como el script.
+      const result = name === "acquire" ? [acquire(keys, args), redisClock ? 1 : 0] : name === "block" ? block(keys, args) : refund(keys);
       if (latency) await new Promise((r) => setTimeout(r, Math.random() * 3));
       return result;
     },

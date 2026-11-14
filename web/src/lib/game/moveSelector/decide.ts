@@ -35,10 +35,18 @@ export type MoveFallbackReason =
   | "excepción del selector"
   /** Ya se han hecho las 20 consultas de la partida (no se consulta). */
   | "cupo agotado"
-  /** No se pudo confirmar el cupo (Redis falla, tarda o no está configurado): no se consulta. */
-  | "cupo no disponible"
-  /** Límite global de llamadas al modelo (compartido con el chat) o bloqueo tras un 429: no se consulta. */
-  | "límite global";
+  /** El limitador no responde (Upstash falla, tarda, responde algo inesperado o falta): no se consulta. */
+  | "limitador no disponible"
+  /** Límite global de llamadas al modelo: 4 por minuto entre chat y movimientos. No se consulta. */
+  | "límite global"
+  /** Límite de movimientos: 2 por minuto. No se consulta. */
+  | "límite de movimientos"
+  /** Bloqueo global tras un 429 del proveedor (chat o movimientos). No se consulta. */
+  | "bloqueo global"
+  /** Corte temporal local del selector (tras un error HTTP en este proceso). No se consulta ni se pide cupo. */
+  | "corte temporal local"
+  /** La petición ya estaba cancelada. No se consulta ni se pide cupo. */
+  | "petición cancelada";
 
 export interface DecideWithSelectorDeps {
   rollDie: () => number;
@@ -74,9 +82,8 @@ export async function decideActionWithSelector(state: GameState, deps: DecideWit
 
   // Si no se va a llamar al modelo (corte temporal activo o petición ya cancelada), no se consume cupo:
   // el selector devolvería el fallo al instante.
-  if (deps.selector.isAvailable?.() === false || deps.signal?.aborted) {
-    return fallback("fallo del selector");
-  }
+  if (deps.signal?.aborted) return fallback("petición cancelada");
+  if (deps.selector.isAvailable?.() === false) return fallback("corte temporal local");
 
   // Cupo: solo aquí, justo antes de consultar. Sin cupo confirmado, estrategia local sin consultar.
   let quota: QuotaResult;
@@ -86,8 +93,10 @@ export async function decideActionWithSelector(state: GameState, deps: DecideWit
     quota = { kind: "unavailable" };
   }
   if (quota.kind === "exhausted") return fallback("cupo agotado");
-  if (quota.kind === "rate_limited") return fallback("límite global");
-  if (quota.kind !== "allowed") return fallback("cupo no disponible");
+  if (quota.kind === "rate_limited") {
+    return fallback(quota.reason === "global" ? "límite global" : quota.reason === "consumer" ? "límite de movimientos" : "bloqueo global");
+  }
+  if (quota.kind !== "allowed") return fallback("limitador no disponible");
 
   // Las opciones (con sus simulaciones) se construyen solo cuando se va a consultar: agotado el cupo, la
   // estrategia local no paga ese coste. Con 2+ movimientos legales siempre hay 2+ opciones (`applyAction`
