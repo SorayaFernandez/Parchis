@@ -12,7 +12,7 @@ function statusLabel(player: PlayerSummary): string {
   return "Esperando";
 }
 
-function PlayerCard({ player, name }: { player: PlayerSummary; name: string }) {
+function PlayerCard({ player, name, compact }: { player: PlayerSummary; name: string; compact: boolean }) {
   const color = COLOR_HEX[player.color];
   const isTurn = player.status === "turn";
   const { base, track, final, finished } = player.pieces;
@@ -22,6 +22,7 @@ function PlayerCard({ player, name }: { player: PlayerSummary; name: string }) {
       aria-current={isTurn ? "true" : undefined}
       className={cn(
         "flex min-w-0 items-center gap-3 rounded-2xl border bg-white/5 p-3 transition-colors",
+        compact && "xl:gap-2.5 xl:px-3 xl:py-2",
         isTurn ? "border-transparent" : "border-white/10",
         player.status === "finished" && "opacity-80",
       )}
@@ -29,7 +30,7 @@ function PlayerCard({ player, name }: { player: PlayerSummary; name: string }) {
     >
       {/* Como el avatar del original, pero con la ficha del color (no hay avatares de usuario). */}
       <span
-        className="grid size-11 shrink-0 place-items-center rounded-full border-2 bg-slate-950 sm:size-12"
+        className={cn("grid size-11 shrink-0 place-items-center rounded-full border-2 bg-slate-950 sm:size-12", compact && "xl:size-10")}
         style={{ borderColor: color }}
       >
         <Image
@@ -37,12 +38,12 @@ function PlayerCard({ player, name }: { player: PlayerSummary; name: string }) {
           alt=""
           width={64}
           height={64}
-          className="size-9"
+          className={cn("size-9", compact && "xl:size-7")}
           style={{ transform: `scale(${PIECE_IMAGE_SCALE})` }}
         />
       </span>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <div className={cn("flex min-w-0 flex-1 flex-col gap-1.5", compact && "xl:gap-1")}>
         <div className="flex items-baseline justify-between gap-2">
           <p className="truncate font-semibold">
             {name}
@@ -80,16 +81,18 @@ function PlayerCard({ player, name }: { player: PlayerSummary; name: string }) {
 interface PlayersPanelProps {
   players: PlayerSummary[];
   names: PlayerNames;
+  /** Tarjetas más compactas desde `xl` (pantalla de partida en tres columnas). Por defecto, sin cambios. */
+  compact?: boolean;
   className?: string;
 }
 
 /** Los jugadores con su color, estado de partida y progreso; resalta al que tiene el turno. */
-export function PlayersPanel({ players, names, className }: PlayersPanelProps) {
+export function PlayersPanel({ players, names, compact = false, className }: PlayersPanelProps) {
   return (
-    <section aria-label="Jugadores" className={className}>
-      <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+    <section aria-label="Jugadores" className={cn(compact && "xl:shrink-0", className)}>
+      <ul className={cn("grid gap-2 sm:grid-cols-2 lg:grid-cols-1", compact && "xl:gap-1.5")}>
         {players.map((player) => (
-          <PlayerCard key={player.id} player={player} name={names[player.id] ?? player.id} />
+          <PlayerCard key={player.id} player={player} name={names[player.id] ?? player.id} compact={compact} />
         ))}
       </ul>
     </section>

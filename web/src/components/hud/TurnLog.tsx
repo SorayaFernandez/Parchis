@@ -14,6 +14,8 @@ interface TurnLogProps {
   /** Texto cuando no hay entradas. */
   emptyText?: string;
   className?: string;
+  /** Clases extra de la lista (p. ej., scroll propio cuando el panel tiene un alto limitado). */
+  listClassName?: string;
 }
 
 /** Jugadas o eventos (los más recientes arriba). No es el chat: solo describe eventos del motor. */
@@ -23,6 +25,7 @@ export function TurnLog({
   description = null,
   emptyText = "Todavía no hay jugadas.",
   className,
+  listClassName,
 }: TurnLogProps) {
   return (
     <section aria-label={title} className={cn("rounded-2xl border border-white/10 bg-white/5 p-4", className)}>
@@ -31,7 +34,7 @@ export function TurnLog({
       {entries.length === 0 ? (
         <p className="mt-2 text-sm text-slate-500">{emptyText}</p>
       ) : (
-        <ol className="mt-2 space-y-1 text-sm">
+        <ol className={cn("mt-2 space-y-1 text-sm", listClassName)}>
           {entries.map((entry, i) => (
             <li key={entry.id} className={cn(i === 0 ? "text-slate-100" : "text-slate-400")}>
               {entry.text}

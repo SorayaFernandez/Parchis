@@ -66,12 +66,27 @@ function spreadHorizontally(slot: BoardSlot): boolean {
 }
 
 /**
- * Diámetro visible de la ficha según cuántas comparten casilla. Una sola ficha cabe en
- * el eje corto de la casilla (≈79) y en los círculos de casa (≈70). Con varias, se
- * reparten a lo largo del eje largo (≈109) sin salirse.
+ * Diámetro visible de la ficha según cuántas comparten casilla. Una sola ficha, con su
+ * halo y su anillo de resaltado, cabe en el eje corto de la casilla (≈79) y en los
+ * círculos de casa (≈70). Con varias, se reparten a lo largo del eje largo (≈109) sin
+ * salirse y sin que se toquen las fichas ni sus halos.
  */
-const PIECE_SIZE_BY_COUNT = [58, 58, 50, 36, 27];
+const PIECE_SIZE_BY_COUNT = [46, 46, 40, 30, 24];
 export const PIECE_SIZE = PIECE_SIZE_BY_COUNT[1];
+
+/** Diámetro del halo de color y del anillo de resaltado, en proporción al de la ficha. */
+export const PIECE_HALO_RATIO = 1.18;
+export const PIECE_RING_RATIO = 1.3;
+/** Separación máxima entre los centros de dos fichas apiladas (halos que apenas se tocan). */
+const STACK_SPACING_RATIO = 1.2;
+
+/**
+ * Distancia entre los centros de `n` fichas de diámetro `size` en una casilla: holgada
+ * (halos separados) si hay sitio y, si no, la que reparte todo el eje largo.
+ */
+export function stackSpacing(n: number, size: number): number {
+  return n > 1 ? Math.min(size * STACK_SPACING_RATIO, (CELL_LENGTH - size) / (n - 1)) : 0;
+}
 
 export interface PieceLayout {
   /** Clave estable para React y para animar el desplazamiento. */
@@ -132,7 +147,7 @@ export function layoutPieces(state: GameState, { movingKey = null }: LayoutOptio
   for (const group of groups.values()) {
     const n = group.length;
     const size = PIECE_SIZE_BY_COUNT[Math.min(n, PIECE_SIZE_BY_COUNT.length - 1)];
-    const spacing = n > 1 ? Math.min(size, CELL_LENGTH / n) : 0;
+    const spacing = stackSpacing(n, size);
     const center = slotCenter(group[0].slot);
     const horizontal = spreadHorizontally(group[0].slot);
 

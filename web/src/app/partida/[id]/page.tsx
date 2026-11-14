@@ -43,8 +43,10 @@ async function GameLoader({ params }: { params: Promise<{ id: string }> }) {
 export default function GamePage({ params }: PageProps<"/partida/[id]">) {
   return (
     // `dark`: el tablero es oscuro, así que los componentes de shadcn usan su tema oscuro.
-    <main className="dark flex min-h-dvh flex-1 flex-col items-center gap-4 bg-[#020617] px-4 py-6 text-slate-100">
-      <header className="flex w-full max-w-6xl items-center justify-between gap-4">
+    // Desde xl (≥ 1280 px), la pantalla ocupa exactamente el alto de la ventana, sin scroll de página:
+    // la rejilla de GameView (ver `components/game/layout.ts`) se reparte el resto.
+    <main className="dark flex min-h-dvh flex-1 flex-col items-center gap-4 bg-[#020617] px-4 py-6 text-slate-100 xl:h-dvh xl:min-h-0 xl:flex-none xl:gap-3 xl:overflow-hidden xl:py-3">
+      <header className="flex w-full max-w-6xl shrink-0 items-center justify-between gap-4 xl:max-w-[112rem]">
         <h1 className="text-xl font-bold tracking-tight">Partida</h1>
         <Link href="/" className="text-sm text-slate-400 hover:text-slate-100">
           Volver

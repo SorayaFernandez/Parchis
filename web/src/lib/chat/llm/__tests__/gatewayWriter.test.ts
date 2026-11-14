@@ -808,7 +808,7 @@ describe("etiquetas, comillas y respuestas truncadas (auditoría de la v382)", (
   });
 
   it("los dos puntos de una frase natural no son una etiqueta", () => {
-    for (const text of ["Ojo: esa ficha, a casita, Chispa.", "Lo dicho: despacito, Chispa.", "Cariño, una cosa: a casa, Chispa."]) {
+    for (const text of ["Ojo: esa ficha, a casita, Chispa.", "Lo dicho: sin prisa, Chispa.", "Cariño, una cosa: a casa, Chispa."]) {
       expect(cleanLlmText(text, pilar()), text).toBe(text);
     }
     // Ni las palabras que solo empiezan por un nombre («Pilares», «Bravata»).
