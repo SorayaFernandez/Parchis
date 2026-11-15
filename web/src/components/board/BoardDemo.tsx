@@ -117,7 +117,9 @@ export function BoardDemo({ initial }: { initial: DemoMatch }) {
       }}
       chat={chat}
       controls={
-        <>
+        // Entre 1280 y 1535 px la columna del tablero es estrecha: un poco menos de hueco y de relleno
+        // horizontal para que los seis controles quepan en una fila (mismos textos y tamaño de letra).
+        <div className="flex max-w-full flex-wrap justify-center gap-2 xl:max-2xl:gap-1.5 xl:max-2xl:[&>button]:px-1.5">
           <Button size="sm" onClick={() => setAuto((a) => !a)} disabled={finished} aria-pressed={auto && !finished}>
             {auto && !finished ? "Pausar" : "Reproducir"}
           </Button>
@@ -136,7 +138,7 @@ export function BoardDemo({ initial }: { initial: DemoMatch }) {
           <Button size="sm" variant="outline" onClick={() => reset(newDemoMatch(createShowcaseState()), false)}>
             Ejemplo
           </Button>
-        </>
+        </div>
       }
     />
   );

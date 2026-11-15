@@ -82,7 +82,7 @@ describe("portada: textos", () => {
     expect(text).not.toMatch(/\bDemostración\b/);
     expect(text).toContain("hablan por el chat");
     expect(text).not.toContain("se pican en el chat");
-    expect(text).toContain("se comen fichas siguiendo las reglas del parchís.");
+    expect(text).toContain("Tiran, deciden cada jugada y se comen fichas, siguiendo las reglas del parchís.");
     expect(text).not.toContain("con las reglas del parchís");
     expect(text).not.toContain("No son simples avatares");
     // La demostración sigue accesible desde las llamadas a la acción.

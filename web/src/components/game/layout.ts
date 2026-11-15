@@ -1,13 +1,14 @@
 // Disposición de la pantalla de partida, compartida por GameView y por su esqueleto de carga
 // (GameLoading), para que la página no salte al cargar. Solo clases de Tailwind.
 //
-// - Móvil y tablet (< lg): una columna, en el orden del HTML (aviso, tablero, dado/jugadores/chat,
-//   jugadas/datos), como antes.
-// - lg (1024–1279 px): como antes, tablero a la izquierda y una columna de 21 rem a la derecha
-//   (dado, jugadores, chat y, debajo, jugadas y datos). La página puede hacer scroll.
-// - xl (≥ 1280 px; columnas laterales algo más anchas desde 2xl, 1536 px): tres columnas que ocupan el alto de la ventana sin scroll de página: jugadas y
-//   datos a la izquierda, el tablero (el mayor cuadrado que cabe) en el centro, y dado, jugadores y
-//   chat a la derecha. El chat y las jugadas tienen su propio scroll.
+// - Móvil y tablet (< lg): una columna, en el orden del HTML (aviso, tablero, dado/jugadores/jugadas,
+//   chat/datos).
+// - lg (1024–1279 px): tablero a la izquierda y una columna de 21 rem a la derecha (dado, jugadores,
+//   jugadas y, debajo, datos y chat). La página puede hacer scroll.
+// - xl (≥ 1280 px; columnas laterales algo más anchas desde 2xl, 1536 px): tres columnas que ocupan el
+//   alto de la ventana sin scroll de página: datos y chat a la izquierda, el tablero (el mayor cuadrado
+//   que cabe) en el centro, y dado, jugadores y jugadas a la derecha. El chat y las jugadas tienen su
+//   propio scroll.
 
 /** Rejilla. Las zonas con nombre solo existen desde `lg` (sin ellas, el orden es el del HTML). */
 export const GAME_GRID =
