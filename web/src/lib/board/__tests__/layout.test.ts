@@ -153,7 +153,7 @@ describe("tamaño de las fichas: legibles y sin solaparse", () => {
   };
 
   it("una ficha sola, con su anillo de resaltado (trazo 3), cabe en el eje corto de la casilla", () => {
-    expect(PIECE_SIZE).toBe(46);
+    expect(PIECE_SIZE).toBe(50);
     expect(PIECE_SIZE * PIECE_RING_RATIO + 3).toBeLessThan(CELL_WIDTH);
   });
 
