@@ -1026,6 +1026,13 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "cariños", re: /(?<![\p{L}])cariños(?![\p{L}])/u },
 ];
 /**
+ * Coletilla que cuenta las fichas perdidas del rival en segunda persona: «He comido tu ficha y ya vas dos»,
+ * «y ya vais tres», «ya vas por la segunda». Sobra: la frase ya dice lo que ha pasado. (Las cifras de
+ * capturas con sujeto, «llevas dos», «me has comido tres fichas», las comprueba `checkCountClaims`.)
+ */
+const YOU_ARE_AT =
+  /(?<![\p{L}])(?:vas|vais)\s+(?:ya\s+)?(?:por\s+la\s+)?(?:\d+|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|segunda|tercera|cuarta|quinta)(?![\p{L}\p{N}])(?!\s+(?:casillas?|por\s+delante|por\s+detras))/u;
+/**
  * Distancias hasta la meta: los personajes no calculan ni anuncian cuántas casillas les quedan («Y ahora a la
  * meta en seis», «me quedan cinco casillas», «estoy a tres de la meta»). Pueden celebrar que han llegado o que
  * tienen una ficha cerca, pero sin números.
@@ -1070,6 +1077,7 @@ function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue
   for (const { term, re } of UNNATURAL) if (re.test(t)) return { reason: "expresión poco natural", term };
   if (CAPTURE_TRIGGERS.has(request.utterance.trigger) && KEEP_IT.test(t)) return { reason: "expresión poco natural", term: "no me la quites" };
   if (GOAL_DISTANCE.some((re) => re.test(t))) return { reason: "afirmación no respaldada", term: "distancia a la meta" };
+  if (YOU_ARE_AT.test(t)) return { reason: "expresión poco natural", term: "ya vas dos" };
   const ordinal = ORDINAL_GOAL.exec(t);
   if (ordinal) return { reason: "afirmación no respaldada", term: `objetivo ${ordinal[1]}` };
   return null;
@@ -1282,6 +1290,7 @@ export function hasDiscardedExpression(text: string): boolean {
   return (
     DICE_REQUEST.some((re) => re.test(t)) ||
     DICE_REFLEXIVE.test(t) ||
+    YOU_ARE_AT.test(t) ||
     disallowedDiminutive(text, null, null) !== null ||
     UNNATURAL.some(({ re }) => re.test(t)) ||
     KEEP_IT.test(t) ||
