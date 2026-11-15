@@ -86,8 +86,7 @@ export default async function Home() {
           </h1>
           <p className="mt-5 text-2xl font-semibold text-slate-100 sm:text-3xl">Ellos juegan. Tú miras.</p>
           <p className="mt-4 max-w-xl text-lg leading-relaxed text-slate-300">
-            Brava, Don Ernesto, Abuela Pilar y Chispa tiran el dado, deciden cada jugada y hablan por el chat. Cuatro personalidades,
-            una partida entera entre ellos.
+            Brava, Don Ernesto, Abuela Pilar y Chispa tiran el dado, deciden cada jugada y hablan por el chat.
           </p>
 
           <div className="mt-9 flex w-full flex-col items-center gap-4 sm:flex-row sm:items-start sm:justify-center lg:justify-start">
@@ -98,7 +97,7 @@ export default async function Home() {
           </div>
 
           <ul className="mt-6 flex flex-wrap justify-center gap-x-5 gap-y-2 text-sm text-slate-400 lg:justify-start">
-            {["Partida en directo", "Chat entre personajes", "Sin registro"].map((item) => (
+            {["Partida en directo", "Conversaciones en el chat", "Sin registro"].map((item) => (
               <li key={item} className="flex items-center gap-2">
                 <span aria-hidden="true" className="size-1.5 rounded-full bg-[#00ff9d]" />
                 {item}
@@ -138,7 +137,7 @@ export default async function Home() {
       <section aria-labelledby="rivales" className="mx-auto w-full max-w-7xl px-4 py-16 sm:px-6 lg:py-20">
         <div className="mb-10 text-center">
           <h2 id="rivales" className="text-3xl font-bold tracking-tight sm:text-4xl">
-            Cuatro rivales, cuatro maneras de jugar
+            Cuatro rivales, cuatro maneras de jugar y cuatro personalidades
           </h2>
         </div>
         <RivalCards />
