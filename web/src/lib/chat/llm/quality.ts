@@ -1024,6 +1024,17 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "se le escapa la captura", re: /(?<![\p{L}])se\s+(?:le|te|me|les|nos|os)\s+(?:escapa|escapo|escapan|ha\s+escapado|han\s+escapado)\s+(?:la|una|esa|otra)\s+captura(?![\p{L}])/u },
   // Al grupo, Abuela Pilar dice «hijos», no «cariños». «Cariño», a un solo rival, sí.
   { term: "cariños", re: /(?<![\p{L}])cariños(?![\p{L}])/u },
+  // Frases retiradas por genéricas: «Sigo en la pelea» (y «sigo dando pelea», «seguimos en la pelea», «aún doy
+  // pelea») y «Mantengo la ventaja» (y «mantengo mi ventaja», «conservo la ventaja»). «Hasta el dado quiere
+  // pelea» o «no confunda ventaja con victoria» no cuentan.
+  {
+    term: "sigo en la pelea",
+    re: /(?<![\p{L}])(?:(?:sigo|seguimos|sigue|sigues|continuo|continuamos)\s+(?:en\s+la\s+pelea|dando\s+(?:la\s+)?pelea)|(?:aun|todavia)\s+doy\s+(?:la\s+)?pelea)(?![\p{L}])/u,
+  },
+  {
+    term: "mantengo la ventaja",
+    re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
+  },
 ];
 /**
  * Coletilla que cuenta las fichas perdidas del rival en segunda persona: «He comido tu ficha y ya vas dos»,

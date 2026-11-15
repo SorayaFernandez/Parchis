@@ -400,3 +400,19 @@ describe("captura: hablar solo de esa captura", () => {
     expect(lament).toContain("Respondes a lo que acaba de decir Brava: «Te he comido.»");
   });
 });
+
+describe("expresiones retiradas fuera del contexto del modelo", () => {
+  it("no se citan en las frases recientes y el contexto no las nombra", () => {
+    const [system, user] = buildChatPrompt({
+      utterance: { speaker: "ai-blue", kind: "capture_boast", trigger: "capture", rival: "ai-pink", replyTo: null, important: true },
+      recent: [
+        { speaker: "ai-pink", text: "Sigo en la pelea. Ojo conmigo." },
+        { speaker: "ai-purple", text: "Mantengo la ventaja. Paciencia y método." },
+        { speaker: "ai-green", text: "Ay, qué cosas tiene el dado." },
+      ],
+      replyToText: null,
+    });
+    for (const content of [system.content, user.content]) expect(content).not.toMatch(/en la pelea|mantengo la ventaja/i);
+    expect(user.content).toContain("«Ay, qué cosas tiene el dado.»");
+  });
+});

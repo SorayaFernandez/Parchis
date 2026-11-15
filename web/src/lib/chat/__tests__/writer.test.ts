@@ -274,7 +274,7 @@ describe("frases neutrales y «por detrás»: ninguna afirma una buena posición
     for (const text of [
       "Analizo cada tirada. El plan sigue en marcha.",
       "Sin correr, pero sin parar, cariño.",
-      "Sigo en la pelea. ¡Que tiemble el tablero!",
+      "Al primero que se me ponga a tiro, lo mando a casa.",
       "Poquito a poco voy llegando.",
       "El dado me guiña un ojo. Buena señal.",
       "{rival}, no confunda ventaja con victoria.",
