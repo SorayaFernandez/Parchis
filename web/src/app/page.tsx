@@ -27,7 +27,7 @@ const HOME_TEXT: Readonly<Record<string, string>> = {
 
 const STEPS = [
   { icon: "/ui/dice-5.svg", title: "Pulsa «Nueva partida»", text: "Se prepara un tablero con los cuatro personajes." },
-  { icon: "/ui/dice-3.svg", title: "Ellos juegan", text: "Tiran, deciden cada jugada y se comen fichas siguiendo las reglas del parchís." },
+  { icon: "/ui/dice-3.svg", title: "Ellos juegan", text: "Tiran, deciden cada jugada y se comen fichas, siguiendo las reglas del parchís." },
   { icon: "/ui/dice-6.svg", title: "Tú miras", text: "Sigue el tablero, las jugadas y su conversación en directo." },
 ];
 

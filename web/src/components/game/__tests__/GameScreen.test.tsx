@@ -72,13 +72,16 @@ describe("página /partida/[id]: partida en curso", () => {
     expect(JSON.stringify(state)).toBe(before);
     expect(state.players.map((p) => p.id)).toEqual([...CHARACTER_IDS]);
     expect(html).toContain("Brava puede lanzar el dado");
-    // Dado, jugadores y chat a un lado; jugadas y datos de la partida al otro (zonas de la rejilla).
-    const right = html.indexOf('aria-label="Turno, jugadores y chat"');
-    const left = html.indexOf('aria-label="Jugadas y datos de la partida"');
+    // Dado, jugadores y últimas jugadas a un lado; chat y datos de la partida al otro (zonas de la rejilla).
+    const right = html.indexOf('aria-label="Turno, jugadores y jugadas"');
+    const left = html.indexOf('aria-label="Chat y datos de la partida"');
     expect(right).toBeGreaterThan(html.indexOf('aria-label="Tablero"'));
     expect(left).toBeGreaterThan(right);
-    expect(html.indexOf('aria-label="Chat de los personajes"')).toBeLessThan(left);
-    expect(html.indexOf('aria-label="Datos de la partida"')).toBeGreaterThan(left);
+    const log = html.search(/aria-label="Últimas? jugadas?"/);
+    expect(log).toBeGreaterThan(right);
+    expect(log).toBeLessThan(left);
+    expect(html.indexOf('aria-label="Chat de los personajes"')).toBeGreaterThan(left);
+    expect(html.indexOf('aria-label="Datos de la partida"')).toBeGreaterThan(html.indexOf('aria-label="Chat de los personajes"'));
   });
 
   it("muestra las posiciones reales, el dado y la última jugada (acción + eventos)", () => {

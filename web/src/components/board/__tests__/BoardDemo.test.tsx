@@ -30,7 +30,7 @@ describe("/tablero: demo sobre GameView", () => {
   it("se ve como la partida real, con los personajes, el chat, las jugadas, los controles y sin id ni fechas", async () => {
     const initial = await createDemoMatch();
     const html = renderToStaticMarkup(<BoardDemo initial={initial} />);
-    for (const label of ["Estado", "Tablero", "Turno, jugadores y chat", "Jugadas y datos de la partida", "Chat de los personajes", "Datos de la partida"]) {
+    for (const label of ["Estado", "Tablero", "Turno, jugadores y jugadas", "Chat y datos de la partida", "Chat de los personajes", "Datos de la partida"]) {
       expect(html, label).toContain(`aria-label="${label}"`);
     }
     for (const name of ["Brava", "Don Ernesto", "Abuela Pilar", "Chispa"]) expect(html).toContain(name);

@@ -210,7 +210,7 @@ export function GameView({
     .map((text, i) => ({ id: i, text }));
 
   return (
-    // El HTML sigue el orden de móvil (aviso, tablero, dado/jugadores/chat, jugadas/datos); en
+    // El HTML sigue el orden de móvil (aviso, tablero, dado/jugadores/jugadas, chat/datos); en
     // escritorio, cada bloque va a su zona de la rejilla (ver `layout.ts`).
     <div className={GAME_GRID}>
       <div className={GAME_AREA.banner}>
@@ -237,10 +237,21 @@ export function GameView({
         {controls && <div className="flex shrink-0 flex-wrap justify-center gap-2">{controls}</div>}
       </section>
 
-      <aside aria-label="Turno, jugadores y chat" className={GAME_AREA.right}>
+      <aside aria-label="Turno, jugadores y jugadas" className={GAME_AREA.right}>
         <DicePanel turn={getTurnInfo(state)} names={CHARACTER_NAMES} rollKey={live?.rollKey ?? 0} compact />
         {/* Orden visual (Chispa, Don Ernesto, Abuela Pilar, Brava); el del motor no cambia. */}
         <PlayersPanel players={inDisplayOrder(getPlayerSummaries(state))} names={CHARACTER_NAMES} compact />
+        <TurnLog
+          title={live ? "Últimas jugadas" : "Última jugada"}
+          description={actionText}
+          emptyText="Todavía no se ha jugado ningún turno."
+          entries={live?.log ?? log}
+          className={FILL_PANEL}
+          listClassName={LOG_LIST}
+        />
+      </aside>
+
+      <aside aria-label="Chat y datos de la partida" className={GAME_AREA.left}>
         {chat && (
           <ChatPanel
             messages={chat}
@@ -250,17 +261,6 @@ export function GameView({
             scrollClassName={FILL_SCROLL}
           />
         )}
-      </aside>
-
-      <aside aria-label="Jugadas y datos de la partida" className={GAME_AREA.left}>
-        <TurnLog
-          title={live ? "Últimas jugadas" : "Última jugada"}
-          description={actionText}
-          emptyText="Todavía no se ha jugado ningún turno."
-          entries={live?.log ?? log}
-          className={FILL_PANEL}
-          listClassName={LOG_LIST}
-        />
         <GameInfo game={game} demo={demo} />
       </aside>
     </div>
