@@ -9,7 +9,7 @@ Nueva versión del Parchís online: cuatro personajes controlados por IA juegan 
   - `src/lib/board/` y `src/components/board/`: tablero visual (ver abajo).
   - `src/lib/hud/` y `src/components/hud/`: HUD de jugadores y panel de dados (ver abajo).
   - `src/lib/chat/`, `src/components/hud/ChatPanel.tsx` y `web/supabase/8.2a-chat.sql`: chat entre personajes (ver "Chat entre personajes").
-  - `src/app/globals.css`: tema de Tailwind CSS 4. La tipografía es Geist (`next/font` en `layout.tsx`, que define `--font-geist-sans`), conectada al tema con `--font-sans: var(--font-geist-sans)`. Antes `--font-sans` se referenciaba a sí misma y el navegador mostraba su fuente serif por defecto.
+  - `src/app/globals.css`: tema de Tailwind CSS 4. **Tipografía:** `--font-sans: var(--font-sans)` se referencia a sí misma, así que no es válida y el navegador usa su fuente estándar (en Chrome, «Times New Roman»; en Linux se pinta con Liberation Serif). Es la apariencia que ha tenido siempre el proyecto y se mantiene a propósito: en el commit `8089f90` se conectó a Geist (`--font-sans: var(--font-geist-sans)`; `layout.tsx` carga Geist con `next/font`), pero se revirtió para recuperar el aspecto anterior. Los tamaños de texto (en `rem`) no cambiaron en ningún momento: solo cambian las métricas de la fuente.
 - `frontend/`, `backend/`, `nginx/`, `vault/`, `docker-compose.yml`, `Makefile`: **proyecto original** (ft_transcendence). Solo de referencia. **No modificar ni eliminar.**
 
 ## Motor (`web/src/lib/engine/`)
