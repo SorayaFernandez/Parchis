@@ -1019,6 +1019,11 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   },
   // Narración de comentarista: «una captura de libro», «una jugada de manual».
   { term: "de libro", re: /(?<![\p{L}])de\s+(?:libro|manual)(?![\p{L}])/u },
+  // Frase retirada: «¡Ay, pobre Abuela! Se le escapa la captura.» (y sus dos giros por separado).
+  { term: "pobre abuela", re: /(?<![\p{L}])pobre\s+abuela(?![\p{L}])/u },
+  { term: "se le escapa la captura", re: /(?<![\p{L}])se\s+(?:le|te|me|les|nos|os)\s+(?:escapa|escapo|escapan|ha\s+escapado|han\s+escapado)\s+(?:la|una|esa|otra)\s+captura(?![\p{L}])/u },
+  // Al grupo, Abuela Pilar dice «hijos», no «cariños». «Cariño», a un solo rival, sí.
+  { term: "cariños", re: /(?<![\p{L}])cariños(?![\p{L}])/u },
 ];
 /**
  * Distancias hasta la meta: los personajes no calculan ni anuncian cuántas casillas les quedan («Y ahora a la

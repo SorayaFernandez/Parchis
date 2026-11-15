@@ -209,7 +209,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         third_six_self: [
           "¿Tres seises y castigo? ¡Qué injusticia!",
-          "¡Jo! Ni la suerte me aguanta.",
+          "¡Jo! Ni la suerte me acompaña.",
           "¡Encima pierdo el turno! Hay que fastidiarse.",
           "¡Tres seises! Hasta el dado quiere pelea.",
         ],
@@ -393,7 +393,7 @@ export const CHARACTERS: readonly Character[] = [
           "Ay, qué alegría. Despacito y buena letra, hijos.",
           "He ganado yo. ¿Quién lo iba a decir?",
           "Quien ríe el último ríe mejor… pero yo he llegado primera.",
-          "Gané, cariños. Poquito a poco, pero gané.",
+          "Gané, hijos. Poquito a poco, pero gané.",
           "¡Qué ilusión! Esto lo celebramos con chocolate.",
         ],
         victory_reply: [
@@ -424,7 +424,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         streak_lament: [
           "Otra vez a casa… Ay, Señor, dame paciencia.",
-          "¿Pero qué os he hecho yo, cariños? Ya van {count}.",
+          "¿Pero qué os he hecho yo, hijos? Ya van {count}.",
           "{Count} veces a casita {ritmo}. Paciencia y buena cara.",
           "Ya van {count}… Esto me pasa por fiarme, {rival}.",
         ],
@@ -455,7 +455,7 @@ export const CHARACTERS: readonly Character[] = [
         ambient_lead: [
           "Ay, quién me lo iba a decir: la primera, y sin prisas.",
           "Delante de todos, hijos, y sin correr nada.",
-          "La abuela va ganando. Tomad nota, cariños.",
+          "La abuela va ganando. Tomad nota, hijos.",
           "{rival}, cariño, te espero en la meta.",
         ],
         ambient_ahead: [

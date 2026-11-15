@@ -1578,7 +1578,7 @@ describe("expresiones retiradas, «Voy ganando» con respaldo y capturas repetid
     const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
     expect(chispa.chat.lines.capture_lament).toContain("Maldición, me comiste la ficha, {rival}.");
     expect(CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.ambient_lead).toContain("Voy ganando. Hoy me salen las tiradas.");
-    expect(CHARACTERS.find((c) => c.id === "ai-green")!.chat.lines.ambient_lead).toContain("La abuela va ganando. Tomad nota, cariños.");
+    expect(CHARACTERS.find((c) => c.id === "ai-green")!.chat.lines.ambient_lead).toContain("La abuela va ganando. Tomad nota, hijos.");
   });
 });
 
@@ -1841,5 +1841,43 @@ describe("partida real: «quitar» fichas, «de libro», distancias a la meta y 
 
   it("el motivo nuevo está en la lista que se registra", () => {
     expect(INVALID_RESPONSE_REASONS).toContain(OFF_TOPIC);
+  });
+});
+
+describe("Abuela Pilar al grupo («hijos», no «cariños»), la frase retirada de Chispa y «Ni la suerte me acompaña»", () => {
+  const UNNATURAL = "expresión poco natural";
+  const PILAR = "ai-green";
+  const pilarLines = () => Object.values(CHARACTERS.find((c) => c.id === PILAR)!.chat.lines).flat();
+
+  it("Pilar dice «hijos» al grupo en el catálogo, y el LLM no puede usar «cariños»", () => {
+    const lines = pilarLines();
+    expect(lines).toContain("Gané, hijos. Poquito a poco, pero gané.");
+    expect(lines).toContain("¿Pero qué os he hecho yo, hijos? Ya van {count}.");
+    expect(lines).toContain("La abuela va ganando. Tomad nota, hijos.");
+    for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(/cariños/i);
+    const ambient = say(PILAR, null, { kind: "ambient_lead", trigger: "ambient", important: false });
+    expect(checkQuality("Tomad nota, cariños.", ambient)).toEqual({ reason: UNNATURAL, term: "cariños" });
+    expect(checkQuality("Tomad nota, hijos.", ambient)).toBeNull();
+    expect(hasDiscardedExpression("La abuela va ganando. Tomad nota, cariños.")).toBe(true);
+  });
+
+  it("a un solo rival, «cariño» sigue valiendo", () => {
+    const capturer = say(PILAR, "ai-blue", { kind: "capture_boast", captures: factsOf([cap(10, PILAR, "ai-blue")], PILAR) });
+    expect(reject("Ay, cariño, te he comido, Chispa.", capturer)).toBeNull();
+  });
+
+  it("«¡Ay, pobre Abuela! Se le escapa la captura.» no está en el catálogo, no se acepta del LLM y no se cita", () => {
+    const text = "¡Ay, pobre Abuela! Se le escapa la captura.";
+    for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(/pobre abuela|se le escapa la captura/i);
+    const chispa = say("ai-blue", PILAR, { kind: "ambient_ahead", trigger: "ambient", important: false });
+    expect(checkQuality(text, chispa)).toMatchObject({ reason: UNNATURAL });
+    expect(checkQuality("¡Pobre Abuela, Abuela Pilar!", chispa)).toEqual({ reason: UNNATURAL, term: "pobre abuela" });
+    expect(checkQuality("Se te ha escapado la captura, Abuela Pilar.", chispa)).toEqual({ reason: UNNATURAL, term: "se le escapa la captura" });
+    expect(hasDiscardedExpression(text)).toBe(true);
+  });
+
+  it("«¡Jo! Ni la suerte me acompaña.» sustituye a «me aguanta» (es una frase de Brava, en el tercer seis)", () => {
+    expect(CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.third_six_self).toContain("¡Jo! Ni la suerte me acompaña.");
+    for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toBe("¡Jo! Ni la suerte me aguanta.");
   });
 });
