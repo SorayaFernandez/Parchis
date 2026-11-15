@@ -1881,3 +1881,27 @@ describe("Abuela Pilar al grupo («hijos», no «cariños»), la frase retirada 
     for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toBe("¡Jo! Ni la suerte me aguanta.");
   });
 });
+
+describe("coletilla «y ya vas dos» (partida real de Brava)", () => {
+  const capturer = say("ai-pink", "ai-blue", { kind: "capture_boast", captures: factsOf([cap(10, "ai-pink", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-pink") });
+
+  it("«He comido tu ficha y ya vas dos.» se rechaza (aunque la cifra fuera cierta) y no se cita; sin la coletilla, se acepta", () => {
+    expect(reject("He comido tu ficha y ya vas dos.", capturer)).toEqual({ reason: "expresión poco natural", detail: "termino=ya vas dos" });
+    for (const text of ["Te comí, Chispa, y ya vais tres.", "Ya vas por la segunda, Chispa.", "Te he comido. Vas dos, Chispa.", "Y ya vas 2, Chispa."]) {
+      expect(checkQuality(text, capturer)?.term, text).toBe("ya vas dos");
+    }
+    expect(hasDiscardedExpression("He comido tu ficha y ya vas dos.")).toBe(true);
+    expect(reject("He comido tu ficha, Chispa.", capturer)).toBeNull();
+    expect(reject("Te comí, Chispa.", capturer)).toBeNull();
+  });
+
+  it("no se confunde con otros usos de «vas»", () => {
+    for (const text of ["Vas una casilla por delante, Chispa.", "¿Adónde vas, Chispa?", "Vas a ver, Chispa."]) {
+      expect(checkQuality(text, say("ai-pink", "ai-blue", { kind: "ambient_ahead", trigger: "ambient", important: false }))?.term, text).not.toBe("ya vas dos");
+    }
+  });
+
+  it("no está en el catálogo local", () => {
+    for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(/\bva(s|is)\s+(ya\s+)?(\{count\}|dos|tres|cuatro|\d)/i);
+  });
+});

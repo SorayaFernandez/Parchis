@@ -50,7 +50,7 @@ export function DicePanel({ turn, names, rollKey, onRoll, busy = false, compact 
       )}
       style={{ boxShadow: phase.kind === "finished" ? undefined : `0 0 24px -12px ${color}` }}
     >
-      <DiceFace value={diceValue} rollKey={rollKey} dimmed={diceUsed} className={cn("w-24 shrink-0 sm:w-28", compact && "xl:w-18")} />
+      <DiceFace value={diceValue} rollKey={rollKey} dimmed={diceUsed} className={cn("w-28 shrink-0 sm:w-32", compact && "xl:w-21")} />
 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <p className="text-xs font-medium tracking-widest text-slate-400 uppercase">Turno</p>

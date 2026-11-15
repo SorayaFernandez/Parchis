@@ -71,7 +71,7 @@ function spreadHorizontally(slot: BoardSlot): boolean {
  * círculos de casa (≈70). Con varias, se reparten a lo largo del eje largo (≈109) sin
  * salirse y sin que se toquen las fichas ni sus halos.
  */
-const PIECE_SIZE_BY_COUNT = [50, 50, 44, 32, 24];
+const PIECE_SIZE_BY_COUNT = [50, 50, 46, 32, 24];
 export const PIECE_SIZE = PIECE_SIZE_BY_COUNT[1];
 
 /** Diámetro del halo de color y del anillo de resaltado, en proporción al de la ficha. */

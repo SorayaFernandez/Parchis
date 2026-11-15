@@ -154,6 +154,7 @@ describe("tamaño de las fichas: legibles y sin solaparse", () => {
 
   it("una ficha sola, con su anillo de resaltado (trazo 3), cabe en el eje corto de la casilla", () => {
     expect(PIECE_SIZE).toBe(50);
+    // Dos en una casilla: 46 (antes 44), la ficha sola sigue en 50.
     expect(PIECE_SIZE * PIECE_RING_RATIO + 3).toBeLessThan(CELL_WIDTH);
   });
 
@@ -193,5 +194,21 @@ describe("tamaño de las fichas: legibles y sin solaparse", () => {
         expect(distance, `${a.key} / ${b.key}`).toBeGreaterThanOrEqual((a.size + b.size) / 2 - 0.1);
       }
     }
+  });
+});
+
+describe("tamaño de dos fichas en una casilla", () => {
+  it("una sola mide 50; dos, 46 (más grandes que antes, más pequeñas que una sola y sin que se toquen sus halos)", () => {
+    const state = createGame(["a", "b", "c", "d"]);
+    state.players.slice(0, 2).forEach((player) => {
+      const steps = (30 - { pink: 39, purple: 5, green: 22, blue: 56 }[player.color] + 68) % 68;
+      player.pieces[0] = { steps, state: "track", arrivalOrder: 1 };
+    });
+    const pair = layoutPieces(state).filter((p) => p.slot.kind === "track");
+    expect(pair.map((p) => p.size)).toEqual([46, 46]);
+    expect(PIECE_SIZE).toBe(50);
+    const gap = Math.abs(pair[0].x - pair[1].x);
+    expect(gap).toBeGreaterThanOrEqual(46 * PIECE_HALO_RATIO);
+    expect(gap + 46).toBeLessThanOrEqual(CELL_LENGTH);
   });
 });
