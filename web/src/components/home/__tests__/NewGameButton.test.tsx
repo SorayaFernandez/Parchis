@@ -71,3 +71,21 @@ describe("portada: comentario de ejemplo de Abuela Pilar", () => {
     expect(html).not.toContain("No hay mal que por bien no venga");
   });
 });
+
+describe("portada: textos", () => {
+  it("quedan exactamente como se pidió", async () => {
+    const html = renderToStaticMarkup(await Home());
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    // «Parchís» en la marca, el título y el pie; ya no «Parchís IA» ni el enlace «Demostración» de la cabecera.
+    expect(text).not.toContain("Parchís IA");
+    expect(html.match(/>Parchís</g)?.length).toBeGreaterThanOrEqual(3);
+    expect(text).not.toMatch(/\bDemostración\b/);
+    expect(text).toContain("hablan por el chat");
+    expect(text).not.toContain("se pican en el chat");
+    expect(text).toContain("se comen fichas siguiendo las reglas del parchís.");
+    expect(text).not.toContain("con las reglas del parchís");
+    expect(text).not.toContain("No son simples avatares");
+    // La demostración sigue accesible desde las llamadas a la acción.
+    expect(text).toContain("Ver una partida de demostración");
+  });
+});

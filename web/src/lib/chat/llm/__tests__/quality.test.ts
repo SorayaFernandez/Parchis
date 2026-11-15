@@ -1905,3 +1905,38 @@ describe("coletilla «y ya vas dos» (partida real de Brava)", () => {
     for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(/\bva(s|is)\s+(ya\s+)?(\{count\}|dos|tres|cuatro|\d)/i);
   });
 });
+
+describe("«Sigo en la pelea» y «Mantengo la ventaja», retiradas", () => {
+  const ambient = (speaker: string, kind: Utterance["kind"]) => say(speaker, null, { kind, trigger: "ambient", important: false });
+  const UNNATURAL = "expresión poco natural";
+
+  it("se rechazan, con sus variantes, y no se citan en el contexto", () => {
+    for (const text of ["Sigo en la pelea. Ojo conmigo.", "Sigo dando pelea, que conste.", "Seguimos en la pelea.", "Aún doy pelea."]) {
+      expect(checkQuality(text, ambient("ai-pink", "ambient_ahead")), text).toEqual({ reason: UNNATURAL, term: "sigo en la pelea" });
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    for (const text of ["Mantengo la ventaja. Paciencia y método.", "Mantengo mi ventaja.", "Conservo la ventaja, como era de esperar.", "Sigo manteniendo la ventaja."]) {
+      expect(checkQuality(text, ambient("ai-purple", "ambient_lead")), text).toEqual({ reason: UNNATURAL, term: "mantengo la ventaja" });
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no bloquea usos naturales de «pelea», «ventaja» o «mantener»", () => {
+    for (const [speaker, kind, text] of [
+      ["ai-pink", "third_six_self", "¡Tres seises! Hasta el dado quiere pelea."],
+      ["ai-purple", "ambient_behind", "Una desventaja temporal. Nada que un buen plan no corrija."],
+      ["ai-purple", "ambient_ahead", "Abuela Pilar, no confunda ventaja con victoria."],
+      ["ai-green", "ambient_ahead", "Hay que mantener la calma, hijos."],
+      ["ai-blue", "ambient_ahead", "Brava lleva ventaja, pero esto no ha acabado."],
+    ] as const) {
+      expect(checkQuality(text, ambient(speaker, kind)), text).toBeNull();
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("no están en el catálogo local; las sustitutas sí", () => {
+    for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(/sigo en la pelea|mantengo la ventaja/i);
+    expect(CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.ambient_ahead).toContain("Al primero que se me ponga a tiro, lo mando a casa.");
+    expect(CHARACTERS.find((c) => c.id === "ai-purple")!.chat.lines.ambient_lead).toContain("Las cuentas me salen, de momento.");
+  });
+});

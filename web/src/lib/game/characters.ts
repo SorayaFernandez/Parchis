@@ -239,7 +239,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_ahead: [
           "Todavía no he terminado. ¡Queda partida!",
-          "Sigo en la pelea. Ojo conmigo.",
+          "Al primero que se me ponga a tiro, lo mando a casa.",
           "¡Aquí no se rinde nadie! Y yo, menos.",
           "{rival}, espabila, que te estás quedando atrás.",
         ],
@@ -341,7 +341,7 @@ export const CHARACTERS: readonly Character[] = [
           "Terminado. Me tocará repasar la partida con calma.",
         ],
         ambient_lead: [
-          "Mantengo la ventaja. Paciencia y método.",
+          "Las cuentas me salen, de momento.",
           "Voy por delante, y sin arriesgar.",
           "Encabezo la partida, tal como había calculado.",
           "{rival}, la distancia ya es considerable. Le conviene reaccionar.",

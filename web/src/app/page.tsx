@@ -27,7 +27,7 @@ const HOME_TEXT: Readonly<Record<string, string>> = {
 
 const STEPS = [
   { icon: "/ui/dice-5.svg", title: "Pulsa «Nueva partida»", text: "Se prepara un tablero con los cuatro personajes." },
-  { icon: "/ui/dice-3.svg", title: "Ellos juegan", text: "Tiran, deciden cada jugada y se comen fichas con las reglas del parchís." },
+  { icon: "/ui/dice-3.svg", title: "Ellos juegan", text: "Tiran, deciden cada jugada y se comen fichas siguiendo las reglas del parchís." },
   { icon: "/ui/dice-6.svg", title: "Tú miras", text: "Sigue el tablero, las jugadas y su conversación en directo." },
 ];
 
@@ -71,11 +71,8 @@ export default async function Home() {
               <span key={c} className="size-2.5 rounded-full" style={{ backgroundColor: c, boxShadow: `0 0 10px ${c}` }} />
             ))}
           </span>
-          Parchís IA
+          Parchís
         </span>
-        <Link href="/tablero" className="text-sm font-medium text-slate-300 transition-colors hover:text-white">
-          Demostración
-        </Link>
       </header>
 
       {/* ── Portada: qué es, cómo empezar y el tablero en juego ── */}
@@ -85,11 +82,11 @@ export default async function Home() {
             Parchís con cuatro rivales de inteligencia artificial
           </p>
           <h1 className="text-5xl font-black tracking-tight sm:text-6xl xl:text-7xl">
-            <span className="bg-linear-to-r from-[#ff3bd4] via-[#c86cff] to-[#00d9ff] bg-clip-text text-transparent">Parchís IA</span>
+            <span className="bg-linear-to-r from-[#ff3bd4] via-[#c86cff] to-[#00d9ff] bg-clip-text text-transparent">Parchís</span>
           </h1>
           <p className="mt-5 text-2xl font-semibold text-slate-100 sm:text-3xl">Ellos juegan. Tú miras.</p>
           <p className="mt-4 max-w-xl text-lg leading-relaxed text-slate-300">
-            Brava, Don Ernesto, Abuela Pilar y Chispa tiran el dado, deciden cada jugada y se pican en el chat. Cuatro personalidades,
+            Brava, Don Ernesto, Abuela Pilar y Chispa tiran el dado, deciden cada jugada y hablan por el chat. Cuatro personalidades,
             una partida entera entre ellos.
           </p>
 
@@ -143,9 +140,6 @@ export default async function Home() {
           <h2 id="rivales" className="text-3xl font-bold tracking-tight sm:text-4xl">
             Cuatro rivales, cuatro maneras de jugar
           </h2>
-          <p className="mx-auto mt-3 max-w-2xl text-slate-400">
-            No son simples avatares: cada uno decide sus jugadas con su propia estrategia y comenta la partida a su manera.
-          </p>
         </div>
         <RivalCards />
       </section>
@@ -187,7 +181,7 @@ export default async function Home() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 py-6 text-center text-sm text-slate-500">Parchís IA</footer>
+      <footer className="border-t border-white/10 py-6 text-center text-sm text-slate-500">Parchís</footer>
     </main>
   );
 }
