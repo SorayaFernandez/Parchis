@@ -290,7 +290,7 @@ export const CHARACTERS: readonly Character[] = [
           "Merecido, {rival}. Yo tendré que pensar en qué fallé.",
         ],
         capture_boast: [
-          "Previsible, {rival}. Ha dejado esa ficha sola.",
+          "Previsible, {rival}. Le comí.",
           "Lo siento, {rival}. Era la mejor jugada.",
           "He comido su ficha, {rival}. Nada personal.",
           "{rival}, le recomiendo no dejar fichas sueltas.",
@@ -300,7 +300,7 @@ export const CHARACTERS: readonly Character[] = [
           "Interesante, {rival}. Un riesgo que no había considerado.",
           "Lo anoto, {rival}. No volverá a ocurrir.",
           "No ha salido como esperaba, {rival}. Sigamos.",
-          "Bien visto, {rival}. Ahora me toca reorganizarme.",
+          "Me ha comido una ficha, {rival}. Tendré que reorganizarme.",
         ],
         streak_boast: [
           "{Count} capturas {ritmo}. Mi plan funciona mejor de lo esperado.",
@@ -342,7 +342,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_lead: [
           "Las cuentas me salen, de momento.",
-          "Voy por delante, y sin arriesgar.",
+          "Voy ganando, y sin arriesgar.",
           "Encabezo la partida, tal como había calculado.",
           "{rival}, le saco ventaja. Debería reaccionar.",
         ],
@@ -453,8 +453,8 @@ export const CHARACTERS: readonly Character[] = [
           "Fin para mí. Ha estado bien.",
         ],
         ambient_lead: [
-          "Ay, quién me lo iba a decir: la primera, y sin prisas.",
-          "Delante de todos, hijos, y sin correr nada.",
+          "Ay, quién me lo iba a decir: voy ganando.",
+          "Voy ganando, hijos, y sin correr nada.",
           "La abuela va ganando. Tomad nota, hijos.",
           "{rival}, cariño, te espero en la meta.",
         ],
@@ -522,7 +522,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Me has comido, {rival}! Qué rabia.",
           "¡Qué jugada, {rival}! Bueno, para ti.",
           "Vale, {rival}, esta me la apunto.",
-          "¡Qué mala pata! Bien visto, {rival}.",
+          "¡Qué mala pata, {rival}! Vuelta a empezar.",
           "¡Mi ficha! {rival}, con lo bien que iba.",
           "¡Ay! {rival}, ya te pillaré yo.",
           "Maldición, me comiste la ficha, {rival}.",
@@ -568,7 +568,7 @@ export const CHARACTERS: readonly Character[] = [
         ambient_lead: [
           "¡Voy ganando! Que no se acabe la suerte.",
           "Voy ganando. ¡Que siga así!",
-          "¡Voy primero! Ni yo me lo esperaba.",
+          "¡Voy ganando! Ni yo me lo esperaba.",
           "¡Mira, {rival}, voy ganando!",
         ],
         ambient_ahead: [

@@ -4,7 +4,7 @@ import { captureFacts, type Utterance } from "../../director";
 import type { RecentText } from "../../writer";
 import type { ChatTrigger } from "../../schemas";
 import { ChatLlmError, cleanLlmText, INVALID_RESPONSE_REASONS } from "../gatewayWriter";
-import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences, disallowedDiminutive, hasDiscardedExpression } from "../quality";
+import { OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences, disallowedDiminutive, hasDiscardedExpression } from "../quality";
 import { buildChatPrompt } from "../prompt";
 
 const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = [], usedCatchphrases?: number[]) => ({
@@ -188,7 +188,7 @@ describe("cada regla nueva por separado", () => {
   it("ajeno al parchís y afirmaciones sobre la partida", () => {
     for (const [text, term] of [
       ["¡Jaque mate, Chispa!", "jaque mate"],
-      ["Esto es un golazo, Chispa.", "golazo"],
+      ["Esto es un golazo, Chispa.", "gol"], // derivado de «gol»
       ["Tarjeta roja para ti, Chispa.", "tarjeta roja"],
     ] as const) {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toEqual({ reason: "expresión ajena al parchís", term });
@@ -200,17 +200,16 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("¡Has ganado, Brava!", say("ai-blue", "ai-pink", { kind: "victory_reply", trigger: "victory" }))).toBeNull();
   });
 
-  it("Chispa (comentarista) puede usar metáforas deportivas en frases naturales; no las reglas de otros juegos", () => {
-    // La frase local de Chispa y otras metáforas de comentarista, en su boca, pasan por cleanLlmText completo.
-    expect(reject("¡Golazo por la escuadra! Brava, a casa a por agua.", say("ai-blue", "ai-pink"))).toBeNull();
-    expect(reject("¡Gol de Chispa! Qué jugada, señores.", say("ai-blue", "ai-pink"))).toBeNull();
-    expect(reject("¡Triple sobre la bocina, Brava!", say("ai-blue", "ai-pink"))).toBeNull();
-    expect(reject("¡Canasta desde casa! Brava, a empezar de nuevo.", say("ai-blue", "ai-pink"))).toBeNull();
-    expect(reject("¡Fuera de juego, Brava!", say("ai-blue", "ai-pink"))?.reason).toBe("expresión ajena al parchís");
+  it("nadie usa metáforas deportivas ni reglas de otros juegos, tampoco Chispa (ya no es «comentarista»)", () => {
+    // Antes se le permitían a Chispa; ahora se rechazan por el flujo completo, como a los demás.
+    for (const text of ["¡Golazo por la escuadra! Brava, a casa a por agua.", "¡Gol! Qué jugada, Brava.", "¡Triple sobre la bocina, Brava!", "¡Canasta desde casa! Brava, a empezar de nuevo.", "¡Fuera de juego, Brava!"]) {
+      expect(reject(text, say("ai-blue", "ai-pink"))?.reason, text).toBe("expresión ajena al parchís");
+    }
   });
 
   // Cada término por separado, en una frase que no contiene ningún otro término de las listas.
   const sentence = (term: string) => `Eso ha sido ${term}, compañero.`;
+  const COMMENTATOR = "ai-blue"; // Chispa, a quien antes se le permitían las metáforas deportivas
   const OTHERS = ["ai-pink", "ai-purple", "ai-green"] as const;
 
   it("la frase de prueba, sin término, se acepta para los cuatro (sin falsos positivos)", () => {
@@ -219,10 +218,11 @@ describe("cada regla nueva por separado", () => {
     }
   });
 
-  it.each(SPORTS_METAPHORS.map((term) => [term]))("metáfora deportiva «%s»: Chispa la acepta y los otros tres la rechazan", (term) => {
-    expect(checkQuality(sentence(term), say(COMMENTATOR, "ai-pink"))).toBeNull();
-    for (const speaker of OTHERS) {
-      expect(checkQuality(sentence(term), say(speaker, COMMENTATOR)), speaker).toEqual({ reason: "expresión ajena al parchís", term });
+  it.each(SPORTS_METAPHORS.map((term) => [term]))("metáfora deportiva «%s»: los cuatro personajes, incluida Chispa, la rechazan", (term) => {
+    // «golazo» es un derivado de «gol» y se informa como «gol».
+    const expected = term === "golazo" ? "gol" : term;
+    for (const speaker of [COMMENTATOR, ...OTHERS]) {
+      expect(checkQuality(sentence(term), say(speaker, speaker === COMMENTATOR ? "ai-pink" : COMMENTATOR)), speaker).toEqual({ reason: "expresión ajena al parchís", term: expected });
     }
   });
 
@@ -302,16 +302,16 @@ describe("cada regla nueva por separado", () => {
     }
   });
 
-  it("B: permite su nombre en construcciones válidas y nombrar a los rivales en tercera persona", () => {
-    // Construcciones válidas con el propio nombre.
-    expect(reject("¡Gol de Chispa! Qué jugada, señores.", say("ai-blue", "ai-pink"))).toBeNull();
-    expect(reject("Soy Brava y nunca fallo, Chispa.", say("ai-pink", "ai-blue"))).toBeNull();
-    expect(reject("Le habla Don Ernesto: era previsible, Chispa.", say("ai-purple", "ai-blue"))).toBeNull();
+  it("B: nadie dice su propio nombre (tampoco para presentarse); nombrar a los rivales en tercera persona sí", () => {
+    // Antes se aceptaban; ahora el propio nombre no aparece en ninguna construcción.
+    expect(reject("¡Otra para Chispa! Qué jugada.", say("ai-blue", "ai-pink"))).toMatchObject({ reason: "se nombra a sí mismo", detail: "termino=chispa" });
+    expect(reject("Soy Brava y nunca fallo, Chispa.", say("ai-pink", "ai-blue"))).toMatchObject({ reason: "se nombra a sí mismo", detail: "termino=brava" });
+    expect(reject("Le habla Don Ernesto: era previsible, Chispa.", say("ai-purple", "ai-blue"))).toMatchObject({ reason: "se nombra a sí mismo", detail: "termino=don ernesto" });
     // Rivales en tercera persona (con artículo o verbo): no es hablar de sí mismo.
     expect(reject("¡Brava ha caído! Y el dado lo ha visto.", say("ai-blue", "ai-pink"))).toBeNull();
     expect(reject("¡La abuela se lleva un susto! A casa esa ficha.", say("ai-blue", "ai-green"))).toBeNull();
     expect(reject("Chispa no aprende, cariño.", say("ai-green", "ai-blue"))).toBeNull();
-    expect(reject("Don Ernesto nunca se rinde, Chispa lo sabe.", say("ai-blue", "ai-purple"))).toBeNull();
+    expect(reject("Don Ernesto nunca se rinde, ya lo sé.", say("ai-blue", "ai-purple"))).toBeNull();
     // Pilar llamándose «la abuela» es parte de su personaje (sus frases locales lo usan).
     expect(reject("Ay, la abuela no corre tanto, Chispa.", say("ai-green", "ai-blue"))).toBeNull();
     expect(reject("Felicidades, Chispa. A la próxima, la abuela se pone seria.", say("ai-green", "ai-blue", { kind: "victory_reply", trigger: "victory" }))).toBeNull();
@@ -1650,7 +1650,7 @@ describe("dirección de las capturas, el propio nombre y expresiones retiradas (
     // Alias propios («Ernesto», «Pilar») también; nombrarse sin hablarse a sí mismo no es un vocativo.
     expect(checkQuality("Lo tenía calculado, Ernesto.", capturer("ai-purple", "ai-pink"))).toMatchObject({ reason: SELF, term: "ernesto" });
     expect(checkQuality("Ay, Pilar, qué cosas.", capturer("ai-green", "ai-pink"))).toMatchObject({ reason: SELF, term: "pilar" });
-    expect(checkQuality("¡Gol de Chispa!", capturer("ai-blue", "ai-pink"))).toBeNull();
+    expect(checkQuality("¡Otra para Chispa!", capturer("ai-blue", "ai-pink"))).toMatchObject({ reason: "se nombra a sí mismo", term: "chispa" });
   });
 
   it("con capturas anteriores en el otro sentido no se confunde quién comió a quién en esta", () => {
@@ -1737,7 +1737,7 @@ describe("disculpas de quien pierde la ficha: solo se rechazan si se atribuye la
   });
 
   it("la justificación sola es ambigua (puede ser un elogio) y no se rechaza; quien captura puede disculparse y justificarse", () => {
-    expect(checkQuality("Era la mejor jugada, Brava. Bien visto.", victimOf("ai-blue", "ai-pink"))).toBeNull();
+    expect(checkQuality("Era la mejor jugada, Brava. Bien jugado.", victimOf("ai-blue", "ai-pink"))).toBeNull();
     expect(reject("Lo siento, Chispa. Era la mejor jugada.", capturer("ai-pink", "ai-blue"))).toBeNull();
   });
 
@@ -2300,5 +2300,237 @@ describe("expresiones retiradas tras la prueba real en Preview", () => {
     const { createDemoMatch } = await import("@/lib/board/demo");
     const match = await createDemoMatch();
     for (const m of match.messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+  });
+});
+
+describe("revisión de lenguaje: presentarse, «tener» o «quedarse con» la ficha, «Bien visto» y «Voy delante»", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+  const OWN = "se nombra a sí mismo";
+  /** Nombres propios de cada personaje («la abuela» no es el nombre de Pilar). */
+  const OWN_NAMES: Record<string, RegExp> = {
+    [BRAVA]: /(?<!\p{L})Brava(?!\p{L})/u,
+    [ERNESTO]: /(?<!\p{L})ernesto(?!\p{L})/iu,
+    [PILAR]: /(?<!\p{L})pilar(?!\p{L})/iu,
+    [CHISPA]: /(?<!\p{L})Chispa(?!\p{L})/u,
+  };
+  const lead = (speaker: string, rival: string) => ({ ...say(speaker, rival, { kind: "ambient_lead", trigger: "ambient", important: false }), leader: speaker });
+
+  it("cada expresión se rechaza por el flujo completo del escritor LLM, también las que ya estaban retiradas", () => {
+    // Las nuevas.
+    expect(reject("Soy Don Ernesto y le he comido la ficha a Abuela Pilar.", say(ERNESTO, PILAR))).toEqual({ reason: OWN, detail: "termino=don ernesto" });
+    expect(reject("Tengo la tuya, Chispa.", say(BRAVA, CHISPA))).toEqual(term("tener la ficha"));
+    expect(reject("Me he quedado con la tuya, Chispa.", say(BRAVA, CHISPA))).toEqual(term("quedarse con la ficha"));
+    expect(reject("Bien visto, Brava.", say(CHISPA, BRAVA, { kind: "capture_lament" }))).toEqual(term("bien visto"));
+    expect(checkQuality("Voy delante, Chispa.", lead(BRAVA, CHISPA))).toEqual({ reason: "afirmación no respaldada", term: "voy delante" });
+    expect(checkQuality("Voy por delante, Chispa.", lead(BRAVA, CHISPA))).toMatchObject({ reason: "afirmación no respaldada" });
+    // «Voy ganando», en cambio, se acepta cuando quien habla va ganando de verdad.
+    expect(checkQuality("Voy ganando, Chispa.", lead(BRAVA, CHISPA))).toBeNull();
+    // Las retiradas antes, por si alguna dejara de rechazarse.
+    for (const [text, request] of [
+      ["Abuela Pilar, la distancia ya es considerable.", say(ERNESTO, PILAR)],
+      ["Chispa, a la abuela se la respeta.", say(PILAR, CHISPA, { kind: "capture_lament" })],
+      ["Bien hecho, Chispa. Pero no te lo creas mucho, ¿eh?", say(PILAR, CHISPA, { kind: "victory_reply", trigger: "victory" })],
+      ["Me he quedado con la ficha perdida, Brava.", say(CHISPA, BRAVA, { kind: "capture_lament" })],
+      ["¡Ahora sí que te quedas atrás, Chispa!", say(BRAVA, CHISPA)],
+      ["¡Qué mal te lo pasas, Chispa!", say(BRAVA, CHISPA)],
+      ["Que mal te lo pasas, Chispa.", say(BRAVA, CHISPA)],
+      ["Me he quedado sin ficha, Brava.", say(CHISPA, BRAVA, { kind: "capture_lament" })],
+    ] as const) expect(reject(text, request)?.reason, text).toBe("expresión poco natural");
+  });
+
+  it("variantes de «tener» o «quedarse con» la ficha para contar una captura, y de «Bien visto»: detectadas y sin citarse", () => {
+    for (const text of [
+      "Ya tengo tu ficha.", "Tengo la suya, Abuela Pilar.", "Tienes la mía, Brava.", "Ya tiene mi ficha.", "Tenemos esa ficha.",
+      "Me quedé con su ficha.", "Me quedo con la tuya.", "Quedarme con la ficha de Chispa ha sido fácil.", "Te has quedado con la mía.",
+      "Se ha quedado con mi ficha.", "Muy bien visto, Chispa.", "¡Bien visto!",
+    ]) expect(hasDiscardedExpression(text), text).toBe(true);
+  });
+
+  it("las frases naturales parecidas siguen valiendo", () => {
+    for (const text of [
+      "Tengo otra ficha en la meta.", "Tengo dos fichas en casa.", "Me he quedado con una ficha en casa.", "Tienes mi ficha a tiro, Brava.",
+      "Me quedo con las ganas.", "Me has comido, Brava.", "Te comí, Chispa.", "Bien jugado, Brava.", "Voy ganando. Así me gusta.", "Se ve venir.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(false);
+    expect(checkQuality("Tengo otra ficha en la meta.", say(BRAVA, CHISPA, { kind: "goal", trigger: "goal", important: false }))).toBeNull();
+    expect(checkQuality("Me he quedado con una ficha en casa.", say(CHISPA, BRAVA, { kind: "ambient_behind", trigger: "ambient", important: false }))).toBeNull();
+  });
+
+  it("nadie dice su propio nombre ni se presenta (los cuatro, con nombre y alias); el rival sí se puede nombrar", () => {
+    for (const [speaker, rival, name, check] of [
+      [BRAVA, CHISPA, "Brava", "brava"], [ERNESTO, CHISPA, "Don Ernesto", "don ernesto"], [ERNESTO, CHISPA, "Ernesto", "ernesto"],
+      [PILAR, CHISPA, "Abuela Pilar", "abuela pilar"], [PILAR, CHISPA, "Pilar", "pilar"], [CHISPA, BRAVA, "Chispa", "chispa"],
+    ] as const) {
+      expect(checkQuality(`Soy ${name}.`, say(speaker, rival)), name).toEqual({ reason: OWN, term: check });
+      expect(checkQuality(`Aquí está ${name}, que no se rinde.`, say(speaker, rival)), name).toEqual({ reason: OWN, term: check });
+    }
+    expect(checkQuality("¡Otra para Chispa!", say(CHISPA, BRAVA))).toEqual({ reason: OWN, term: "chispa" });
+    // El rival, la palabra común y «la abuela» de Pilar siguen valiendo.
+    expect(checkQuality("Te comí, Chispa.", say(BRAVA, CHISPA))).toBeNull();
+    expect(checkQuality("¡Qué jugada más brava, Chispa!", say(BRAVA, CHISPA))).toBeNull();
+    expect(checkQuality("Hoy tengo una chispa de suerte.", say(CHISPA, BRAVA))).toBeNull();
+    expect(checkQuality("La abuela también sabe, Chispa.", say(PILAR, CHISPA))).toBeNull();
+  });
+
+  it("el catálogo cumple: sin propio nombre, sin «Bien visto», sin «tener» o «quedarse con» la ficha, sin «Voy delante»", () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...c.catchphrases]) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(text, `${c.name}: ${text}`).not.toMatch(OWN_NAMES[c.id]);
+          expect(text, `${c.name}: ${text}`).not.toMatch(/bien visto|voy (por )?delante|delante de todos|tengo (la tuya|tu ficha)|qued\p{L}* con (la tuya|tu ficha|su ficha)/iu);
+        }
+      }
+    }
+    const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
+    expect(lines(ERNESTO).capture_lament).toContain("Me ha comido una ficha, {rival}. Tendré que reorganizarme.");
+    expect(lines(ERNESTO).ambient_lead).toContain("Voy ganando, y sin arriesgar.");
+    expect(lines(PILAR).ambient_lead).toContain("Voy ganando, hijos, y sin correr nada.");
+    expect(lines(CHISPA).capture_lament).toContain("¡Qué mala pata, {rival}! Vuelta a empezar.");
+  });
+
+  it("las sustitutas de captura pasan todas las reglas con cada rival", () => {
+    for (const rival of [BRAVA, PILAR, CHISPA]) {
+      const name = CHARACTERS.find((c) => c.id === rival)!.name;
+      expect(reject(`Me ha comido una ficha, ${name}. Tendré que reorganizarme.`, say(ERNESTO, rival, { kind: "capture_lament", captures: factsOf([cap(10, rival, ERNESTO)], ERNESTO) })), name).toBeNull();
+    }
+    for (const rival of [BRAVA, ERNESTO, PILAR]) {
+      const name = CHARACTERS.find((c) => c.id === rival)!.name;
+      expect(reject(`¡Qué mala pata, ${name}! Vuelta a empezar.`, say(CHISPA, rival, { kind: "capture_lament", captures: factsOf([cap(10, rival, CHISPA)], CHISPA) })), name).toBeNull();
+    }
+  });
+
+  it("la demostración no contiene ninguna, y nadie dice su propio nombre en ella", async () => {
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    const match = await createDemoMatch();
+    for (const m of match.messages) {
+      expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+      expect(m.text, m.text).not.toMatch(OWN_NAMES[m.characterId]);
+      expect(m.text, m.text).not.toMatch(/bien visto|delante/i);
+    }
+  });
+
+  it("el prompt no cita frases recientes con estas expresiones", () => {
+    const recent = [
+      { speaker: BRAVA, text: "Tengo la tuya, Chispa." },
+      { speaker: ERNESTO, text: "Me he quedado con la tuya, Chispa." },
+      { speaker: PILAR, text: "Bien visto, Chispa." },
+    ];
+    const [system, user] = buildChatPrompt({ ...say(CHISPA, BRAVA, { kind: "capture_lament" }), recent });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/tengo la tuya|quedado con la tuya|bien visto/i);
+  });
+});
+
+describe("ampliación de la revisión de lenguaje: deportes y otros juegos, frases retiradas y mensajes incoherentes", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const ALL = [BRAVA, ERNESTO, PILAR, CHISPA];
+  const other = (speaker: string) => (speaker === BRAVA ? CHISPA : BRAVA);
+  const lead = (speaker: string, rival: string) => ({ ...say(speaker, rival, { kind: "ambient_lead", trigger: "ambient", important: false }), leader: speaker });
+
+  it("«gol» y sus derivados, las metáforas deportivas y otros juegos: rechazados para los cuatro (también en plural)", () => {
+    for (const speaker of ALL) {
+      for (const text of [
+        "¡Gol!", "¡Golazo!", "¡Qué goles!", "Menuda goleada.", "¡Por la escuadra!", "¡Triple!", "¡Canasta!", "Esto es fútbol.", "Como en el baloncesto.",
+        "Como en el tenis.", "Tres en raya.", "¡Jaque!", "Fuera de juego.", "¡Penalti!", "Eso son penaltis.", "¡Bingo!", "Dos canastas.",
+      ]) expect(checkQuality(text, say(speaker, other(speaker)))?.reason, `${speaker}: ${text}`).toBe("expresión ajena al parchís");
+    }
+    // Palabras que solo empiezan igual no cuentan.
+    for (const text of ["Golpe de suerte con el dado.", "Me has comido de golpe."]) expect(checkQuality(text, say(CHISPA, BRAVA, { kind: "capture_lament" })), text).toBeNull();
+  });
+
+  it("cada frase retirada se rechaza por el flujo completo del escritor LLM", () => {
+    for (const [text, request] of [
+      ["Te la he quitado, Abuela Pilar.", say(BRAVA, PILAR)],
+      ["Me ha quitado una ficha.", say(PILAR, BRAVA, { kind: "capture_lament" })],
+      ["Una captura de libro.", say(ERNESTO, BRAVA)],
+      ["Y ahora a la meta en seis.", say(BRAVA, CHISPA)],
+      ["Mantengo la ventaja.", say(ERNESTO, BRAVA)], ["Conservo la ventaja.", say(ERNESTO, BRAVA)], ["Sigo manteniendo la ventaja.", say(ERNESTO, BRAVA)],
+      ["Sigo en la pelea.", say(BRAVA, CHISPA)], ["Sigo dando pelea.", say(BRAVA, CHISPA)], ["Seguimos en la pelea.", say(BRAVA, CHISPA)], ["Aún doy pelea.", say(BRAVA, CHISPA)],
+      ["Voy en cabeza, Chispa.", lead(BRAVA, CHISPA)],
+      ["¡Me la he quedado!", say(BRAVA, CHISPA)],
+      ["Un contratiempo, Brava.", say(ERNESTO, BRAVA, { kind: "capture_lament" })],
+      ["Me tiré un cuatro.", say(BRAVA, CHISPA)],
+      ["Tu ficha, en la calle.", say(BRAVA, CHISPA)],
+      ["¡He llegado a casa!", say(BRAVA, null, { kind: "goal", trigger: "goal", important: false })],
+      ["¡Voy primero!", lead(CHISPA, BRAVA)], ["Voy primera, Chispa.", lead(BRAVA, CHISPA)],
+      ["¡El dado castiga, pero Brava vuelve a empezar!", say(CHISPA, BRAVA)],
+      ["¡Qué mala suerte! ¡Vamos por todas!", say(CHISPA, BRAVA, { kind: "capture_lament" })],
+    ] as const) expect(reject(text, request), text).not.toBeNull();
+  });
+
+  it("los mensajes señalados como incoherentes se rechazan, con su motivo", () => {
+    const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+    expect(reject("¡Ojo con el siguiente!", say(BRAVA, CHISPA))).toEqual(term("ojo con el siguiente"));
+    expect(reject("¡Maldición! Creo que hoy la luna está en mal aspecto... o quizás solo fui demasiado confiado.", say(CHISPA, BRAVA, { kind: "capture_lament" }))).toEqual(term("superstición"));
+    expect(reject("¡Y el dado dice… esa ficha era la única que tenía a salvo, pobre Don Ernesto!", say(CHISPA, ERNESTO))).not.toBeNull();
+    expect(checkQuality("Esa ficha era la única que tenía a salvo, Don Ernesto.", say(CHISPA, ERNESTO))).toEqual({ reason: "expresión poco natural", term: "explicación táctica" });
+    expect(checkQuality("Ay, pobre Don Ernesto.", say(CHISPA, ERNESTO))).toEqual({ reason: "expresión poco natural", term: "pobre + nombre" });
+    // «Previsible» con una explicación táctica inventada: se rechaza; «Previsible» con lo que ha pasado, no.
+    expect(reject("Previsible, Brava. Ha dejado esa ficha sola.", say(ERNESTO, BRAVA, { captures: factsOf([cap(10, ERNESTO, BRAVA)], ERNESTO) }))).toEqual(term("explicación táctica"));
+    expect(reject("Previsible, Brava. Le comí.", say(ERNESTO, BRAVA, { captures: factsOf([cap(10, ERNESTO, BRAVA)], ERNESTO) }))).toBeNull();
+  });
+
+  it("variantes equivalentes: detectadas y sin citarse en el prompt", () => {
+    for (const text of [
+      "Ya he llegado a casa.", "¡Llegué a casa!", "Llego a casa.", "¡A por todas!", "Voy a por todas.", "Vamos a por todas, Chispa.", "Ojo con la siguiente.",
+      "Los astros no me acompañan.", "La luna anda en mal aspecto.", "Ay, pobre Brava.", "Dejaste tu ficha sin cubrir.", "Tenías la ficha desprotegida.",
+      "¡Voy primero!", "Voy la primera.", "Y ahora a la meta en seis.", "Goleada.", "Eso son penaltis.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(true);
+  });
+
+  it("las frases naturales parecidas siguen valiendo", () => {
+    for (const text of [
+      "¡A casa!", "Vuelve a casa, Chispa.", "Una ficha más en la meta.", "Una menos. ¡A por las demás!", "Hay fichas por todas partes.", "¡Ojo con esa ficha!",
+      "Hoy no tengo suerte.", "Pobre de mí.", "Previsible, Brava. Le comí.", "{rival}, le recomiendo no dejar fichas sueltas.", "Voy ganando. Así me gusta.",
+      "Ya está, hijos: he llegado primera.", "Al primero que se me ponga a tiro, lo mando a casa.", "Golpe de suerte con el dado.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo, las coletillas y los caracteres no contienen ninguna, con cualquier rival; las sustitutas están en su sitio", () => {
+    const FORBIDDEN =
+      /(?<!\p{L})(?:gol\p{L}*|escuadra|triples?|canastas?|f[uú]tbol|baloncesto|tenis|tres en raya|jaques?|fuera de juego|penaltis?|bingo|quit\p{L}+ una ficha|te la he quitado|de libro|a la meta en|mantengo la ventaja|conservo la ventaja|en la pelea|dando pelea|doy pelea|en cabeza|me la he quedado|contratiempo|me tir[eé]|en la calle|lleg\p{L}* a casa|voy primer[oa]|la primera, y|el dado castiga|por todas|ojo con el siguiente|luna|astros|pobre (?:don|ernesto|pilar|brava|chispa)|ficha sola|unica que tenia a salvo|única que tenía a salvo)(?!\p{L})/iu;
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...c.catchphrases, c.chat.voice]) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(text, `${c.name}: ${text}`).not.toMatch(FORBIDDEN);
+        }
+      }
+    }
+    const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
+    expect(lines(ERNESTO).capture_boast).toContain("Previsible, {rival}. Le comí.");
+    expect(lines(CHISPA).ambient_lead).toContain("¡Voy ganando! Ni yo me lo esperaba.");
+    expect(lines(PILAR).ambient_lead).toContain("Ay, quién me lo iba a decir: voy ganando.");
+    // «Previsible» sigue siendo una coletilla de Don Ernesto.
+    expect(CHARACTERS.find((c) => c.id === ERNESTO)!.catchphrases).toContain("Previsible");
+  });
+
+  it("la sustituta de Don Ernesto pasa todas las reglas con cada rival", () => {
+    for (const rival of [BRAVA, PILAR, CHISPA]) {
+      const name = CHARACTERS.find((c) => c.id === rival)!.name;
+      expect(reject(`Previsible, ${name}. Le comí.`, say(ERNESTO, rival, { captures: factsOf([cap(10, ERNESTO, rival)], ERNESTO) })), name).toBeNull();
+    }
+  });
+
+  it("la demostración no contiene ninguna, y la v62 de Don Ernesto ya no inventa la explicación", async () => {
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    const match = await createDemoMatch();
+    for (const m of match.messages) {
+      expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+      expect(m.text, m.text).not.toMatch(/(?<!\p{L})gol\p{L}*|ficha sola|a salvo|voy primer|la primera/iu);
+    }
+    expect(match.messages.find((m) => m.version === 62 && m.seq === 0)?.text).toBe("Previsible, Abuela Pilar. Le comí.");
+  });
+
+  it("el prompt no menciona deportes ni otros juegos, y no cita frases recientes con estas expresiones", () => {
+    const recent = [
+      { speaker: CHISPA, text: "¡Golazo por la escuadra!" },
+      { speaker: BRAVA, text: "¡Qué mala suerte! ¡Vamos por todas!" },
+      { speaker: ERNESTO, text: "Previsible, Chispa. Ha dejado esa ficha sola." },
+    ];
+    for (const speaker of ALL) {
+      const [system, user] = buildChatPrompt({ ...say(speaker, other(speaker), { kind: "capture_lament" }), recent });
+      expect(`${system.content}\n${user.content}`, speaker).not.toMatch(/(?<!\p{L})gol\p{L}*|escuadra|f[uú]tbol|comentarista|por todas|ficha sola/iu);
+    }
   });
 });

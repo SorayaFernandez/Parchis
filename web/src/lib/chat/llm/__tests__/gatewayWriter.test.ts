@@ -442,9 +442,9 @@ describe("respuestas del modelo", () => {
   it("rechaza hablar como otro personaje o nombrar a personajes ajenos a la intervención", () => {
     expect(() => cleanLlmText("Don Ernesto: Previsible.", request())).toThrow(/otro personaje/);
     expect(() => cleanLlmText("¡A casa, Chispa! Y tú, Abuela Pilar, la siguiente.", request())).toThrow(/ajeno/);
-    // Quien habla y su rival sí se pueden nombrar.
-    // (Sin hablar de sí misma en tercera persona: ver quality.ts.)
-    expect(cleanLlmText("Soy Brava y nunca fallo, Chispa.", request())).toBe("Soy Brava y nunca fallo, Chispa.");
+    // El rival sí se puede nombrar; el propio nombre, no (tampoco para presentarse: ver quality.ts).
+    expect(cleanLlmText("Hoy no fallo, Chispa.", request())).toBe("Hoy no fallo, Chispa.");
+    expect(() => cleanLlmText("Soy Brava y nunca fallo, Chispa.", request())).toThrow(/se nombra a sí mismo/);
   });
 
   // Habla Don Ernesto y su rival es Abuela Pilar: Brava y Chispa son ajenas a la intervención.
@@ -483,10 +483,12 @@ describe("respuestas del modelo", () => {
     expect(rejection("Ya verás, ABUELA pilar.", request())!.detail).toBe("nombre=Abuela Pilar coincidencia=palabra forma=mixta");
   });
 
-  it("quien habla y su rival se pueden nombrar; en la victoria (sin rival) solo el propio nombre", () => {
-    expect(cleanLlmText("Le habla Don Ernesto, Abuela Pilar: era previsible.", ernesto())).toBe("Le habla Don Ernesto, Abuela Pilar: era previsible.");
+  it("se puede nombrar al rival, nunca a uno mismo; en la victoria (sin rival), a nadie", () => {
+    expect(cleanLlmText("Abuela Pilar, era previsible.", ernesto())).toBe("Abuela Pilar, era previsible.");
+    expect(() => cleanLlmText("Le habla Don Ernesto, Abuela Pilar: era previsible.", ernesto())).toThrow(/se nombra a sí mismo/);
     const win = request({ utterance: utterance({ speaker: "ai-blue", kind: "victory_win", trigger: "victory", rival: null }) });
-    expect(cleanLlmText("¡Victoria para Chispa, a toda velocidad!", win)).toBe("¡Victoria para Chispa, a toda velocidad!");
+    expect(cleanLlmText("¡Victoria, a toda velocidad!", win)).toBe("¡Victoria, a toda velocidad!");
+    expect(() => cleanLlmText("¡Victoria para Chispa, a toda velocidad!", win)).toThrow(/se nombra a sí mismo/);
     expect(rejection("¡Gané! Brava, toma nota.", win)!.detail).toBe("nombre=Brava coincidencia=palabra forma=capitalizada");
   });
 });
