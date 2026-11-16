@@ -242,7 +242,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Una dentro! Las demás van detrás.",
           "¡Meta! Esto va en serio.",
           "Una menos. ¡A por las demás!",
-          "¡Otra en la meta! Esto marcha.",
+          "¡Otra en la meta! Esto marcha bien.",
         ],
         finish_place: [
           "¡Terminé! Y no me he rendido ni un momento.",

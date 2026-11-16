@@ -113,6 +113,25 @@ describe("chatWriters (escritor LLM o local según las variables)", () => {
     expect(limiterState.acquired).toBe(1); // solo lo que va al modelo pide permiso
   });
 
+  it("en Vercel Production, igual que en Preview: solo lo importante va al modelo, con el mismo limitador", async () => {
+    const fetch = vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Otra ficha en la meta, sin despeinarme!" } }] }));
+    vi.stubGlobal("fetch", fetch);
+    for (const VERCEL_ENV of ["preview", "production"]) {
+      fetch.mockClear();
+      limiterState.acquired = 0;
+      const { writer, fallbackWriter } = chatWriters({ ...enabled, VERCEL: "1", VERCEL_ENV });
+      expect(writer, VERCEL_ENV).not.toBe(fallbackWriter);
+      expect(await writer.write(request(false))).toMatchObject({ source: "local" });
+      expect(await writer.write(request(true))).toMatchObject({ source: "llm" });
+      expect(fetch, VERCEL_ENV).toHaveBeenCalledTimes(1);
+      expect(limiterState.acquired, VERCEL_ENV).toBe(1);
+    }
+    // En Development sigue desactivado (sin Upstash, la ruta es la misma en cualquier entorno: ver más abajo).
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const development = chatWriters({ ...enabled, VERCEL: "1", VERCEL_ENV: "development" });
+    expect(development.writer).toBe(development.fallbackWriter);
+  });
+
   it("activo: cada petición real al modelo deja una línea [llm-trace] con el origen y el modelo, sin el texto ni la clave", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Otra ficha en la meta, sin despeinarme!" } }] })));

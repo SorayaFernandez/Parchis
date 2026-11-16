@@ -83,7 +83,7 @@ describe("portada: las dos burbujas del chat", () => {
     ]);
     expect(html).not.toContain("Ya queda menos");
     expect(html).not.toContain("No hay mal que por bien no venga");
-    expect(html).not.toContain("¡Otra en la meta! Esto marcha.");
+    expect(html).not.toContain("¡Otra en la meta! Esto marcha bien.");
   });
 });
 

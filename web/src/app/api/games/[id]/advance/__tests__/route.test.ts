@@ -196,8 +196,23 @@ describe("POST /api/games/[id]/advance", () => {
       }
     });
 
-    it("en Production (o con el modelo distinto): sin selector, y la configuración incorrecta se registra sin valores", async () => {
-      for (const env of [{ ...PREVIEW, VERCEL_ENV: "production" }, { ...PREVIEW, MOVES_LLM_MODEL: "otro/modelo" }]) {
+    it("en Vercel Production con la configuración válida: igual que en Preview, se pasan el selector y el cupo", async () => {
+      stub({ ...PREVIEW, VERCEL_ENV: "production" });
+      try {
+        advanceGame.mockResolvedValueOnce(conflict);
+        await post('{"expectedVersion":7}');
+        const deps = advanceGame.mock.calls[0][2];
+        expect(typeof deps.moveSelector?.select).toBe("function");
+        expect(typeof deps.moveQuota?.tryConsume).toBe("function");
+        expect(deps.signal).toBeInstanceOf(AbortSignal);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      // Sin Upstash no hay selector en ningún entorno (misma ruta que la prueba de Preview sin Upstash).
+    });
+
+    it("en Development (o con el modelo distinto): sin selector, y la configuración incorrecta se registra sin valores", async () => {
+      for (const env of [{ ...PREVIEW, VERCEL_ENV: "development" }, { ...PREVIEW, MOVES_LLM_MODEL: "otro/modelo" }]) {
         stub(env);
         try {
           advanceGame.mockReset();
