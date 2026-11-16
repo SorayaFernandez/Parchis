@@ -107,11 +107,13 @@ describe("frases locales: relacionadas con lo que pasa en la partida", () => {
 describe("frases locales: cada personaje conserva su personalidad", () => {
   const share = (c: Character, re: RegExp) => allLines(c).filter((l) => re.test(l)).length / allLines(c).length;
 
-  it("Brava: exclamaciones, retos y presunción; Chispa: exclamaciones y superstición con el dado", () => {
+  it("Brava: exclamaciones, retos y presunción; Chispa: exclamaciones y algo de suerte, sin amuletos ni dado con vida propia", () => {
     expect(share(BRAVA, /¡/)).toBeGreaterThan(0.4);
     expect(allLines(BRAVA).filter((l) => /a por ti|me la cobro|te vas a enterar|aquí mando|así se juega|ganado a todos|no pienso aflojar|ojo conmigo/i.test(l)).length).toBeGreaterThanOrEqual(5);
     expect(share(CHISPA, /¡/)).toBeGreaterThan(0.4);
-    expect(allLines(CHISPA).filter((l) => /dado|suerte|amuleto|mal de ojo|gafe|madera|horóscopo|calcetines/i.test(l)).length).toBeGreaterThanOrEqual(10);
+    // Norma de lenguaje: la personalidad se nota en la actitud, no en supersticiones gratuitas.
+    expect(allLines(CHISPA).filter((l) => /suerte|gafe|mala pata/i.test(l)).length).toBeGreaterThanOrEqual(4);
+    for (const l of allLines(CHISPA)) expect(l).not.toMatch(/amuleto|mal de ojo|horóscopo|calcetines|madera/i);
   });
 
   it("Don Ernesto: sin exclamaciones, de usted y nunca tutea", () => {
@@ -271,7 +273,7 @@ describe("prompt: registro de España, la situación real y el nombre «Abuela»
       expect(system.content).toMatch(/como se habla en España jugando al parchís/);
       expect(system.content).toMatch(/ficha, dado, comer, casa, meta, seis, turno/);
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar.");
-      expect(system.content).toContain("- Di claro qué ha pasado, desde tu lado («he sacado un seis»). Sin preguntas retóricas, peticiones al dado ni «voy primero».");
+      expect(system.content).toContain("- Di claro qué ha pasado, desde tu lado. Sin preguntas retóricas, peticiones al dado ni «voy primero».");
       expect(system.content).toContain("no inventes jugadas, cifras, posiciones ni rachas");
       expect(system.content).not.toMatch(/señores|comentarista|retransmi|partido|deport/i);
     }

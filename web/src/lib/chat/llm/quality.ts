@@ -1031,6 +1031,68 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "sigo en la pelea",
     re: /(?<![\p{L}])(?:(?:sigo|seguimos|sigue|sigues|continuo|continuamos)\s+(?:en\s+la\s+pelea|dando\s+(?:la\s+)?pelea)|(?:aun|todavia)\s+doy\s+(?:la\s+)?pelea)(?![\p{L}])/u,
   },
+  // Frases retiradas del chat (catálogo local y respuestas del LLM), con sus variantes equivalentes. Solo las
+  // frases: palabras sueltas como «racha», «dado» o «abuela» siguen valiendo en otras expresiones.
+  {
+    term: "te comes a la abuela",
+    re: /(?<![\p{L}])(?:(?:te|os|se)\s+(?:comes|comeis|come|comen|comiste|comisteis|comio|(?:has|habeis|ha|han)\s+comido)|comer(?:te|os|se))\s+a\s+la\s+abuela(?![\p{L}])/u,
+  },
+  { term: "ya tengo cuatro", re: /(?<![\p{L}])ya\s+(?:tengo|tenemos)\s+(?:las\s+)?cuatro(?![\p{L}])/u },
+  {
+    term: "he sacado un seis, me comiste",
+    re: /(?<![\p{L}])he\s+sacado\s+un\s+seis[^.!?…]*?(?<![\p{L}])me\s+(?:comiste|has\s+comido|comes)(?![\p{L}])/u,
+  },
+  { term: "el dado me debe una", re: /(?<![\p{L}])dado\s+me\s+(?:la\s+|las\s+)?debe(?![\p{L}])|(?<![\p{L}])me\s+debe\s+una\s+el\s+dado(?![\p{L}])/u },
+  {
+    term: "se me fue la ficha",
+    re: /(?<![\p{L}])se\s+me\s+(?:fue|va|ha\s+ido|escapo|escapa|ha\s+escapado)\s+(?:la|una|mi|esa)\s+ficha(?![\p{L}])/u,
+  },
+  { term: "racha intacta", re: /(?<![\p{L}])(?:racha\s+(?:sigue\s+|queda\s+|esta\s+)?intacta|intacta\s+(?:la|mi|tu|su)\s+racha)(?![\p{L}])/u },
+  { term: "desde aquí arriba", re: /(?<![\p{L}])(?:desde\s+aqui\s+arriba|casi\s+no\s+(?:te|os|le|la|lo|les)\s+veo)(?![\p{L}])/u },
+  { term: "no se ve todos los días", re: /(?<![\p{L}])no\s+se\s+(?:ve|vee|veia)\s+(?:todos\s+los\s+dias|cada\s+dia)(?![\p{L}])/u },
+  // Decir que hace falta un seis («Tengo que sacar otro seis», «Necesito un seis», «Me hace falta otro seis»,
+  // «Tengo que volver a sacar seis», «Esto se arregla con un par de seises»). Comentar un seis que acaba de
+  // salir («He sacado un seis», «¡Otro seis!») sí vale, y «seis» suelto también.
+  {
+    term: "necesito un seis",
+    re: /(?<![\p{L}])(?:(?:necesito|necesitamos|necesitaria|necesitare|(?:me|nos)\s+hacen?\s+falta|me\s+falta|nos\s+falta|hace\s+falta)\s+(?:sacar\s+|que\s+salga\s+)?|(?:tengo|tenemos|tendre|tendria|tendriamos|he|hemos)\s+(?:que|de)\s+(?:volver\s+a\s+)?sacar\s+|se\s+arregla\s+con\s+)(?:(?:otro|otros|un|una|el|mas|dos|un\s+par\s+de)\s+)?seis(?:es)?(?![\p{L}])/u,
+  },
+  // Coletilla de tranquilidad retirada: «Que no cunda el pánico» y equivalentes («No cunda el pánico», «no hay
+  // que entrar en pánico», «nada de pánico», «No hay motivo para alarmarse», «que nadie se alarme»). «Pánico» en
+  // otro sentido («¡Qué pánico me da esa ficha!») sigue valiendo.
+  {
+    term: "que no cunda el pánico",
+    re: /(?<![\p{L}])(?:(?:que\s+)?no\s+cunda\s+el\s+panico|no\s+(?:hay\s+que\s+|vamos\s+a\s+|debemos\s+)?entr(?:ar|emos|eis|es|e)\s+en\s+panico|(?:nada\s+de|sin)\s+panicos?|no\s+hay\s+(?:ningun\s+)?(?:motivos?|razon(?:es)?|por\s+que)\s+(?:para\s+)?alarmar(?:se|nos|os|te)|no\s+(?:os|te|se|nos)\s+alarm(?:eis|es|e|emos)|que\s+nadie\s+se\s+alarme)(?![\p{L}])/u,
+  },
+  // Norma de lenguaje: el dado no se personifica («el dado me quiere», «ni el dado te quiere», «el dado te ha
+  // mirado mal», «el dado está de mi parte», «el dado se ha venido arriba», «el dado lo ha querido así», «¡Y el
+  // dado dice…!», «le debo una al dado»…). «He sacado un seis», «buena suerte con el dado» o «el dado ha caído
+  // en cinco» siguen valiendo.
+  {
+    term: "personificación del dado",
+    re: /(?<![\p{L}])(?:dado\s+(?:no\s+)?(?:(?:me|te|le|nos|os|les|lo|la)\s+)?(?:(?:ha|han|habia)\s+)?(?:mira(?:do|ba|n)?|mire|quier(?:e|o|en)|querido|queria|quiso|odia|odiado|sonrie|sonreido|castig\p{L}*|debe|debia|ayud(?:a|ado|o|aba)|perdona\p{L}*|dice|decia|dicho|tiene\s+mania|la\s+tiene\s+jurada|esta\s+de\s+(?:mi|tu|su|nuestra|vuestra)\s+parte|se\s+(?:ha\s+)?(?:venido|vino)\s+arriba|se\s+(?:ha\s+)?pas(?:ado|o)|(?:acaba\s+de\s+)?hacer\p{L}*\s+un\s+favor|hecho\s+un\s+favor|quiere\s+pelea|se\s+(?:ha\s+)?enfad\p{L}*|se\s+rie)|(?:le\s+)?debo\s+(?:una|algo|un\s+favor)\s+al\s+dado)(?![\p{L}])/u,
+  },
+  { term: "soplar al dado", re: /(?<![\p{L}])sopl(?:o|a|as|amos|ar|ando|e|ado|arle)\s+(?:al|el|a\s+este|a\s+ese|a\s+mi)\s+dado(?![\p{L}])/u },
+  // Comentarios gratuitos de amuletos y supersticiones: atribuir lo que pasa a un amuleto («Será el amuleto»,
+  // «o eso dice mi amuleto», «me he dejado el amuleto»), el horóscopo, los calcetines de la suerte o el mal de ojo.
+  // «Suerte», «mala pata» o «toco madera» siguen valiendo.
+  {
+    term: "será el amuleto",
+    re: /(?<![\p{L}])(?:(?:sera|es|ha\s+sido|habra\s+sido|cosa|culpa|gracias|merito)\s+(?:de\s+|a\s+)?(?:el|mi|del|al)\s+amuleto|(?:dice|funciona|no\s+falla|me\s+protege|me\s+ayuda)\s+mi\s+amuleto|mi\s+amuleto\s+(?:dice|funciona|no\s+falla|me\s+protege|me\s+ayuda)|(?:dejado|dejarme|dejar|olvidado|olvidarme)\s+(?:el|mi)\s+amuleto)(?![\p{L}])/u,
+  },
+  { term: "superstición", re: /(?<![\p{L}])(?:horoscopo|calcetines\s+de\s+la\s+suerte|mal\s+de\s+ojo)(?![\p{L}])/u },
+  // Coletillas retiradas del catálogo por artificiales: «Todo según lo previsto» (y «todo según el plan»),
+  // «Estadísticamente era inevitable», «Quien ríe el último…» y «¿Quién es el siguiente?»; y los refranes
+  // retirados «La avaricia rompe el saco» y «Quien mucho corre pronto para». Y la disculpa de broma
+  // («Lo siento… un poco», «Perdón, no mucho», «lo siento, de verdad… un poco»).
+  {
+    term: "coletilla retirada",
+    re: /(?<![\p{L}])(?:todo\s+segun\s+lo\s+previsto|todo\s+segun\s+el\s+plan|estadisticamente\s+era\s+inevitable|quien\s+rie\s+el\s+ultimo|quien\s+es\s+el\s+siguiente|(?:la\s+)?avaricia\s+rompe\s+el\s+saco|quien\s+mucho\s+corre(?:\s+pronto\s+para)?)(?![\p{L}])/u,
+  },
+  {
+    term: "disculpa de broma",
+    re: /(?<![\p{L}])(?:lo\s+siento|perdon)(?:\s*,\s*\p{L}+(?:\s+\p{L}+)?)?[\s,.…]*(?:bueno[\s,.…]*)?(?:de\s+verdad[\s,.…]*)?(?:un\s+poco|no\s+mucho|no\s+tanto)(?![\p{L}])/u,
+  },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,

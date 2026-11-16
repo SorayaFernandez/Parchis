@@ -18,7 +18,7 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain(`Eres ${c.name}`);
       expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);
       expect(system.content).toContain(
-        `Una sola frase corta en español: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres`,
+        `Una sola frase corta en español, con una sola idea: como mucho ${CHAT_LLM.promptMaxWords} palabras y menos de ${CHAT_LLM.promptMaxChars} caracteres`,
       );
       expect(system.content).not.toContain("una o dos frases");
       expect(system.content).not.toContain(String(CHAT_LLM.maxChars)); // se pide menos que el límite de validación
@@ -39,7 +39,8 @@ describe("buildChatPrompt", () => {
     for (const c of CHARACTERS) {
       const [system, user] = buildChatPrompt(request(utterance(c.id, "capture_lament", { rival: c.id === "ai-blue" ? "ai-pink" : "ai-blue" })));
       expect(system.content).toContain("comentas en voz alta lo que acaba de pasar, como una persona más sentada a la mesa");
-      expect(system.content).toContain("Sin saludos, explicaciones ni resumen de la jugada.");
+      expect(system.content).toContain("Una sola frase corta en español, con una sola idea:");
+      expect(system.content).toContain("Sin saludos ni explicaciones.");
       // Las demás reglas y el carácter del personaje se mantienen.
       expect(system.content).toContain("Sin comillas ni emojis.");
       expect(system.content).toMatch(/no inventes jugadas, cifras, posiciones ni rachas/);
@@ -91,7 +92,7 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain(`Si nombras a alguien, solo a ${CHARACTERS.find((x) => x.id === rival)!.name} (nombre completo), nunca a ti.`);
       expect(system.content).not.toContain(`a ti (${c.name})`);
       expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
-      expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso.");
+      expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso. El dado es solo un dado.");
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.");
       expect(system.content).toContain("Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.");
       expect(system.content).toContain("Puedes picar o bromear, pero sin insultos");
@@ -117,8 +118,9 @@ describe("buildChatPrompt", () => {
       }
       expect(c.chat.voice, c.name).not.toMatch(/racha|comentarista/i);
     }
-    // Chispa conserva su carácter: espontáneo, divertido y supersticioso con el dado.
-    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.voice).toMatch(/espontáneo, divertido e imprevisible.*supersticioso con el dado/i);
+    // Chispa conserva su carácter espontáneo e imprevisible, dicho con sencillez: sin superstición, suerte ni dado.
+    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.voice).toMatch(/espontáneo, alegre e imprevisible.*frases sencillas, sin exagerar/i);
+    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.voice).not.toMatch(/supersti|dado|suerte|amuleto|humor|travieso/i);
   });
 
   it("solo Don Ernesto recibe la regla de tratar de usted", () => {
@@ -146,12 +148,12 @@ describe("buildChatPrompt", () => {
   it("incluye sus propios textos recientes (los dos últimos) para que no repita coletillas", () => {
     const recent = [
       { speaker: "ai-pink", text: "¡A casa, Chispa!" },
-      { speaker: "ai-blue", text: "¡Y el dado dice…!" },
-      { speaker: "ai-pink", text: "¿Quién es el siguiente?" },
+      { speaker: "ai-blue", text: "¡Qué mala pata!" },
+      { speaker: "ai-pink", text: "Voy a por ti." },
       { speaker: "ai-pink", text: "Eso no ha sido nada." },
     ];
     const [, user] = buildChatPrompt(request(utterance("ai-pink", "capture_boast", { rival: "ai-blue" }), { recent }));
-    expect(user.content).toContain("Ya has dicho hace poco (no lo repitas): «¿Quién es el siguiente?» «Eso no ha sido nada.»");
+    expect(user.content).toContain("Ya has dicho hace poco (no lo repitas): «Voy a por ti.» «Eso no ha sido nada.»");
     expect(user.content).not.toContain("Ya has dicho hace poco (no lo repitas): «¡A casa, Chispa!»");
     const [, other] = buildChatPrompt(request(utterance("ai-green", "capture_boast", { rival: "ai-blue" }), { recent }));
     expect(other.content).not.toContain("Ya has dicho hace poco");
@@ -209,12 +211,12 @@ describe("buildChatPrompt", () => {
     }
     expect(voices.size).toBe(CHARACTERS.length);
     // Caracteres pedidos: Brava competitiva y directa; Ernesto sereno, formal y de usted; Pilar prudente y
-    // cariñosa, con refranes o diminutivos sin repetirlos; Chispa espontáneo y supersticioso con el dado.
+    // cariñosa, con algún refrán solo si viene a cuento; Chispa espontáneo e imprevisible, con frases sencillas.
     const voiceOf = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.voice;
     expect(voiceOf("ai-pink")).toMatch(/competitiva, directa y desafiante.*pica a sus rivales.*presume.*protesta.*sin pasarse ni insultar/i);
     expect(voiceOf("ai-purple")).toMatch(/estratega sereno, calculador y educado.*usted.*precisión.*cálculo y probabilidad.*sin tecnicismos/i);
-    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente, algo tradicional.*refrán, sin repetirlo\. Solo dice «casita» si una ficha vuelve a casa/i);
-    expect(voiceOf("ai-blue")).toMatch(/espontáneo, divertido e imprevisible, algo travieso y supersticioso con el dado/i);
+    expect(voiceOf("ai-green")).toMatch(/prudente, cariñosa y paciente, algo tradicional.*solo usa algún refrán si viene a cuento, sin repetirlo\. Solo dice «casita» si una ficha vuelve a casa/i);
+    expect(voiceOf("ai-blue")).toMatch(/espontáneo, alegre e imprevisible: reacciona con sorpresa y dice lo que piensa con frases sencillas/i);
   });
 
   it("situaciones de ambiente: liderar solo en `ambient_lead`; `ambient_ahead` no afirma ir en cabeza", () => {

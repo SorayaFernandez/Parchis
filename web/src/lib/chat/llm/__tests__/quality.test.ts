@@ -5,6 +5,7 @@ import type { RecentText } from "../../writer";
 import type { ChatTrigger } from "../../schemas";
 import { ChatLlmError, cleanLlmText, INVALID_RESPONSE_REASONS } from "../gatewayWriter";
 import { COMMENTATOR, OTHER_GAMES, QUALITY_REASONS, SPORTS_METAPHORS, checkQuality, countSentences, disallowedDiminutive, hasDiscardedExpression } from "../quality";
+import { buildChatPrompt } from "../prompt";
 
 const say = (speaker: string, rival: string | null, extra: Partial<Utterance> = {}, recent: RecentText[] = [], usedCatchphrases?: number[]) => ({
   utterance: { speaker, kind: "capture_boast", rival, trigger: "capture", replyTo: null, important: true, ...extra } as Utterance,
@@ -123,7 +124,9 @@ describe("mensajes naturales que se siguen aceptando", () => {
     expect(reject("¡Chas! Un paso atrás para la Chispa.", say("ai-blue", "ai-pink", { kind: "capture_lament", trigger: "capture_streak", replyTo: 0 }))?.reason).toBe(
       "habla de sí mismo en tercera persona",
     );
-    ok("Estadísticamente era inevitable.", say("ai-purple", "ai-green", { replyTo: 0 }));
+    // «Estadísticamente era inevitable» (coletilla de entonces) se retiró del catálogo por artificial: ahora se rechaza.
+    expect(checkQuality("Estadísticamente era inevitable.", say("ai-purple", "ai-green", { replyTo: 0 }))).toEqual({ reason: "expresión poco natural", term: "coletilla retirada" });
+    ok("Previsible.", say("ai-purple", "ai-green", { replyTo: 0 }));
     ok("¡Toma ya! No me toques la fibra.", say("ai-pink", "ai-blue", { replyTo: 0 }));
     ok("¡A casa!", say("ai-pink", "ai-blue", { kind: "streak_boast", trigger: "capture_streak" }));
   });
@@ -149,7 +152,7 @@ describe("mensajes naturales que se siguen aceptando", () => {
     ok("¡Qué crack eres, Brava! Menudo show.", say("ai-blue", "ai-pink", { kind: "capture_lament" }));
     ok("Ni en el mejor game de la tele se ve esto, Chispa.", say("ai-pink", "ai-blue"));
     ok("¡Vuelve a casa, Chispa! ¿Quién se atreve ahora?", say("ai-pink", "ai-blue", {}, [{ speaker: "ai-pink", text: "¡A casa!" }]));
-    ok("¡He ganado la partida! ¿Quién es el siguiente?", say("ai-pink", null, { kind: "victory_win", trigger: "victory" }));
+    ok("¡He ganado la partida! ¿Quién quiere la revancha?", say("ai-pink", null, { kind: "victory_win", trigger: "victory" }));
   });
 });
 
@@ -257,7 +260,7 @@ describe("cada regla nueva por separado", () => {
     expect(reject("Vuelve a casa, Chispa, y empieza otra vez.", say("ai-pink", "ai-blue", {}, history))).toBeNull();
     expect(reject("Esa ficha va a casa, Chispa. Siguiente.", say("ai-pink", "ai-blue", {}, history))).toBeNull();
     // Otras coletillas con palabras de más también cuentan (Chispa, Don Ernesto).
-    expect(checkQuality("¡Y el dado dice que otra para mí!", say("ai-blue", "ai-pink", {}, [{ speaker: "ai-blue", text: "¡Y el dado dice… Brava ha caído!" }]))?.term).toBe("¡Y el dado dice…!");
+    expect(checkQuality("¡Qué mala pata, Brava!", say("ai-blue", "ai-pink", {}, [{ speaker: "ai-blue", text: "¡Qué mala pata! Otra vez será." }]))?.term).toBe("¡Qué mala pata!");
     expect(checkQuality("Previsible jugada, Chispa.", say("ai-purple", "ai-blue", {}, [{ speaker: "ai-purple", text: "Previsible, como siempre." }]))?.term).toBe("Previsible");
   });
 
@@ -989,7 +992,7 @@ describe("género del destinatario (apelativos en vocativo)", () => {
 
   it("no cuentan los plurales, los apelativos neutros, los usos que no son vocativos ni la victoria sin rival", () => {
     for (const rival of ["ai-pink", "ai-blue", "ai-purple"]) {
-      for (const text of ["Con calma, hijos, que esto es largo.", "Ay, cariño, a casita.", "Perdona, cielo, es el juego.", "El dado te ha querido hoy.", "Qué bonita jugada.", "Mi nieta juega así.", "Una hija de la suerte, eso es lo que eres."]) {
+      for (const text of ["Con calma, hijos, que esto es largo.", "Ay, cariño, a casita.", "Perdona, cielo, es el juego.", "Hoy te ha salido todo.", "Qué bonita jugada.", "Mi nieta juega así.", "Una hija de la suerte, eso es lo que eres."]) {
         expect(checkQuality(text, say("ai-green", rival)), `${rival}: ${text}`).toBeNull();
       }
     }
@@ -1036,7 +1039,7 @@ describe("final de la partida (con el estado real)", () => {
   });
 
   it("se acepta la victoria individual aunque los demás sigan jugando", () => {
-    for (const text of ["¡He ganado la partida!", "¡Gané! La partida es mía.", "¡Meta! El dado me quiere y la partida ya es mía.", "¡Primero en llegar!"]) {
+    for (const text of ["¡He ganado la partida!", "¡Gané! La partida es mía.", "¡Meta! La partida ya es mía.", "¡Primero en llegar!"]) {
       expect(checkQuality(text, victoryWin("playing")), text).toBeNull();
     }
     expect(checkQuality("¡Enhorabuena, Chispa! Has ganado la partida.", victoryReply("playing"))).toBeNull();
@@ -1090,7 +1093,7 @@ describe("«racha» y «seguidos» coloquiales: suerte y dado frente a afirmacio
       "dos seises seguidos",
       "¿Dos seises seguidos?",
       "Tres tiradas seguidas sin sacar nada.",
-      "El dado no está de mi parte.",
+      "Hoy no me salen las tiradas.",
     ];
     for (const ctx of [boast, lament, replyLament, replyBoast]) {
       for (const text of anyRole) expect(checkQuality(text, ctx), `${ctx.utterance.kind}${ctx.utterance.replyTo === null ? "" : " (réplica)"}: ${text}`).toBeNull();
@@ -1836,7 +1839,7 @@ describe("partida real: «quitar» fichas, «de libro», distancias a la meta y 
       }
     }
     expect(CHARACTERS.find((c) => c.id === "ai-purple")!.chat.lines.capture_boast).toContain("He comido su ficha, {rival}. Nada personal.");
-    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.lines.capture_lament).toContain("¡Me has comido! Mal día para dejarme el amuleto, {rival}.");
+    expect(CHARACTERS.find((c) => c.id === "ai-blue")!.chat.lines.capture_lament).toContain("¡Me has comido, {rival}! Qué rabia.");
   });
 
   it("el motivo nuevo está en la lista que se registra", () => {
@@ -1923,7 +1926,8 @@ describe("«Sigo en la pelea» y «Mantengo la ventaja», retiradas", () => {
 
   it("no bloquea usos naturales de «pelea», «ventaja» o «mantener»", () => {
     for (const [speaker, kind, text] of [
-      ["ai-pink", "third_six_self", "¡Tres seises! Hasta el dado quiere pelea."],
+      ["ai-pink", "ambient_ahead", "¡Aquí no se rinde nadie! Y yo, menos."],
+      ["ai-blue", "ambient_ahead", "¡Qué pelea más igualada!"],
       ["ai-purple", "ambient_behind", "Una desventaja temporal. Nada que un buen plan no corrija."],
       ["ai-purple", "ambient_ahead", "Abuela Pilar, no confunda ventaja con victoria."],
       ["ai-green", "ambient_ahead", "Hay que mantener la calma, hijos."],
@@ -1938,5 +1942,317 @@ describe("«Sigo en la pelea» y «Mantengo la ventaja», retiradas", () => {
     for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(/sigo en la pelea|mantengo la ventaja/i);
     expect(CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.ambient_ahead).toContain("Al primero que se me ponga a tiro, lo mando a casa.");
     expect(CHARACTERS.find((c) => c.id === "ai-purple")!.chat.lines.ambient_lead).toContain("Las cuentas me salen, de momento.");
+  });
+});
+
+describe("frases retiradas definitivamente del chat (catálogo local y LLM)", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const retired = (term: string) => ({ reason: "expresión poco natural", detail: `termino=${term}` });
+  /** Las nueve frases, tal como se vieron, en una intervención que el LLM sí escribe (capturas y rachas). */
+  const SEEN: [string, string, string, Partial<Utterance>, string][] = [
+    ["¿Te comes a la abuela, Don Ernesto? Qué poca vergüenza.", PILAR, ERNESTO, { kind: "capture_lament" }, "te comes a la abuela"],
+    ["¡Ya tengo cuatro!", BRAVA, CHISPA, {}, "ya tengo cuatro"],
+    ["He sacado un seis, me comiste una ficha.", CHISPA, BRAVA, { kind: "capture_lament" }, "he sacado un seis, me comiste"],
+    ["Me has comido, Brava, pero el dado me debe una.", CHISPA, BRAVA, { kind: "capture_lament" }, "el dado me debe una"],
+    ["¡Vaya, se me fue la ficha!", CHISPA, BRAVA, { kind: "capture_lament" }, "se me fue la ficha"],
+    ["Chispa, desde aquí arriba casi no te veo.", BRAVA, CHISPA, {}, "desde aquí arriba"],
+    ["Me has comido, pero sigo en la pelea.", BRAVA, CHISPA, { kind: "capture_lament" }, "sigo en la pelea"],
+    ["¡Uy, Brava! Eso no se ve todos los días.", CHISPA, BRAVA, {}, "no se ve todos los días"],
+  ];
+  /** Una racha real de Brava (tres capturas seguidas a Chispa): «racha» está respaldada, «racha intacta» no se dice. */
+  const realStreak = () =>
+    say(BRAVA, CHISPA, {
+      kind: "streak_boast",
+      trigger: "capture_streak",
+      streak: { count: 3, consecutive: true },
+      captures: factsOf([cap(10, BRAVA, CHISPA), cap(20, BRAVA, CHISPA), cap(30, BRAVA, CHISPA)], BRAVA),
+    });
+
+  it("el validador rechaza cada una, por el flujo completo del escritor LLM, con su término", () => {
+    for (const [text, speaker, rival, extra, term] of SEEN) expect(reject(text, say(speaker, rival, extra)), text).toEqual(retired(term));
+    // «Racha intacta» con una racha real: «racha» está respaldada, pero la frase sigue retirada.
+    expect(reject("¡Racha intacta, Chispa!", realStreak())).toEqual(retired("racha intacta"));
+    expect(reject("Mi racha sigue, Chispa.", realStreak())).toBeNull();
+  });
+
+  it("también las variantes claramente equivalentes, y ninguna se cita en el contexto", () => {
+    for (const text of [
+      "¿Os coméis a la abuela?", "Te comiste a la abuela, Brava.", "¡Ya tengo las cuatro!",
+      "He sacado un seis y me has comido una ficha.", "Este dado me la debe.", "Se me ha ido la ficha.", "Se me escapó la ficha, Brava.",
+      "Mi racha sigue intacta, Brava.", "Desde aquí arriba se ve todo.", "Casi no te veo, Chispa.", "Seguimos en la pelea.", "Eso no se ve cada día.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(true);
+  });
+
+  it("no bloquea las palabras sueltas ni las expresiones válidas parecidas", () => {
+    for (const [text, speaker, rival, extra] of [
+      ["He sacado un seis. ¡Vamos!", BRAVA, CHISPA, {}],
+      ["Me comiste, Brava. Ya te pillaré.", CHISPA, BRAVA, { kind: "capture_lament" }],
+      ["Ay, Chispa, me has comido la ficha.", PILAR, CHISPA, { kind: "capture_lament" }],
+      ["Lo siento, Chispa. Quien se pone a tiro…", PILAR, CHISPA, {}],
+      ["He comido su ficha, Brava. Nada personal.", ERNESTO, BRAVA, {}],
+      ["¡Te pillé, Brava! A empezar de nuevo.", CHISPA, BRAVA, {}],
+    ] as const) expect(reject(text, say(speaker, rival, extra)), text).toBeNull();
+    for (const text of ["La abuela también sabe.", "Hoy me salen las tiradas.", "Bah, ha tenido suerte con el dado.", "Esa ficha se fue a casa.", "Te veo muy lejos, Brava.", "Tengo cuatro fichas fuera de casa."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("ninguna está en el catálogo local (con cualquier rival); las sustitutas, sí", () => {
+    const RETIRED = /comes a la abuela|ya tengo (las )?cuatro|he sacado un seis.*me comiste|dado me (la )?debe|se me fue la ficha|racha intacta|desde aquí arriba|casi no te veo|sigo en la pelea|no se ve todos los días/i;
+    for (const c of CHARACTERS) {
+      for (const line of Object.values(c.chat.lines).flat()) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name).replaceAll("{count}", "dos").replaceAll("{Count}", "Dos").replaceAll("{ritmo}", "seguidas");
+          expect(text, `${c.name}: ${line}`).not.toMatch(RETIRED);
+          expect(hasDiscardedExpression(text), `${c.name}: ${line}`).toBe(false);
+        }
+      }
+    }
+    const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
+    expect(lines(PILAR).capture_lament).toContain("Vaya, {rival}, me has pillado. Ya me tocará a mí.");
+    expect(lines(CHISPA).third_six_tease).toContain("¡Ay, {rival}! Ya no tiras más.");
+    expect(lines(CHISPA).ambient_lead).toContain("¡Mira, {rival}, voy ganando!");
+    expect(lines(CHISPA).ambient_behind).toContain("Voy perdiendo, pero aún quedan muchas tiradas.");
+  });
+
+  it("el prompt no las sugiere ni las cita, aunque estén en los textos recientes de una partida antigua", () => {
+    const recent = [
+      { speaker: CHISPA, text: "Voy perdiendo, pero el dado me debe una." },
+      { speaker: PILAR, text: "¿Te comes a la abuela, Chispa? Qué poca vergüenza." },
+      { speaker: BRAVA, text: "Chispa, desde aquí arriba casi no te veo." },
+    ];
+    const [system, user] = buildChatPrompt({ ...say(CHISPA, BRAVA, { kind: "capture_lament" }), recent });
+    const all = `${system.content}\n${user.content}`;
+    expect(all).not.toContain("he sacado un seis");
+    for (const bad of ["me debe una", "comes a la abuela", "aquí arriba", "no te veo", "ya tengo cuatro", "se me fue la ficha", "racha intacta", "sigo en la pelea", "todos los días"]) {
+      expect(all.toLowerCase(), bad).not.toContain(bad);
+    }
+  });
+});
+
+describe("«Tengo que sacar otro seis» y equivalentes, retirados", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const retired = { reason: "expresión poco natural", detail: "termino=necesito un seis" };
+
+  it("se rechazan por el flujo completo del escritor LLM (los ejemplos pedidos y variantes equivalentes)", () => {
+    for (const text of ["Necesito un seis.", "Me hace falta otro seis.", "Tengo que sacar otro seis.", "Tengo que volver a sacar seis."]) {
+      expect(reject(text, say(CHISPA, BRAVA, { kind: "capture_lament" })), text).toEqual(retired);
+      expect(reject(text, say(BRAVA, CHISPA)), text).toEqual(retired);
+    }
+    for (const text of [
+      "¡Necesito otro seis ya!", "Me hacen falta dos seises.", "Nos hace falta un seis.", "Tendré que sacar un seis.", "He de sacar otro seis.",
+      "Necesito sacar un seis, Brava.", "Me falta un seis para alcanzarte.", "Hace falta que salga un seis.", "Esto se arregla con un par de seises.", "Necesitaría un seis.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(true);
+  });
+
+  it("no prohíbe hablar de un seis que acaba de salir ni la palabra «seis»", () => {
+    for (const [text, speaker, rival, extra] of [
+      ["He sacado un seis. ¡Vamos!", BRAVA, CHISPA, {}],
+      ["¡Otro seis! Y encima te pillo, Chispa.", BRAVA, CHISPA, {}],
+      ["Me ha salido un seis y le he comido, Brava.", ERNESTO, BRAVA, {}],
+      ["Con ese seis me has comido, Chispa. Paciencia.", PILAR, CHISPA, { kind: "capture_lament" }],
+    ] as const) expect(reject(text, say(speaker, rival, extra)), text).toBeNull();
+    for (const text of ["¡Seis! Qué alegría.", "Tres seises, Brava. Te quedas sin turno.", "A ver si sale un seis.", "Necesito calma.", "Tengo que sacar ficha de casa.", "Seis, seis, seis… y castigo."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("no está en el catálogo local con ningún rival (la frase de Chispa que pedía seises se sustituye) ni en el prompt", () => {
+    for (const c of CHARACTERS) {
+      for (const line of Object.values(c.chat.lines).flat()) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name).replaceAll("{count}", "dos").replaceAll("{Count}", "Dos").replaceAll("{ritmo}", "seguidas");
+          expect(hasDiscardedExpression(text), `${c.name}: ${line}`).toBe(false);
+        }
+      }
+    }
+    const behind = CHARACTERS.find((c) => c.id === CHISPA)!.chat.lines.ambient_behind;
+    expect(behind).not.toContain("Esto se arregla con un par de seises. Ni uno más.");
+    expect(behind).toContain("Todavía puedo alcanzaros.");
+    const [system, user] = buildChatPrompt({ ...say(CHISPA, BRAVA, { kind: "capture_lament" }), recent: [{ speaker: CHISPA, text: "Tengo que sacar otro seis." }] });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/sacar otro seis|necesito un seis|hace falta otro seis/i);
+  });
+});
+
+describe("«Que no cunda el pánico» y equivalentes, retirados", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const retired = { reason: "expresión poco natural", detail: "termino=que no cunda el pánico" };
+
+  it("se rechazan por el flujo completo del escritor LLM, con sus variantes", () => {
+    for (const text of ["Que no cunda el pánico.", "No cunda el pánico.", "Que no cunda el pánico, Brava.", "Tranquilos, que no hay que entrar en pánico.", "No hay motivo para alarmarse."]) {
+      expect(reject(text, say(CHISPA, BRAVA, { kind: "capture_lament" })), text).toEqual(retired);
+    }
+    expect(reject("Me has comido, Chispa, pero que no cunda el pánico.", say(PILAR, CHISPA, { kind: "capture_lament" }))).toEqual(retired);
+    for (const text of ["Esto da muchas vueltas. Que no cunda el pánico.", "No entremos en pánico.", "Nada de pánico, Chispa.", "Sin pánico, que queda partida.", "No hay motivos para alarmarnos, hijos.", "No os alarméis.", "Que nadie se alarme."]) {
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("otras expresiones de los personajes se siguen aceptando", () => {
+    for (const [text, speaker, rival, extra] of [
+      ["¡Qué susto! Me has comido, Brava.", CHISPA, BRAVA, { kind: "capture_lament" }],
+      ["Tranquila, Abuela Pilar, que aún queda partida.", BRAVA, PILAR, { kind: "capture_lament" }],
+      ["He comido su ficha, Brava. Nada personal.", ERNESTO, BRAVA, {}],
+      ["¡Te pillé, Brava! A empezar de nuevo.", CHISPA, BRAVA, {}],
+    ] as const) expect(reject(text, say(speaker, rival, extra)), text).toBeNull();
+    for (const text of ["¡Qué pánico me da esa ficha tuya, Brava!", "Todavía puedo alcanzaros.", "¡Que no decaiga! Brava, te estoy vigilando.", "Hay motivos para celebrarlo.", "La alarma ha sonado, Chispa."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("no está en el catálogo local con ningún rival; la frase de Chispa se sustituye", () => {
+    for (const c of CHARACTERS) {
+      for (const line of Object.values(c.chat.lines).flat()) {
+        expect(line, `${c.name}: ${line}`).not.toMatch(/p[aá]nico|alarm/i);
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name).replaceAll("{count}", "dos").replaceAll("{Count}", "Dos").replaceAll("{ritmo}", "seguidas");
+          expect(hasDiscardedExpression(text), `${c.name}: ${line}`).toBe(false);
+        }
+      }
+    }
+    const behind = CHARACTERS.find((c) => c.id === CHISPA)!.chat.lines.ambient_behind;
+    expect(behind).not.toContain("Esto da muchas vueltas. Que no cunda el pánico.");
+    expect(behind).toContain("Todavía puedo alcanzaros.");
+  });
+});
+
+describe("norma de lenguaje: amuletos, dado con vida propia y soplar al dado, retirados", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+
+  it("las tres expresiones se rechazan por el flujo completo del escritor LLM", () => {
+    // Con Chispa realmente en cabeza («voy ganando» respaldado): lo que se rechaza es el amuleto.
+    expect(checkQuality("¡Mira, Brava, voy ganando!", { ...say(CHISPA, BRAVA), leader: CHISPA })).toBeNull();
+    expect(checkQuality("¡Mira, Brava, voy ganando! Será el amuleto.", { ...say(CHISPA, BRAVA), leader: CHISPA })).toEqual({ reason: "expresión poco natural", term: "será el amuleto" });
+    expect(reject("¡Ay, Brava! El dado te ha mirado mal.", say(CHISPA, BRAVA))).toEqual(term("personificación del dado"));
+    expect(reject("Me has comido. Le soplo al dado, a ver si cambia la cosa.", say(CHISPA, BRAVA, { kind: "capture_lament" }))).toEqual(term("soplar al dado"));
+  });
+
+  it("también sus variantes equivalentes y el resto del dado con vida propia o las supersticiones gratuitas", () => {
+    for (const [text, t] of [
+      ["Será el amuleto.", "será el amuleto"], ["Hoy es mi día. O eso dice mi amuleto.", "será el amuleto"], ["Gracias al amuleto, Brava.", "será el amuleto"],
+      ["Me he dejado el amuleto en casa.", "será el amuleto"], ["Mi amuleto no falla.", "será el amuleto"],
+      ["El dado me ha mirado mal.", "personificación del dado"], ["Hoy el dado me quiere.", "personificación del dado"], ["Ni el dado te quiere, Brava.", "personificación del dado"],
+      ["El dado está de mi parte.", "personificación del dado"], ["El dado se ha venido arriba.", "personificación del dado"], ["¡Toma ya! El dado lo ha querido así.", "personificación del dado"],
+      ["¡Y el dado dice… a casa, Brava!", "personificación del dado"], ["Le debo una al dado.", "personificación del dado"], ["Hasta el dado quiere pelea.", "personificación del dado"],
+      ["El dado me castiga.", "personificación del dado"], ["El dado no perdona.", "personificación del dado"],
+      ["Voy a soplar al dado.", "soplar al dado"], ["Lo decía el horóscopo.", "superstición"], ["Llevaba los calcetines de la suerte.", "superstición"], ["Me han echado mal de ojo.", "superstición"],
+    ] as const) {
+      expect(checkQuality(text, say(CHISPA, BRAVA, { kind: "capture_lament" })), text).toEqual({ reason: "expresión poco natural", term: t });
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no prohíbe «dado», «seis», «suerte» ni frases naturales sobre ellos", () => {
+    for (const [text, speaker, rival, extra] of [
+      ["He sacado un seis. ¡Vamos!", BRAVA, CHISPA, {}],
+      ["¡Qué mala pata! Me has comido, Brava.", CHISPA, BRAVA, { kind: "capture_lament" }],
+      ["Que no se me vaya la suerte. ¡A casa, Brava!", CHISPA, BRAVA, {}],
+      ["Le he comido, Brava. Era de esperar.", ERNESTO, BRAVA, { captures: factsOf([cap(10, ERNESTO, BRAVA)], ERNESTO) }],
+      ["Ay, Chispa, me has comido la ficha.", PILAR, CHISPA, { kind: "capture_lament" }],
+    ] as const) expect(reject(text, say(speaker, rival, extra)), text).toBeNull();
+    for (const text of [
+      "Bah, Brava ha tenido suerte con el dado.", "El dado ha caído en cinco.", "Toco madera.", "Me has dado un susto, Brava.", "Te has dado prisa, Chispa.",
+      "Dado que vas primera, te vigilo.", "Esto ya no es azar, Brava.", "Ya decía yo que tanta suerte no era normal.", "¿Otra vez? Esto ya es gafe, Brava.", "Hoy me sale todo.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo cumple la norma: ninguna frase con el dado con vida propia, amuletos o supersticiones gratuitas", () => {
+    for (const c of CHARACTERS) {
+      for (const line of Object.values(c.chat.lines).flat()) {
+        expect(line, `${c.name}: ${line}`).not.toMatch(/amuleto|horóscopo|calcetines|mal de ojo|sopl/i);
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name).replaceAll("{count}", "dos").replaceAll("{Count}", "Dos").replaceAll("{ritmo}", "seguidas");
+          expect(hasDiscardedExpression(text), `${c.name}: ${line}`).toBe(false);
+        }
+      }
+    }
+    const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
+    expect(lines(CHISPA).ambient_lead).toContain("¡Mira, {rival}, voy ganando!");
+    expect(lines(CHISPA).third_six_tease).toContain("¡Ay, {rival}! Ya no tiras más.");
+    expect(lines(CHISPA).ambient_behind).toContain("Todavía puedo alcanzaros.");
+  });
+
+  it("el prompt pide una sola idea y no da vida al dado, sin nombrar lo prohibido", () => {
+    const [system, user] = buildChatPrompt({ ...say(CHISPA, BRAVA, { kind: "capture_lament" }), recent: [{ speaker: CHISPA, text: "¡Mira, Brava, voy ganando! Será el amuleto." }] });
+    expect(system.content).toContain("Una sola frase corta en español, con una sola idea:");
+    expect(system.content).toContain("El dado es solo un dado.");
+    expect(`${system.content}\n${user.content}`).not.toMatch(/amuleto|horóscopo|mal de ojo|sopl/i);
+  });
+});
+
+describe("revisión de coletillas: retiradas las artificiales y la disculpa de broma", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const retired = { reason: "expresión poco natural", detail: "termino=coletilla retirada" };
+  const joke = { reason: "expresión poco natural", detail: "termino=disculpa de broma" };
+
+  it("las coletillas retiradas se rechazan por el flujo completo del escritor LLM", () => {
+    expect(reject("Victoria. Todo según lo previsto.", say(ERNESTO, null, { kind: "victory_win", trigger: "victory" }))).toEqual(retired);
+    expect(reject("Todo según el plan, Brava.", say(ERNESTO, BRAVA))).toEqual(retired);
+    expect(reject("Estadísticamente era inevitable.", say(ERNESTO, BRAVA))).toEqual(retired);
+    expect(reject("Quien ríe el último ríe mejor, Chispa.", say(PILAR, CHISPA))).toEqual(retired);
+    expect(reject("¿Quién es el siguiente? ¡A casa, Chispa!", say(BRAVA, CHISPA))).toEqual(retired);
+  });
+
+  it("la disculpa de broma se rechaza; una disculpa normal, no", () => {
+    for (const text of ["Abuela Pilar, a casa. Lo siento… un poco.", "¡Uy, perdón, Abuela Pilar! Bueno, perdón no mucho.", "Lo siento, Abuela Pilar… no mucho."]) {
+      expect(reject(text, say(CHISPA, PILAR)), text).toEqual(joke);
+    }
+    for (const text of ["Lo siento, Abuela Pilar. Te he comido.", "¡Uy, perdón, Abuela Pilar!"]) expect(reject(text, say(CHISPA, PILAR)), text).toBeNull();
+  });
+
+  it("el registro de coletillas solo tiene expresiones naturales que el personaje usa", () => {
+    const phrases = Object.fromEntries(CHARACTERS.map((c) => [c.id, c.catchphrases]));
+    expect(phrases).toEqual({
+      [BRAVA]: ["¡A casa!", "Voy a por ti", "Eso no ha sido nada"],
+      [ERNESTO]: ["Previsible", "Lo tenía calculado", "Era de esperar"],
+      [PILAR]: ["Despacito y buena letra", "Ay, hijo, qué prisas", "Sin prisa"],
+      [CHISPA]: ["¡Qué mala pata!", "Hoy es mi día", "¡Toma ya!"],
+    });
+    for (const c of CHARACTERS) for (const phrase of c.catchphrases) expect(hasDiscardedExpression(phrase), `${c.name}: ${phrase}`).toBe(false);
+  });
+
+  it("el catálogo no tiene coletillas retiradas, bromas de disculpa ni expresiones exageradas", () => {
+    const EXAGGERATED = /todo según lo previsto|todo según el plan|estadísticamente era inevitable|quien ríe el último|quién es el siguiente|ni me he despeinado|imparable|que alguien me pare|de caza|pim, pam|a toda máquina|misión cumplida|con estilo|tan ancha|chocolate|merienda|más tiempo en casa que en el tablero|gafe|un poco\.|no mucho\.|no tanta|perdón no mucho/i;
+    for (const c of CHARACTERS) for (const line of Object.values(c.chat.lines).flat()) expect(line, `${c.name}: ${line}`).not.toMatch(EXAGGERATED);
+    // «Despacito y buena letra» y «Hoy es mi día» quedan una sola vez cada una.
+    const count = (id: string, re: RegExp) => Object.values(CHARACTERS.find((c) => c.id === id)!.chat.lines).flat().filter((l) => re.test(l)).length;
+    expect(count(PILAR, /despacito y buena letra/i)).toBe(1);
+    expect(count(CHISPA, /hoy es mi día/i)).toBe(1);
+  });
+
+  it("el carácter de Chispa para el LLM es espontáneo e imprevisible, sin superstición, suerte ni dado", () => {
+    const voice = CHARACTERS.find((c) => c.id === CHISPA)!.chat.voice;
+    expect(voice).toMatch(/espontáneo/i);
+    expect(voice).toMatch(/imprevisible/i);
+    expect(voice).not.toMatch(/supersti|dado|suerte|amuleto|humor|travieso|divertido/i);
+  });
+});
+
+describe("refranes retirados: «La avaricia rompe el saco» y «Quien mucho corre pronto para»", () => {
+  const [PILAR, CHISPA] = ["ai-green", "ai-blue"];
+  const retired = { reason: "expresión poco natural", detail: "termino=coletilla retirada" };
+
+  it("se rechazan por el flujo completo del escritor LLM, con sus variantes", () => {
+    expect(reject("Tres seises… Ay, la avaricia rompe el saco.", say(PILAR, null, { kind: "third_six_self", trigger: "third_six" }))).toEqual(retired);
+    expect(reject("Chispa, cariño, quien mucho corre pronto para.", say(PILAR, CHISPA, { kind: "third_six_tease", trigger: "third_six" }))).toEqual(retired);
+    for (const text of ["La avaricia rompe el saco, Chispa.", "Avaricia rompe el saco.", "Quien mucho corre, pronto para.", "Ya se sabe: quien mucho corre…"]) {
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("las frases sencillas que los sustituyen y los demás refranes oportunos siguen valiendo", () => {
+    for (const text of ["Tres seises… Ay, qué pena.", "Chispa, cariño, pierdes el turno.", "No hay mal que por bien no venga.", "Despacito y buena letra.", "Corre mucho, Chispa."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+    const lines = CHARACTERS.find((c) => c.id === PILAR)!.chat.lines;
+    expect(lines.third_six_self).toContain("Tres seises… Ay, qué pena.");
+    expect(lines.third_six_tease).toContain("{rival}, cariño, pierdes el turno.");
+  });
+
+  it("no quedan en el catálogo, el registro de coletillas ni el carácter de ningún personaje", () => {
+    for (const c of CHARACTERS) {
+      for (const text of [...Object.values(c.chat.lines).flat(), ...c.catchphrases, c.chat.voice]) expect(text, c.name).not.toMatch(/avaricia|quien mucho corre|pronto para/i);
+    }
   });
 });

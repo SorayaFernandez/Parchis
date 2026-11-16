@@ -729,7 +729,7 @@ describe("registro de coletillas: persistencia, reintentos y confirmaciones parc
     let phase = 1;
     const texts: Record<number, Record<string, string>> = {
       1: { "ai-pink": "¡A casa, Don Ernesto! Eso no ha sido nada.", "ai-purple": "Previsible, Brava." },
-      2: { "ai-pink": "¿Quién es el siguiente? Hoy reparto yo.", "ai-purple": "Todo según lo previsto, Brava." },
+      2: { "ai-pink": "Voy a por ti. Hoy reparto yo.", "ai-purple": "Lo tenía calculado, Brava." },
     };
     // El mismo escritor como principal y reserva: si falla, la versión falla entera (no hay fallback).
     const writer: ChatWriter = {

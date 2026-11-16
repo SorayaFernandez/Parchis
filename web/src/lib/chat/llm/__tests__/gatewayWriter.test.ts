@@ -10,6 +10,7 @@ import { createMemoryChatStore } from "../../__tests__/memoryChatStore";
 import { detectCatchphrases } from "../../catchphrases";
 import { logChatError } from "../../log";
 import { buildChatPrompt } from "../prompt";
+import { hasDiscardedExpression } from "../quality";
 import {
   ChatLlmError,
   cleanLlmText,
@@ -618,6 +619,113 @@ describe("integración con drainChat", () => {
       expect(failure.detail).not.toContain("Despacito");
     }
     expect(memory.queue).toEqual([]);
+  });
+
+  it("frases retiradas: si el LLM las genera, se rechazan y se publica una frase local válida, una vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    // Don Ernesto come una ficha de Abuela Pilar. El modelo contesta, para cada uno, con una frase retirada.
+    const RETIRED_BY = { "Abuela Pilar": "¿Te comes a la abuela, Don Ernesto? Qué poca vergüenza.", "Don Ernesto": "Eso no se ve todos los días, Abuela Pilar." };
+    const f: ReturnType<typeof fakeFetch> = fakeFetch((call) => {
+      const system = String((f.calls[call - 1].body.messages as { content: string }[])[0].content);
+      return completion(system.startsWith("Eres Abuela Pilar") ? RETIRED_BY["Abuela Pilar"] : RETIRED_BY["Don Ernesto"]);
+    });
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-purple", "ai-green")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    // Nada de lo que dijo el modelo se publica: cada intervención lleva una frase local, válida y sin frases retiradas.
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    for (const row of memory.rows) {
+      expect(Object.values(RETIRED_BY)).not.toContain(row.text);
+      expect(hasDiscardedExpression(row.text), row.text).toBe(false);
+      expect(CHARACTERS.find((c) => c.id === row.character_id)!.chat.lines[row.trigger === "capture" ? (row.seq === 0 ? "capture_boast" : "capture_lament") : "capture_boast"].length).toBeGreaterThan(0);
+    }
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures).toHaveLength(published);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ kind: "invalid_response", message: "expresión poco natural" });
+      expect(failure.detail).toMatch(/^termino=(te comes a la abuela|no se ve todos los días) choices=1 /);
+      expect(failure.detail).not.toContain("vergüenza");
+    }
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("«Tengo que sacar otro seis»: si el LLM lo genera, se rechaza y se publica una frase local válida, una vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Tengo que sacar otro seis.";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-blue", "ai-pink")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && r.text !== MODEL_TEXT && !hasDiscardedExpression(r.text))).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures.map((e) => [e.message, e.detail?.split(" ")[0]])).toEqual(Array(published).fill(["expresión poco natural", "termino=necesito"]));
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("«Que no cunda el pánico»: si el LLM lo genera, se rechaza y se publica una frase local válida, una vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Me has comido, pero que no cunda el pánico.";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-pink", "ai-blue")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && !/p[aá]nico/i.test(r.text) && !hasDiscardedExpression(r.text))).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures.map((e) => [e.message, e.detail?.match(/^termino=que no cunda el pánico /) !== null])).toEqual(Array(published).fill(["expresión poco natural", true]));
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("norma de lenguaje: amuletos, el dado con vida propia o soplar al dado se rechazan y se publica una frase local válida", async () => {
+    for (const MODEL_TEXT of ["¡A casa, Brava! Será el amuleto.", "¡Ay, Brava! El dado te ha mirado mal.", "Le soplo al dado, a ver si cambia la cosa."]) {
+      const memory = createMemoryChatStore();
+      const f = fakeFetch(() => completion(MODEL_TEXT));
+      const failures: ChatLlmError[] = [];
+      const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+      const baseLocal = createLocalWriter(createSeededRandom(1));
+      const localWrite = vi.fn(baseLocal.write);
+      const local = { write: localWrite };
+      let tokens = 0;
+      const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+      memory.enqueue(GAME, 4, [capture("ai-blue", "ai-pink")], createGame([...CHARACTER_IDS]));
+      expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+      const published = memory.rows.length;
+      expect(published, MODEL_TEXT).toBeGreaterThanOrEqual(1);
+      expect(memory.rows.every((r) => r.source === "local" && r.text !== MODEL_TEXT && !hasDiscardedExpression(r.text)), MODEL_TEXT).toBe(true);
+      expect(f.calls).toHaveLength(published);
+      expect(localWrite).toHaveBeenCalledTimes(published);
+      // Cada intervención se rechaza (por la norma o, en la réplica, por otra regla) y pasa a la frase local.
+      expect(failures).toHaveLength(published);
+      expect(failures.every((e) => e.kind === "invalid_response"), MODEL_TEXT).toBe(true);
+      expect(failures.some((e) => e.message === "expresión poco natural"), MODEL_TEXT).toBe(true);
+      expect(memory.queue).toEqual([]);
+    }
   });
 
   it("registro de coletillas: cientos de versiones después, la coletilla de Pilar se rechaza y el rechazo no entra en el registro", async () => {

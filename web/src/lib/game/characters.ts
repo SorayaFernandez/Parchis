@@ -146,7 +146,7 @@ export const CHARACTERS: readonly Character[] = [
     title: "La agresiva",
     personality:
       "Competitiva, directa y algo provocadora; se pica enseguida. Frases cortas, exclamaciones y tono de reto.",
-    catchphrases: ["¡A casa!", "¿Quién es el siguiente?", "Eso no ha sido nada"],
+    catchphrases: ["¡A casa!", "Voy a por ti", "Eso no ha sido nada"],
     strategy: {
       // Cazadora: busca capturas y se acerca a los rivales; arriesga fichas sin miedo.
       multipliers: {
@@ -166,7 +166,7 @@ export const CHARACTERS: readonly Character[] = [
       lines: {
         victory_win: [
           "¡Primera! ¿Alguien lo dudaba?",
-          "¡Gané! Y ni me he despeinado.",
+          "¡Gané! Lo sabía.",
           "¡Eso es! Os he ganado a todos.",
           "¡Primera en llegar! Así se juega.",
           "¡Gané!",
@@ -179,7 +179,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         capture_boast: [
           "¡A casa, {rival}!",
-          "¿Quién es el siguiente? Ah, eras tú, {rival}.",
+          "¡Hasta luego, {rival}!",
           "¡Te he comido, {rival}! Vuelta a empezar.",
           "Eso por ponerte en mi camino, {rival}.",
           "¡Te vi venir, {rival}!",
@@ -195,10 +195,10 @@ export const CHARACTERS: readonly Character[] = [
           "¡Qué rabia! Ya verás la próxima, {rival}.",
         ],
         streak_boast: [
-          "¡Imparable! {rival}, a la cola con los demás.",
-          "¡{Count} capturas {ritmo}! Estoy imparable.",
-          "¡Ya van {count} {ritmo}! Que alguien me pare.",
-          "¡Hoy estoy de caza! Lo siento, {rival}… no mucho.",
+          "¡Otra más, {rival}!",
+          "¡{Count} capturas {ritmo}! Hoy no fallo.",
+          "¡Ya van {count} {ritmo}!",
+          "Hoy me salen todas, {rival}.",
           "{Count} {ritmo}. ¡Y voy a por más!",
         ],
         streak_lament: [
@@ -211,18 +211,18 @@ export const CHARACTERS: readonly Character[] = [
           "¿Tres seises y castigo? ¡Qué injusticia!",
           "¡Jo! Ni la suerte me acompaña.",
           "¡Encima pierdo el turno! Hay que fastidiarse.",
-          "¡Tres seises! Hasta el dado quiere pelea.",
+          "¡Tres seises! Qué mala pata.",
         ],
         third_six_tease: [
           "¡Ja! Eso por correr tanto, {rival}.",
-          "Tres seises, {rival}. Ni el dado te quiere.",
+          "Tres seises, {rival}. Te quedas sin turno.",
           "¡Castigo sin mover un dedo! Mala suerte, {rival}.",
-          "{rival}, el dado acaba de hacerme un favor.",
+          "{rival}, eso me viene muy bien.",
         ],
         goal: [
           "¡Una dentro! Las demás van detrás.",
           "¡Meta! Esto va en serio.",
-          "Una menos. Temblad.",
+          "Una menos. ¡A por las demás!",
           "¡Otra en la meta! Esto marcha.",
         ],
         finish_place: [
@@ -260,7 +260,7 @@ export const CHARACTERS: readonly Character[] = [
     title: "El estratega",
     personality:
       "Calculador, tranquilo y educado, orgulloso de su método. Habla con cierta formalidad y trata de usted, sin tecnicismos.",
-    catchphrases: ["Previsible", "Todo según lo previsto", "Estadísticamente era inevitable"],
+    catchphrases: ["Previsible", "Lo tenía calculado", "Era de esperar"],
     strategy: {
       // Posicional: barreras y control del tablero; no se expone; avanza sin prisa.
       multipliers: {
@@ -277,15 +277,15 @@ export const CHARACTERS: readonly Character[] = [
       talkativeness: 0.8,
       lines: {
         victory_win: [
-          "Victoria. Todo según lo previsto.",
+          "Primer puesto. Ha salido como pensaba.",
           "Primer puesto. Cada jugada tenía su porqué.",
-          "Estadísticamente era inevitable. Primer puesto.",
+          "He ganado. Era lo más probable.",
           "He ganado. El plan ha funcionado de principio a fin.",
           "Gano yo. Les recomiendo repasar sus jugadas.",
         ],
         victory_reply: [
           "Enhorabuena, {rival}. Admito que su juego fue… eficaz.",
-          "Felicidades, {rival}, aunque el dado le ha ayudado bastante.",
+          "Felicidades, {rival}, aunque ha tenido buenas tiradas.",
           "Bien jugado, {rival}. Tomo nota para la próxima.",
           "Merecido, {rival}. Yo tendré que pensar en qué fallé.",
         ],
@@ -312,8 +312,8 @@ export const CHARACTERS: readonly Character[] = [
         ],
         streak_lament: [
           "{Count} capturas {ritmo}. Debo replantear mi defensa.",
-          "{rival}, súmese usted a la lista. Esto empieza a ser un ensañamiento.",
-          "El azar me castiga últimamente. Ya se compensará.",
+          "{rival}, súmese usted a la lista. Ya son demasiadas.",
+          "Últimamente no me salen las tiradas. Ya cambiará.",
           "Esto ya no es azar, {rival}. Debo proteger mejor mis fichas.",
         ],
         third_six_self: [
@@ -324,7 +324,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         third_six_tease: [
           "Tres seises, {rival}: una entre doscientas dieciséis. Notable.",
-          "El exceso de fortuna también se paga, {rival}.",
+          "Tres seises, {rival}. Pierde el turno.",
           "{rival}, son las reglas. Y me parecen muy justas.",
           "Curioso, {rival}: demasiada suerte también penaliza.",
         ],
@@ -332,7 +332,7 @@ export const CHARACTERS: readonly Character[] = [
           "Una ficha en meta. Vamos bien.",
           "Otra ficha que llega a la meta. Sigamos con calma.",
           "Ficha asegurada. Ya no corre ningún riesgo.",
-          "Una más en meta. Todo según el plan.",
+          "Una más en meta. Seguimos.",
         ],
         finish_place: [
           "He terminado. No es el puesto que calculé, pero es digno.",
@@ -369,7 +369,7 @@ export const CHARACTERS: readonly Character[] = [
     title: "La prudente",
     personality:
       "Tranquila, cariñosa y paciente, más astuta de lo que parece. Usa alguna expresión de toda la vida y, cuando una ficha vuelve a casa, «casita».",
-    catchphrases: ["Despacito y buena letra", "Ay, hijo, qué prisas", "Quien ríe el último…"],
+    catchphrases: ["Despacito y buena letra", "Ay, hijo, qué prisas", "Sin prisa"],
     strategy: {
       // Conservadora: evita el peligro, busca seguros y prioriza el pasillo y la meta.
       multipliers: {
@@ -386,15 +386,15 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Cariñosa y tranquila: diminutivos, «cariño», «hijos» y algún refrán de vez en cuando. Nunca se enfada de verdad.",
-      voice: "Prudente, cariñosa y paciente, algo tradicional: habla con cercanía y calma y, de vez en cuando, usa un refrán, sin repetirlo. Solo dice «casita» si una ficha vuelve a casa.",
+      voice: "Prudente, cariñosa y paciente, algo tradicional: habla con cercanía y calma y solo usa algún refrán si viene a cuento, sin repetirlo. Solo dice «casita» si una ficha vuelve a casa.",
       talkativeness: 0.65,
       lines: {
         victory_win: [
-          "Ay, qué alegría. Despacito y buena letra, hijos.",
+          "Ay, qué alegría. He ganado, hijos.",
           "He ganado yo. ¿Quién lo iba a decir?",
-          "Quien ríe el último ríe mejor… pero yo he llegado primera.",
+          "Ya está, hijos: he llegado primera.",
           "Gané, hijos. Poquito a poco, pero gané.",
-          "¡Qué ilusión! Esto lo celebramos con chocolate.",
+          "¡Qué ilusión! No me lo esperaba.",
         ],
         victory_reply: [
           "Muy bien, {rival}, cariño. Te lo has ganado.",
@@ -407,14 +407,14 @@ export const CHARACTERS: readonly Character[] = [
           "Ay, {rival}, a casita. No me lo tengas en cuenta.",
           "Lo siento, {rival}. Quien se pone a tiro…",
           "Sin rencores, {rival}. A casita a descansar.",
-          "Ay, qué pena… bueno, no tanta. A casita, {rival}.",
+          "Ay, qué pena. A casita, {rival}.",
         ],
         capture_lament: [
           "Ay, {rival}, qué prisas por comerme. Con la abuela no se hace eso.",
           "Bueno, {rival}, mi ficha a casita. No hay mal que por bien no venga.",
           "Ay, mi ficha. Paciencia, que la partida es larga, {rival}.",
           "{rival}, a la abuela se la respeta, ¿eh?",
-          "¿Te comes a la abuela, {rival}? Qué poca vergüenza.",
+          "Vaya, {rival}, me has pillado. Ya me tocará a mí.",
         ],
         streak_boast: [
           "Otra más, cariño. Quién me lo iba a decir.",
@@ -429,7 +429,7 @@ export const CHARACTERS: readonly Character[] = [
           "Ya van {count}… Esto me pasa por fiarme, {rival}.",
         ],
         third_six_self: [
-          "Tres seises… Ay, la avaricia rompe el saco.",
+          "Tres seises… Ay, qué pena.",
           "Ya decía yo que tanta suerte no era normal.",
           "Bueno, turno perdido. Sin prisa.",
           "Ay, qué disgusto. Paciencia, mucha paciencia.",
@@ -437,8 +437,8 @@ export const CHARACTERS: readonly Character[] = [
         third_six_tease: [
           "Las prisas nunca son buenas, {rival}.",
           "Tanta prisa, {rival}, y mira.",
-          "{rival}, cariño, quien mucho corre pronto para.",
-          "Ya te lo decía yo, {rival}: sin prisa.",
+          "{rival}, cariño, pierdes el turno.",
+          "Ya te lo decía yo, {rival}.",
         ],
         goal: [
           "Una ficha más en la meta. Despacito y buena letra.",
@@ -447,10 +447,10 @@ export const CHARACTERS: readonly Character[] = [
           "Una más en la meta. Poquito a poco.",
         ],
         finish_place: [
-          "Ya he terminado. Me quedo tan ancha.",
+          "Ya he terminado, hijos.",
           "Hecho, hijos. Lo importante es participar.",
           "Terminé. No he ganado, pero me lo he pasado de maravilla.",
-          "Fin para mí. Ahora, a por la merienda.",
+          "Fin para mí. Ha estado bien.",
         ],
         ambient_lead: [
           "Ay, quién me lo iba a decir: la primera, y sin prisas.",
@@ -466,7 +466,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_behind: [
           "No corras tanto, {rival}, que te vas a cansar.",
-          "Voy perdiendo, pero quien ríe el último…",
+          "Voy perdiendo. Ya llegaré.",
           "Sin prisa, {rival}. Esto es muy largo todavía.",
           "Mucho correr, mucho correr… ya veremos al final, {rival}.",
         ],
@@ -481,7 +481,7 @@ export const CHARACTERS: readonly Character[] = [
     title: "El imprevisible",
     personality:
       "Espontáneo, alegre e impulsivo, algo travieso; supersticioso con el dado. Habla de forma informal y cercana.",
-    catchphrases: ["¡Y el dado dice…!", "Hoy es mi día", "¡Toma ya!"],
+    catchphrases: ["¡Qué mala pata!", "Hoy es mi día", "¡Toma ya!"],
     strategy: {
       // Corredor: prioriza avanzar, apenas forma barreras y tiene un azar acotado.
       multipliers: {
@@ -493,33 +493,33 @@ export const CHARACTERS: readonly Character[] = [
     },
     chat: {
       register: "Informal y alegre: reacciona con sorpresa y humor, con alguna superstición con el dado y frases sencillas.",
-      voice: "Espontáneo, divertido e imprevisible, algo travieso y supersticioso con el dado: reacciona con sorpresa y humor, sin exagerar.",
+      voice: "Espontáneo, alegre e imprevisible: reacciona con sorpresa y dice lo que piensa con frases sencillas, sin exagerar.",
       talkativeness: 1,
       lines: {
         victory_win: [
-          "¡He ganado! Ya decía yo que el dado me quería.",
-          "¡Hoy es mi día! Lo decía el horóscopo.",
-          "¡Primero! Le debo una al dado.",
+          "¡He ganado! ¡Qué partidón!",
+          "¡Hoy es mi día! He ganado.",
+          "¡Primero! Qué bien me ha salido.",
           "¡Gané! Y eso que empecé fatal.",
-          "¡Lo sabía! Llevaba los calcetines de la suerte.",
+          "¡Lo sabía! Hoy tenía buena mano.",
         ],
         victory_reply: [
           "¡Bien jugado, {rival}! Pero quiero la revancha.",
-          "¡Enhorabuena, {rival}! El dado te ha querido hoy.",
+          "¡Enhorabuena, {rival}! Hoy te ha salido todo.",
           "¡Felicidades, {rival}! Esta vez te la dejo.",
           "Vale, {rival}, has ganado tú. Ahora, a por el segundo puesto.",
         ],
         capture_boast: [
-          "¡Y el dado dice… a casa, {rival}!",
-          "¡Uy, perdón, {rival}! Bueno, perdón no mucho.",
+          "¡Te comí, {rival}! A casa.",
+          "¡Uy, perdón, {rival}!",
           "¡Te pillé, {rival}! A empezar de nuevo.",
-          "¡Pim, pam, fuera! Lo siento, {rival}.",
-          "{rival}, a casa. Lo siento… un poco.",
-          "¡Toma ya! {rival}, el dado lo ha querido así.",
+          "¡Bien! {rival}, vuelves a empezar.",
+          "Lo siento, {rival}. Te he comido.",
+          "¡Toma ya! {rival}, a casa.",
         ],
         capture_lament: [
           "¡Noooo! {rival}, eso ha dolido.",
-          "¡Me has comido! Mal día para dejarme el amuleto, {rival}.",
+          "¡Me has comido, {rival}! Qué rabia.",
           "¡Qué jugada, {rival}! Bueno, para ti.",
           "Vale, {rival}, esta me la apunto.",
           "¡Qué mala pata! Bien visto, {rival}.",
@@ -529,59 +529,59 @@ export const CHARACTERS: readonly Character[] = [
         ],
         streak_boast: [
           "¡Y van {count}! Hoy no hay quien me pare.",
-          "¡Otra, otra y otra! {rival}, lo siento, de verdad… un poco.",
-          "¡Otra! Hoy el dado está de mi parte.",
+          "¡Otra más! Lo siento, {rival}.",
+          "¡Otra! Hoy me sale todo.",
           "¡{Count} capturas {ritmo}! {rival}, ya puedes ir haciendo hueco en casa.",
           "¡{Count} capturas {ritmo}! Que no se me vaya la suerte.",
           "{rival}, tú también a casa. ¡Qué día llevo!",
         ],
         streak_lament: [
-          "¿Otra vez? Esto ya es gafe, {rival}.",
-          "¡{Count} veces {ritmo}! Alguien me ha echado mal de ojo.",
+          "¿Otra vez? No me lo puedo creer, {rival}.",
+          "¡{Count} veces {ritmo}! No me sale nada.",
           "¡Vaya, {rival}! Otra vez a casa, no gano para sustos.",
-          "Mi ficha pasa más tiempo en casa que en el tablero.",
+          "No hay manera, {rival}.",
         ],
         third_six_self: [
-          "¡Tres seises! El dado se ha venido arriba.",
+          "¡Tres seises! Y encima castigo.",
           "¡Lo sabía! Tres seises nunca traen nada bueno.",
           "Demasiada suerte junta. Ya decía yo.",
-          "¡Seis, seis, seis… y castigo! Qué mala pata.",
+          "Pierdo el turno. Vaya.",
         ],
         third_six_tease: [
-          "¡Tres seises, {rival}! El dado se ha pasado contigo.",
+          "¡Tres seises, {rival}! Te toca esperar.",
           "¡Uyyy, {rival}! Tanto seis tenía trampa.",
-          "¡Uy, {rival}! Eso no se ve todos los días.",
-          "{rival}, eso pasa por no tocar madera.",
+          "¡Ay, {rival}! Ya no tiras más.",
+          "{rival}, otra vez será.",
         ],
         goal: [
-          "¡Ficha en meta! El dado me quiere.",
+          "¡Ficha en meta! Qué bien.",
           "¡Una dentro! Ya queda menos.",
           "¡Y entra! Qué bien sienta.",
           "¡Meta! Ni yo me lo creo.",
         ],
         finish_place: [
-          "¡Terminé! Y con estilo.",
+          "¡Terminé, por fin!",
           "¡Meta completa! No he ganado, pero me lo he pasado genial.",
           "¡Todas en meta! Y sin perder la sonrisa.",
-          "¡Listo! Misión cumplida.",
+          "¡Listo! Ya está.",
         ],
         ambient_lead: [
           "¡Voy ganando! Que no se acabe la suerte.",
           "Voy ganando. ¡Que siga así!",
           "¡Voy primero! Ni yo me lo esperaba.",
-          "{rival}, desde aquí arriba casi no te veo.",
+          "¡Mira, {rival}, voy ganando!",
         ],
         ambient_ahead: [
           "{rival}, ánimo, que vas muy atrás.",
-          "¡Hoy es mi día! O eso dice mi amuleto.",
+          "¡Vamos, que se puede!",
           "¡Qué partida más reñida!",
-          "He tocado madera antes de tirar. Ya verás.",
+          "Esta partida me está gustando.",
         ],
         ambient_behind: [
-          "{rival} va a toda máquina. Pero esto no ha acabado.",
-          "Voy perdiendo, pero el dado me debe una.",
+          "{rival} va muy rápido. Pero esto no ha acabado.",
+          "Voy perdiendo, pero aún quedan muchas tiradas.",
           "¡Que no decaiga! {rival}, te estoy vigilando.",
-          "Esto se arregla con un par de seises. Ni uno más.",
+          "Todavía puedo alcanzaros.",
         ],
       },
     },
