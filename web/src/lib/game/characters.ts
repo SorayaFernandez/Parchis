@@ -298,7 +298,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         capture_lament: [
           "Interesante, {rival}. Un riesgo que no había considerado.",
-          "Lo anoto, {rival}. No volverá a ocurrir.",
+          "Lo anoto, {rival}. Me ha pillado desprevenido.",
           "No ha salido como esperaba, {rival}. Sigamos.",
           "Me ha comido una ficha, {rival}. Tendré que reorganizarme.",
         ],

@@ -999,6 +999,50 @@ describe("etiquetas, comillas y respuestas truncadas (auditoría de la v382)", (
   });
 });
 
+describe("clasificación real: el servicio pasa `leader` y `last`, y una posición falsa usa la frase local", () => {
+  /** Partida en juego en la que Abuela Pilar va primera (o, con `pilarFirst: false`, tercera). */
+  const stateWith = (pilarFirst: boolean) => {
+    const state = createGame([...CHARACTER_IDS]);
+    const steps: Record<string, number> = pilarFirst ? { "ai-green": 40, "ai-pink": 20, "ai-purple": 10, "ai-blue": 5 } : { "ai-pink": 40, "ai-purple": 20, "ai-green": 10, "ai-blue": 5 };
+    for (const player of state.players) Object.assign(player.pieces[0], { state: "track", steps: steps[player.id] });
+    return state;
+  };
+  const run = async (pilarFirst: boolean) => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "¡Te comí! Voy ganando." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const local = { write: vi.fn(createLocalWriter(createSeededRandom(1)).write) };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-green", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], stateWith(pilarFirst));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    return { memory, f, failures, local };
+  };
+
+  it("Pilar no va primera: «Voy ganando» se rechaza y se publica la frase local una sola vez", async () => {
+    const { memory, f, failures, local } = await run(false);
+    const pilar = memory.rows.find((r) => r.character_id === "ai-green")!;
+    expect(pilar).toMatchObject({ source: "local" });
+    expect(pilar.text).not.toMatch(/ganando/i);
+    expect(failures[0]).toMatchObject({ kind: "invalid_response", message: "afirmación no respaldada", detail: expect.stringMatching(/^termino=voy ganando /) });
+    // Una llamada al modelo y una frase local por cada intervención publicada, sin reintentos.
+    expect(f.calls).toHaveLength(memory.rows.length);
+    expect(local.write).toHaveBeenCalledTimes(memory.rows.length);
+    // El escritor recibe la clasificación real calculada en el servidor (Brava primera, Chispa última).
+    expect(local.write.mock.calls[0][0]).toMatchObject({ leader: "ai-pink", last: "ai-blue" });
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("Pilar va primera de verdad: la misma frase del modelo se publica", async () => {
+    const { memory, failures } = await run(true);
+    const pilar = memory.rows.find((r) => r.character_id === "ai-green")!;
+    expect(pilar).toMatchObject({ source: "llm", text: "¡Te comí! Voy ganando." });
+    expect(failures.filter((e) => e.message === "afirmación no respaldada")).toHaveLength(0);
+  });
+});
+
 describe("final de la partida: el servicio pasa el estado real al validador", () => {
   it("victoria con la partida en juego: «se acabó la partida» se rechaza y se usa la frase local una vez; el escritor recibe gameStatus", async () => {
     const memory = createMemoryChatStore();

@@ -8,6 +8,7 @@ import { CHAT_LIMITS } from "./config";
 import type { Random, Utterance } from "./director";
 import type { ChatSource } from "./schemas";
 import { detectCatchphrases } from "./catchphrases";
+import { unbackedPositionClaim } from "./positionClaims";
 
 export interface RecentText {
   speaker: PlayerId;
@@ -48,6 +49,12 @@ export interface ChatWriteRequest {
    * validador aceptar un «voy ganando».
    */
   leader?: PlayerId | null;
+  /**
+   * Quién va perdiendo según los datos reales (`gameLast`: el último en solitario por progreso entre
+   * quienes siguen jugando), o `null` si no se puede saber. Sin él (estado no válido) no se sabe. Solo con
+   * él puede afirmarse «voy perdiendo» (ver `positionClaims.ts`).
+   */
+  last?: PlayerId | null;
 }
 
 export interface WrittenText {
@@ -159,11 +166,17 @@ export function validateChatText(text: string, recent: readonly RecentText[]): s
  */
 export function createLocalWriter(random: Random): ChatWriter {
   return {
-    async write({ utterance, recent, usedLines = [], usedCatchphrases = [] }) {
+    async write(request) {
+      const { utterance, recent, usedLines = [], usedCatchphrases = [] } = request;
       const lines = getCharacter(utterance.speaker)?.chat.lines[utterance.kind] ?? [];
+      // Además de tener sus datos y no repetirse, la frase no puede afirmar una posición que la clasificación
+      // real no respalda («Voy perdiendo» solo si quien habla va el último; ver `positionClaims.ts`).
       const valid = lines
         .map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) }))
-        .filter((o): o is { id: string; text: string } => o.text !== null && validateChatText(o.text, recent) === o.text);
+        .filter(
+          (o): o is { id: string; text: string } =>
+            o.text !== null && validateChatText(o.text, recent) === o.text && unbackedPositionClaim(o.text, request) === null,
+        );
       if (valid.length === 0) return null;
       // Preferencia (no prohibición): frases sin coletillas que este personaje ya haya publicado. Si
       // todas las válidas las tienen, se usan igualmente: el escritor local nunca se queda sin frase

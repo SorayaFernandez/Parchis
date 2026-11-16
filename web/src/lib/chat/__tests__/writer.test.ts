@@ -298,7 +298,8 @@ describe("frases neutrales y «por detrás»: ninguna afirma una buena posición
       const last = CHARACTERS.find((o) => o.id !== c.id)!.id;
       for (const rival of [last, null]) {
         const u = { speaker: c.id, kind: "ambient_lead", rival, trigger: "ambient", replyTo: null, important: false } as Utterance;
-        const written = await createLocalWriter(createSeededRandom(1)).write({ utterance: u, recent: [], replyToText: null });
+        // La clasificación real que describe la prueba: quien habla va primero en solitario y el rival, último.
+        const written = await createLocalWriter(createSeededRandom(1)).write({ utterance: u, recent: [], replyToText: null, leader: c.id, last: rival });
         expect(written, `${c.name} con rival ${rival}`).not.toBeNull();
         expect(c.chat.lines.ambient_lead.map((l) => renderLine(l, u))).toContain(written!.text);
       }

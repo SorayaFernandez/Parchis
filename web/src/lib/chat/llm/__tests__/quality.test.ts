@@ -369,7 +369,7 @@ describe("cada regla nueva por separado", () => {
       term: "cifra 1 (real sin racha)",
     });
     // «la primera vez» no cuenta capturas: se admite siempre, también en la victoria.
-    expect(checkQuality("¡Es la primera vez que gano, señores!", say("ai-pink", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
+    expect(checkQuality("¡Es la primera vez que gano, señores!", say("ai-blue", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
   });
 
   it("D (auditoría): ordinales, números mayores que diez, «un par de» y un adjetivo intercalado", () => {
@@ -483,7 +483,7 @@ describe("cada regla nueva por separado", () => {
       expect(checkQuality(text, say("ai-pink", "ai-blue")), text).toBeNull();
     }
     // «1ª vez» y «primera vez» no cuentan capturas.
-    expect(checkQuality("Es la 1ª vez que gano, señores.", say("ai-pink", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
+    expect(checkQuality("Es la 1ª vez que gano, señores.", say("ai-blue", null, { kind: "victory_win", trigger: "victory" }))).toBeNull();
   });
 
   it("D tabla C: los casos que ya funcionaban siguen igual", () => {
@@ -1612,7 +1612,9 @@ describe("dirección de las capturas, el propio nombre y expresiones retiradas (
     for (const speaker of IDS) {
       for (const by of IDS.filter((id) => id !== speaker)) {
         const forms = speaker === "ai-purple" ? ["Me ha comido una ficha"] : ["Me comiste", "Me has comido una ficha"];
-        for (const form of forms) expect(reject(`${form}, ${NAMES[by]}.`, victimOf(speaker, by)), `${NAMES[speaker]} ← ${NAMES[by]}: ${form}`).toBeNull();
+        // Brava lo dice con exclamaciones («¡Me has comido una ficha, Chispa!»).
+        const said = (form: string) => (speaker === "ai-pink" && form === "Me has comido una ficha" ? `¡${form}, ${NAMES[by]}!` : `${form}, ${NAMES[by]}.`);
+        for (const form of forms) expect(reject(said(form), victimOf(speaker, by)), `${NAMES[speaker]} ← ${NAMES[by]}: ${form}`).toBeNull();
         const wrong = speaker === "ai-purple" ? "Le he comido una ficha" : "Te comí";
         expect([DIRECTION, "afirmación no respaldada"], `${NAMES[speaker]}: ${wrong}`).toContain(checkQuality(`${wrong}, ${NAMES[by]}.`, victimOf(speaker, by))?.reason);
       }
@@ -2531,6 +2533,127 @@ describe("ampliación de la revisión de lenguaje: deportes y otros juegos, fras
     for (const speaker of ALL) {
       const [system, user] = buildChatPrompt({ ...say(speaker, other(speaker), { kind: "capture_lament" }), recent });
       expect(`${system.content}\n${user.content}`, speaker).not.toMatch(/(?<!\p{L})gol\p{L}*|escuadra|f[uú]tbol|comentarista|por todas|ficha sola/iu);
+    }
+  });
+});
+
+describe("revisión de los mensajes reales de Preview: «va perdiendo», tratamiento y frases retiradas", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+  const victim = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+
+  it("los mensajes reales señalados se rechazan por el flujo completo del escritor LLM", () => {
+    expect(reject("Brava sigue perdida.", say(CHISPA, BRAVA))).toEqual(term("sigue perdido"));
+    expect(reject("Me has comido una ficha, Chispa.", victim(BRAVA, CHISPA))).toEqual(term("sin exclamaciones (Brava)"));
+    expect(reject("Lo anoto, Chispa. No volverá a ocurrir.", victim(ERNESTO, CHISPA))).toEqual(term("no volverá a ocurrir"));
+    expect(reject("Tengo que esperar mi turno.", say(ERNESTO, CHISPA, { kind: "capture_lament" }))).toEqual(term("esperar mi turno"));
+  });
+
+  it("variantes equivalentes, detectadas y sin citarse en el prompt", () => {
+    for (const text of [
+      "Chispa sigue perdido.", "Sigues perdida, Brava.", "Estás perdido, Chispa.", "Ya estoy perdida.", "Brava anda muy perdida.",
+      "No volverá a pasar.", "No va a volver a ocurrir.", "No se repetirá.", "Esto no pasará más.",
+      "Me toca esperar mi turno.", "Esperaré mi turno.", "A esperar el turno.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(true);
+    for (const text of ["Brava va perdiendo.", "Voy perdiendo, pero aún quedan muchas tiradas.", "Bueno, turno perdido. Sin prisa.", "¡Tres seises, Brava! Te toca esperar.", "Lo anoto, Chispa."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("Brava: «¡Me has comido una ficha!» con exclamaciones se acepta; sin ellas, no", () => {
+    for (const text of ["¡Me has comido una ficha, Chispa!", "¡Chispa, me has comido una ficha!", "¡Me has comido una ficha! Te vas a enterar, Chispa."]) {
+      expect(reject(text, victim(BRAVA, CHISPA)), text).toBeNull();
+    }
+    for (const text of ["Me has comido una ficha, Chispa.", "Me has comido una ficha, Chispa!", "¡Vaya! Me has comido una ficha, Chispa."]) {
+      expect(reject(text, victim(BRAVA, CHISPA)), text).toEqual(term("sin exclamaciones (Brava)"));
+    }
+    // Los demás no tienen esta obligación.
+    expect(reject("Me has comido una ficha, Brava.", victim(CHISPA, BRAVA))).toBeNull();
+    expect(reject("Me has comido una ficha, Brava.", victim(PILAR, BRAVA))).toBeNull();
+  });
+
+  it("«señores» es exclusivo de Chispa", () => {
+    expect(checkQuality("¡Qué partida, señores!", say(CHISPA, BRAVA, { kind: "ambient_ahead", trigger: "ambient", important: false }))).toBeNull();
+    for (const speaker of [BRAVA, ERNESTO, PILAR]) {
+      expect(checkQuality("¡Qué partida, señores!", say(speaker, CHISPA, { kind: "ambient_ahead", trigger: "ambient", important: false })), speaker).toEqual({ reason: "expresión poco natural", term: "señores (solo Chispa)" });
+    }
+  });
+
+  it("Abuela Pilar: «cariño» a un solo jugador e «hijos» al grupo, nunca a una sola persona", () => {
+    expect(reject("Me has comido, Brava, cariño. Qué le vamos a hacer.", victim(PILAR, BRAVA))).toBeNull();
+    expect(checkQuality("Ya he terminado, hijos.", say(PILAR, null, { kind: "finish_place", trigger: "finish_place", important: false }))).toBeNull();
+    expect(checkQuality("¿Pero qué os he hecho yo, hijos?", say(PILAR, BRAVA, { kind: "streak_lament", trigger: "bad_streak" }))).toBeNull();
+    for (const text of ["Ay, hijos, me has comido.", "Hijos, tú no tienes prisa.", "Te comí, hijos.", "Hijos, ya te pillaré."]) {
+      expect(checkQuality(text, say(PILAR, BRAVA)), text).toEqual({ reason: "expresión poco natural", term: "hijos a una sola persona" });
+    }
+    // «cariños» al grupo sigue retirado.
+    expect(checkQuality("Ay, cariños, qué partida.", say(PILAR, BRAVA))).toEqual({ reason: "expresión poco natural", term: "cariños" });
+  });
+
+  it("el catálogo cumple: sin las frases retiradas, Brava con exclamaciones, «señores» solo de Chispa y los «hijos» de Pilar, al grupo", () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...c.catchphrases]) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(text, `${c.name}: ${text}`).not.toMatch(/sigue perdid|no volver[aá] a ocurrir|esperar mi turno/i);
+          if (c.id !== CHISPA) expect(text, `${c.name}: ${text}`).not.toMatch(/señores/i);
+          if (c.id === BRAVA && /me has comido una ficha/i.test(text)) expect(text, text).toMatch(/¡[^.!?]*me has comido una ficha[^.!?]*!/i);
+          if (c.id === PILAR && /\bhijos\b/i.test(text)) expect(checkQuality(text, say(PILAR, rival.id, { kind: "ambient_ahead", trigger: "ambient", important: false }))?.term, text).not.toBe("hijos a una sola persona");
+        }
+      }
+    }
+    const lament = CHARACTERS.find((c) => c.id === ERNESTO)!.chat.lines.capture_lament;
+    expect(lament).toContain("Lo anoto, {rival}. Me ha pillado desprevenido.");
+    expect(lament).not.toContain("Lo anoto, {rival}. No volverá a ocurrir.");
+  });
+
+  it("la sustituta de Don Ernesto pasa todas las reglas con cada rival, de usted", () => {
+    for (const rival of [BRAVA, PILAR, CHISPA]) {
+      const name = CHARACTERS.find((c) => c.id === rival)!.name;
+      expect(reject(`Lo anoto, ${name}. Me ha pillado desprevenido.`, victim(ERNESTO, rival)), name).toBeNull();
+    }
+  });
+
+  it("la demostración no contiene ninguna de estas expresiones", async () => {
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    const match = await createDemoMatch();
+    for (const m of match.messages) {
+      expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+      expect(m.text, m.text).not.toMatch(/sigue perdid|no volver[aá] a ocurrir|esperar mi turno/i);
+      if (m.characterId !== CHISPA) expect(m.text, m.text).not.toMatch(/señores/i);
+    }
+  });
+});
+
+describe("posición real: «voy ganando» / «voy perdiendo» solo con la clasificación del servidor (`leader`, `last`)", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const NOT_BACKED = "afirmación no respaldada";
+  const at = (speaker: string, rival: string | null, leader: string | null | undefined, last: string | null | undefined) => ({
+    ...say(speaker, rival, { kind: "capture_boast", captures: factsOf([cap(10, speaker, rival ?? BRAVA)], speaker) }),
+    ...(leader !== undefined ? { leader } : {}),
+    ...(last !== undefined ? { last } : {}),
+  });
+
+  it("por el flujo completo del escritor LLM: líder, último, intermedio, empate y sin estado", () => {
+    expect(reject("¡Te comí, Chispa! Voy ganando.", at(BRAVA, CHISPA, BRAVA, CHISPA))).toBeNull();
+    expect(reject("¡Te comí, Chispa! Voy ganando.", at(BRAVA, CHISPA, ERNESTO, CHISPA))?.reason).toBe(NOT_BACKED);
+    expect(reject("Te comí, Brava. Aunque voy perdiendo.", at(CHISPA, BRAVA, BRAVA, CHISPA))).toBeNull();
+    expect(reject("Te comí, Brava. Aunque voy perdiendo.", at(PILAR, BRAVA, BRAVA, CHISPA))?.reason).toBe(NOT_BACKED);
+    expect(reject("¡Te comí, Chispa! Voy ganando.", at(BRAVA, CHISPA, null, CHISPA))?.reason).toBe(NOT_BACKED);
+    expect(reject("Te comí, Brava. Aunque voy perdiendo.", at(CHISPA, BRAVA, BRAVA, null))?.reason).toBe(NOT_BACKED);
+    expect(reject("¡Te comí, Chispa! Voy ganando.", at(BRAVA, CHISPA, undefined, undefined))?.reason).toBe(NOT_BACKED);
+  });
+
+  it("afirmaciones sobre el rival, con su posición real", () => {
+    expect(reject("¡Te comí, Chispa! Y vas perdiendo.", at(BRAVA, CHISPA, BRAVA, CHISPA))).toBeNull();
+    expect(reject("¡Te comí, Chispa! Y vas perdiendo.", at(BRAVA, CHISPA, BRAVA, PILAR))?.reason).toBe(NOT_BACKED);
+    expect(reject("¡Te comí, Chispa! Te has quedado muy atrás.", at(BRAVA, CHISPA, BRAVA, CHISPA))).toBeNull();
+    expect(reject("¡Te comí, Chispa! Te has quedado muy atrás.", at(BRAVA, CHISPA, BRAVA, null))?.reason).toBe(NOT_BACKED);
+  });
+
+  it("lo que nunca se respalda sigue rechazado, aunque la posición sea cierta", () => {
+    for (const text of ["¡Te comí, Chispa! Voy primera.", "¡Te comí, Chispa! Voy en cabeza.", "¡Te comí, Chispa! Voy delante.", "¡Te comí, Chispa! Vas el último.", "¡Te comí, Chispa! Voy por detrás de ti."]) {
+      expect(reject(text, at(BRAVA, CHISPA, BRAVA, CHISPA)), text).not.toBeNull();
     }
   });
 });

@@ -429,6 +429,23 @@ export function gameLeader(state: GameState): PlayerId | null {
 }
 
 /**
+ * Quién va perdiendo según los datos reales: el último en solitario por progreso entre quienes siguen
+ * jugando (quien ya ha terminado va por delante de todos ellos), o `null` si no se puede saber: partida
+ * terminada, menos de dos jugadores sin terminar, empate en el último puesto o todos empatados. Es el mismo
+ * criterio que el «último en solitario» de `ambientCandidates`. A diferencia de `gameLeader`, sigue
+ * valiendo tras la primera victoria: el último lo es de la partida entera.
+ */
+export function gameLast(state: GameState): PlayerId | null {
+  if (state.status !== "playing") return null;
+  const players = getPlayerSummaries(state).filter((p) => !state.ranking.includes(p.id));
+  if (players.length < 2) return null;
+  const max = Math.max(...players.map((p) => p.progress));
+  const min = Math.min(...players.map((p) => p.progress));
+  const atMin = players.filter((p) => p.progress === min);
+  return atMin.length === 1 && max !== min ? atMin[0].id : null;
+}
+
+/**
  * Candidatos del comentario de ambiente. La clasificación usa el progreso real y es independiente del
  * orden de los jugadores (un empate no favorece a nadie):
  * - Primero en solitario (progreso estrictamente mayor que el de todos): `ambient_lead`, el único tipo

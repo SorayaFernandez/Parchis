@@ -11,6 +11,7 @@ import type { ChatTrigger } from "../schemas";
 import type { CompleteCaptureFacts, StreakFacts, StreakState } from "../director";
 import type { ChatWriteRequest } from "../writer";
 import { detectCatchphrases, normalizeText } from "../catchphrases";
+import { unbackedPositionClaim } from "../positionClaims";
 
 export interface QualityIssue {
   reason: QualityReason;
@@ -211,25 +212,19 @@ function gameTerm(t: string): string | null {
 const STREAK_TRIGGERS: ReadonlySet<ChatTrigger> = new Set(["capture_streak", "bad_streak"]);
 
 /**
- * «Voy ganando» (o «vas/va ganando», dicho del rival) solo es cierto si los datos reales lo respaldan: quien
- * lo dice (o el rival) es `request.leader`, el primero en solitario por progreso mientras nadie ha
- * terminado (el mismo criterio que `ambient_lead`). Sin ese dato, nunca. No basta con capturar, sacar un
- * seis o avanzar. El resto de afirmaciones de posición («voy primero», «vas el último»…) sigue rechazado.
+ * Afirmaciones sobre la marcha de la partida que nunca se respaldan. «Voy ganando», «voy perdiendo» y sus
+ * equivalentes (también dichos del rival) no están aquí: se comprueban con la clasificación real en
+ * `unbackedPositionClaim` (`positionClaims.ts`).
  */
-function leadClaimBacked(claim: string, request: ChatWriteRequest): boolean {
-  const m = /^(voy|vas|va)\s+ganando$/u.exec(claim);
-  if (!m || !request.leader) return false;
-  return m[1] === "voy" ? request.leader === request.utterance.speaker : request.leader === request.utterance.rival;
-}
-
-/** Afirmaciones sobre la marcha de la partida que la intervención no respalda. */
 const STATE_CLAIMS: readonly RegExp[] = [
   // Eliminación (en el parchís nadie queda «fuera»).
   /(?<![\p{L}])(?:estas|esta|estais|estan|quedas|queda|quedais)\s+(?:ya\s+)?(?:casi\s+)?(?:fuera|eliminad[oa]s?)(?![\p{L}])/u,
   /(?<![\p{L}])(?:casi\s+fuera|fuera\s+de\s+la\s+partida|eliminad[oa]s?)(?![\p{L}])/u,
   // Posición en la partida («voy ganando», «vas el último», «eres el último»), pero no «es la primera
   // vez» ni «va la primera ficha».
-  /(?<![\p{L}])(?:vas|va|voy|vais|van|vamos)\s+(?:el\s+|la\s+)?(?:ultim[oa]|primer[oa]|ganando|perdiendo|en\s+cabeza|(?:por\s+)?delante|por\s+detras|a\s+la\s+cola)(?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada|en\s+\p{L}+))/u,
+  /(?<![\p{L}])(?:vas|va|voy|vais|van|vamos)\s+(?:el\s+|la\s+)?(?:ultim[oa]|primer[oa]|en\s+cabeza|(?:por\s+)?delante|a\s+la\s+cola)(?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada|en\s+\p{L}+))/u,
+  // «Por detrás de alguien» es relativo: no se puede comprobar con la clasificación.
+  /(?<![\p{L}])(?:vas|va|voy|vais|van|vamos|estoy|estas|esta)\s+(?:muy\s+)?por\s+detras\s+de(?![\p{L}])/u,
   /(?<![\p{L}])(?:eres|es|soy|sois)\s+(?:el|la)\s+ultim[oa](?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada|en\s+\p{L}+))/u,
   /(?<![\p{L}])(?:farolillo\s+rojo|en\s+cabeza|a\s+punto\s+de\s+(?:ganar|perder|terminar|acabar))(?![\p{L}])/u,
 ];
@@ -273,10 +268,12 @@ function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | 
     if (term) return { reason: "afirmación no respaldada", term };
   }
   for (const re of STATE_CLAIMS) {
-    for (const match of t.matchAll(new RegExp(re.source, `${re.flags}g`))) {
-      if (!leadClaimBacked(match[0], request)) return { reason: "afirmación no respaldada", term: match[0].replace(/\s+/g, " ") };
-    }
+    const match = re.exec(t);
+    if (match) return { reason: "afirmación no respaldada", term: match[0].replace(/\s+/g, " ") };
   }
+  // «Voy ganando», «voy perdiendo» y equivalentes, también del rival: solo con la clasificación real.
+  const position = unbackedPositionClaim(text, request);
+  if (position) return { reason: "afirmación no respaldada", term: position };
   const result = RESULT_CLAIM.exec(t);
   if (result && request.utterance.trigger !== "victory") return { reason: "afirmación no respaldada", term: result[0].replace(/\s+/g, " ") };
   return null;
@@ -1029,7 +1026,7 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "aún tengo hambre", re: /(?<![\p{L}])(?:(?:aun|todavia)\s+(?:tengo|me\s+queda|me\s+quedo\s+con)\s+hambre|sigo\s+con\s+hambre)(?![\p{L}])/u },
   // Expresiones retiradas: «¡Me la he quedado!» (y «me la quedo», «quedármela», «me quedo con tu ficha»)
   // para celebrar una captura, «contratiempo» («Un pequeño contratiempo») y «en cabeza» («voy en cabeza»,
-  // «va en cabeza»): para decir que va ganando, «voy ganando», y solo con respaldo (ver `leadClaimBacked`).
+  // «va en cabeza»): para decir que va ganando, «voy ganando», y solo con respaldo (ver `positionClaims.ts`).
   {
     term: "me la he quedado",
     re: /(?<![\p{L}])(?:(?:me|nos)\s+(?:la|las)\s+(?:(?:he|hemos|habia)\s+)?qued(?:o|e|ado|amos|ao)|quedarmela?s?|quedarnosla?s?|me\s+quedo\s+con\s+(?:tu|su|vuestra|esa|la)\s+ficha)(?![\p{L}])/u,
@@ -1159,6 +1156,14 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "explicación táctica",
     re: /(?<![\p{L}])(?:(?:dej\p{L}*|tenia|tenias|estaba|estaban)\s+(?:(?:esa|la|tu|su|mi|una)\s+)?ficha\s+(?:sola|sin\s+(?:cubrir|proteger|proteccion)|desprotegida|expuesta|al\s+descubierto)|(?:la\s+)?unica\s+que\s+(?:tenia|tenias|tenia\s+usted)\s+a\s+salvo)(?![\p{L}])/u,
   },
+  // Revisión de los mensajes reales de Preview: «{rival} sigue perdido/a» (se dice «va perdiendo»), «No volverá a
+  // ocurrir» y «Tengo que esperar mi turno», con sus variantes equivalentes.
+  { term: "sigue perdido", re: /(?<![\p{L}])(?:sigue|sigues|sigo|esta|estas|estoy|anda|andas|ando)\s+(?:muy\s+|un\s+poco\s+|bastante\s+|ya\s+)?perdid[oa]s?(?![\p{L}])/u },
+  {
+    term: "no volverá a ocurrir",
+    re: /(?<![\p{L}])(?:no\s+(?:volvera|va\s+a\s+volver|vuelve)\s+a\s+(?:ocurrir|pasar|suceder)|no\s+se\s+(?:repetira|va\s+a\s+repetir)|no\s+(?:ocurrira|pasara|sucedera)\s+mas)(?![\p{L}])/u,
+  },
+  { term: "esperar mi turno", re: /(?<![\p{L}])esper\p{L}*\s+(?:a\s+)?(?:mi|el)\s+turno(?![\p{L}])/u },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
@@ -1211,7 +1216,48 @@ const ORDINAL_GOAL = new RegExp(
  * ordinal sin respaldo (`afirmación no respaldada`). Va la última del conjunto: no cambia el motivo de
  * ningún rechazo anterior.
  */
+// ── Tratamiento según quien habla ──────────────────────────────────────────────────────────────────
+
+const CHISPA_ID = "ai-blue";
+const BRAVA_ID = "ai-pink";
+const SEÑORES = /(?<![\p{L}])señores(?![\p{L}])/u;
+const HIJOS = /(?<![\p{L}])hijos(?![\p{L}])/u;
+/** Segunda persona del singular (sin tildes): «hijos» dicho a una sola persona («Ay, hijos, me has comido»). */
+const SINGULAR_YOU = /(?<![\p{L}])(?:tu|te|ti|contigo|has|eres|estas|tienes|vas|llevas|pierdes|sacas|tiras|comes|pillas|comiste|pillaste|sacaste|tiraste|ganaste)(?![\p{L}])/u;
+const BRAVA_LOST_ONE = /me\s+has\s+comido\s+una\s+ficha/iu;
+
+/**
+ * Tratamiento:
+ * - «señores», para dirigirse a todos, es exclusivo de Chispa (y solo de vez en cuando: no está en su catálogo).
+ * - Abuela Pilar dice «hijos» al grupo, nunca a una sola persona: en la misma frase no puede haber marcas de
+ *   segunda persona del singular (a uno solo le dice «cariño», que no se comprueba aquí).
+ * - Brava dice «¡Me has comido una ficha!» con exclamaciones (la frase va entre «¡» y «!»).
+ */
+function checkAddress(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const t = normalize(text);
+  const speaker = request.utterance.speaker;
+  if (speaker !== CHISPA_ID && SEÑORES.test(t)) return { reason: "expresión poco natural", term: "señores (solo Chispa)" };
+  if (speaker === PILAR_ID) {
+    for (const sentence of t.split(/[.!?…]+/u)) {
+      if (HIJOS.test(sentence) && SINGULAR_YOU.test(sentence)) return { reason: "expresión poco natural", term: "hijos a una sola persona" };
+    }
+  }
+  if (speaker === BRAVA_ID) {
+    const match = BRAVA_LOST_ONE.exec(text);
+    if (match) {
+      const before = text.slice(0, match.index);
+      const start = Math.max(before.lastIndexOf("."), before.lastIndexOf("!"), before.lastIndexOf("?"), before.lastIndexOf("…"));
+      const opened = before.slice(start + 1).includes("¡");
+      const closed = /^[^.?…!]*!/u.test(text.slice(match.index + match[0].length));
+      if (!opened || !closed) return { reason: "expresión poco natural", term: "sin exclamaciones (Brava)" };
+    }
+  }
+  return null;
+}
+
 function checkNaturalness(text: string, request: ChatWriteRequest): QualityIssue | null {
+  const address = checkAddress(text, request);
+  if (address) return address;
   const t = normalize(text);
   if (DICE_REQUEST.some((re) => re.test(t))) return { reason: "expresión poco natural", term: "petición al dado" };
   if (DICE_REFLEXIVE.test(t)) return { reason: "expresión poco natural", term: "tirarse un número" };
