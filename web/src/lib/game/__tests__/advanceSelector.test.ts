@@ -6,7 +6,7 @@ import { setup } from "@/lib/engine/__tests__/helpers";
 import { advanceGame, type AdvanceDeps } from "../advance";
 import { CHARACTER_IDS } from "../characters";
 import { MOVES_LLM } from "../moveSelector/config";
-import type { MoveFallbackReason } from "../moveSelector/decide";
+import { decideActionWithSelector, type MoveFallbackReason } from "../moveSelector/decide";
 import { createMoveBreaker, createMoveSelector, MoveLlmError, type MoveBreaker, type MoveSelector } from "../moveSelector/gateway";
 import type { MoveQuota } from "../moveSelector/quota";
 import { LEASE_MS, createMemoryRepository } from "./memoryRepository";
@@ -343,5 +343,101 @@ describe("F3: partidas completas", () => {
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((s) => s.legal >= 2 && (s.dice !== null || s.bonus))).toBe(true);
     expect(actions.length).toBeGreaterThan(100);
+  });
+});
+
+describe("origen de cada decisión (`source` de decideActionWithSelector)", () => {
+  const allowed = async () => ({ kind: "allowed" as const, used: 1 });
+  const decide = (state: GameState, selector: MoveSelector | undefined, onFallback?: (r: MoveFallbackReason) => void) =>
+    decideActionWithSelector(state, { rollDie: () => 4, selector, consumeQuota: allowed, onFallback });
+
+  it("«llm» solo cuando se aplica la opción que eligió el modelo, que es una de las legales", async () => {
+    const { selector, calls } = realSelector(() => answer('{"choice":"B"}'));
+    const state = twoOptions();
+    const decided = await decide(state, selector);
+    expect(decided).toMatchObject({ source: "llm", action: { type: "move", playerId: BRAVA, pieceIndex: 1 } });
+    // Consultó al modelo: duración medida y sin motivo (no hubo estrategia local).
+    expect(decided.consulted?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(decided.consulted?.reason).toBeUndefined();
+    expect(getAvailableMoves(state)).toContain(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("«local» ante respuestas inválidas, errores y cuando no hay nada que elegir, sin aplicar nunca lo que dijo el modelo", async () => {
+    for (const respond of [() => answer('{"choice":"Z"}'), () => answer("B"), () => answer('```json\n{"choice":"B"}\n```'), () => new Response("", { status: 500 }), () => "network" as const]) {
+      const { selector } = realSelector(respond);
+      const fallbacks: MoveFallbackReason[] = [];
+      const state = twoOptions();
+      const decided = await decide(state, selector, (r) => fallbacks.push(r));
+      expect(decided.source).toBe("local");
+      expect(decided.action).toEqual({ type: "move", playerId: BRAVA, pieceIndex: localPiece(state) });
+      expect(fallbacks).toEqual(["fallo del selector"]);
+    }
+    // Una sola opción, una tirada o sin selector: estrategia local sin consultar.
+    const { selector, calls } = realSelector(() => answer('{"choice":"A"}'));
+    expect((await decide(oneOption(), selector)).source).toBe("local");
+    expect((await decide({ ...twoOptions(), dice: null }, selector)).source).toBe("local");
+    expect((await decide(twoOptions(), undefined)).source).toBe("local");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("trazabilidad de los movimientos (onMoveTrace)", () => {
+  type Trace = Parameters<NonNullable<AdvanceDeps["onMoveTrace"]>>[0];
+
+  it("una consulta que sale bien: origen llm, duración y guardada; la partida es la misma que sin trazas", async () => {
+    const traces: Trace[] = [];
+    const { selector } = realSelector(() => answer('{"choice":"B"}'));
+    const a = await newGame(twoOptions());
+    const b = await newGame(twoOptions());
+    const traced = await advanceGame(a.id, 1, deps(a.repository, { moveSelector: selector, onMoveTrace: (t) => traces.push(t) }));
+    const plain = await advanceGame(b.id, 1, deps(b.repository, { moveSelector: realSelector(() => answer('{"choice":"B"}')).selector }));
+    expect(traces).toEqual([{ source: "llm", durationMs: expect.any(Number), saved: true }]);
+    expect(traced).toMatchObject({ kind: "advanced", action: { pieceIndex: 1 } });
+    expect(traced.kind === "advanced" && plain.kind === "advanced" && traced.game.state).toEqual(plain.kind === "advanced" && plain.game.state);
+  });
+
+  it("una consulta que falla: origen local con el motivo fijo (sin el texto del modelo)", async () => {
+    const traces: Trace[] = [];
+    const { selector } = realSelector(() => answer('{"choice":"Z"} secreto'));
+    const { repository, id } = await newGame(twoOptions());
+    await advanceGame(id, 1, deps(repository, { moveSelector: selector, onMoveTrace: (t) => traces.push(t) }));
+    expect(traces).toEqual([{ source: "local", durationMs: expect.any(Number), reason: "fallo del selector: no es solo un objeto JSON", saved: true }]);
+    expect(JSON.stringify(traces)).not.toContain("secreto");
+  });
+
+  it("sin consulta al modelo (una opción, tirada, sin selector o cupo agotado), no hay traza", async () => {
+    const traces: Trace[] = [];
+    const onMoveTrace = (t: Trace) => traces.push(t);
+    const { selector } = realSelector(() => answer('{"choice":"A"}'));
+    for (const state of [oneOption(), { ...twoOptions(), dice: null }]) {
+      const { repository, id } = await newGame(state);
+      await advanceGame(id, 1, deps(repository, { moveSelector: selector, onMoveTrace }));
+    }
+    const g = await newGame(twoOptions());
+    await advanceGame(g.id, 1, deps(g.repository, { onMoveTrace }));
+    const q = await newGame(twoOptions());
+    await advanceGame(q.id, 1, deps(q.repository, { moveSelector: selector, onMoveTrace, moveQuota: { tryConsume: async () => ({ kind: "exhausted" }) } }));
+    expect(traces).toEqual([]);
+  });
+
+  it("si la reserva caduca mientras responde el modelo, la traza dice que no se guardó", async () => {
+    const traces: Trace[] = [];
+    const { repository, id, clock } = await newGame(twoOptions());
+    const slow: MoveSelector = {
+      select: async (_s, decision) => {
+        clock.now += LEASE_MS + 1;
+        return { ok: true, id: decision.options[1].id, pieceIndex: decision.options[1].pieceIndex };
+      },
+    };
+    expect(await advanceGame(id, 1, deps(repository, { moveSelector: slow, onMoveTrace: (t) => traces.push(t) }))).toEqual({ kind: "lease_expired" });
+    expect(traces).toEqual([{ source: "llm", durationMs: expect.any(Number), saved: false }]);
+  });
+
+  it("una traza que lanza no cambia el resultado del avance", async () => {
+    const { selector } = realSelector(() => answer('{"choice":"B"}'));
+    const { repository, id } = await newGame(twoOptions());
+    const result = await advanceGame(id, 1, deps(repository, { moveSelector: selector, onMoveTrace: () => { throw new Error("traza rota"); } }));
+    expect(result).toMatchObject({ kind: "advanced", action: { pieceIndex: 1 } });
   });
 });

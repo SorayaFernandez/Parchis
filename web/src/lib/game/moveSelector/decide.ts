@@ -65,6 +65,11 @@ export interface DecidedAction {
   action: GameAction;
   /** `llm`: la ficha la eligió el selector; `local`: la estrategia local (o no había nada que elegir). */
   source: "llm" | "local";
+  /**
+   * Solo si se llegó a consultar al modelo (para la trazabilidad, sin efecto en la decisión): cuánto tardó y,
+   * si al final se usó la estrategia local, el motivo (fijo; con el del selector si falló).
+   */
+  consulted?: { durationMs: number; reason?: string };
 }
 
 export async function decideActionWithSelector(state: GameState, deps: DecideWithSelectorDeps): Promise<DecidedAction> {
@@ -105,10 +110,12 @@ export async function decideActionWithSelector(state: GameState, deps: DecideWit
   if (!decision || decision.options.length < 2) return local();
 
   let selection: Awaited<ReturnType<MoveSelector["select"]>>;
+  const started = performance.now();
+  const consulted = (reason?: string) => ({ durationMs: performance.now() - started, ...(reason ? { reason } : {}) });
   try {
     selection = await deps.selector.select(state, decision, { signal: deps.signal });
   } catch {
-    return fallback("excepción del selector");
+    return { ...fallback("excepción del selector"), consulted: consulted("excepción del selector") };
   }
   if (!selection.ok) {
     // El proveedor no la atendió (429): se devuelve la consulta de la partida, una sola vez. El hueco de la
@@ -120,16 +127,16 @@ export async function decideActionWithSelector(state: GameState, deps: DecideWit
         // Nunca impide avanzar.
       }
     }
-    return fallback("fallo del selector");
+    return { ...fallback("fallo del selector"), consulted: consulted(`fallo del selector: ${selection.error.message}`) };
   }
 
   // La elección debe ser exactamente una opción de ESTA decisión (identificador y ficha juntos).
   const option = decision.options.find((o) => o.id === selection.id && o.pieceIndex === selection.pieceIndex);
-  if (!option) return fallback("opción no válida");
+  if (!option) return { ...fallback("opción no válida"), consulted: consulted("opción no válida") };
 
   // Y seguir siendo legal en el estado reservado: el motor tiene la última palabra.
-  if (!getAvailableMoves(state).includes(option.pieceIndex)) return fallback("movimiento ilegal");
+  if (!getAvailableMoves(state).includes(option.pieceIndex)) return { ...fallback("movimiento ilegal"), consulted: consulted("movimiento ilegal") };
   const action: GameAction = { type: "move", playerId: state.turn, pieceIndex: option.pieceIndex };
-  if (!applyAction(state, action).ok) return fallback("movimiento ilegal");
-  return { action, source: "llm" };
+  if (!applyAction(state, action).ok) return { ...fallback("movimiento ilegal"), consulted: consulted("movimiento ilegal") };
+  return { action, source: "llm", consulted: consulted() };
 }

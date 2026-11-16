@@ -9,6 +9,7 @@ import "server-only";
 import { randomInt, randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { getGatewayLimiter } from "@/lib/llm/gatewayLimiter";
+import { logLlmTrace } from "@/lib/llm/trace";
 import { readChatLlmConfig } from "./llm/env";
 import { createGatewayWriter, createImportantOnlyWriter, createLlmBreaker } from "./llm/gatewayWriter";
 import { logChatError } from "./log";
@@ -54,6 +55,8 @@ export function chatWriters(env: Readonly<Record<string, string | undefined>> = 
     },
     // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
     onRateLimited: (durationMs) => limiter.reportRateLimited(durationMs),
+    // Una línea por petición real al modelo (origen, modelo, duración y motivo). Sin el texto.
+    onTrace: (trace) => logLlmTrace({ operation: "chat", model: config.model, ...trace }),
   });
   return { writer: createImportantOnlyWriter(llm, local), fallbackWriter: local };
 }

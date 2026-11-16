@@ -89,6 +89,12 @@ export interface GatewayWriterDeps {
   acquire?: () => Promise<ChatAcquireOutcome>;
   /** Tras un 429, con la duración del corte: activa el bloqueo global compartido. No reintenta. */
   onRateLimited?: (durationMs: number) => void | Promise<void>;
+  /**
+   * Trazabilidad: solo cuando la petición llega a enviarse. `llm` si el texto del modelo pasa todas las
+   * validaciones; `local` (con el motivo fijo del rechazo o del fallo) si el servicio usará la frase local.
+   * Nunca recibe el texto del modelo ni el prompt, y no cambia lo que devuelve el escritor.
+   */
+  onTrace?: (trace: { source: "llm" | "local"; durationMs: number; reason?: string }) => void;
 }
 
 /** `Retry-After` en segundos (entero) → ms, acotado; `null` si falta o no es válido. */
@@ -400,13 +406,24 @@ export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
 
 export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
   const now = deps.now ?? Date.now;
-  const fail = (error: ChatLlmError): never => {
-    deps.onFailure?.(error);
-    throw error;
+  /** La trazabilidad nunca cambia el resultado del escritor. */
+  const trace = (t: Parameters<NonNullable<GatewayWriterDeps["onTrace"]>>[0]) => {
+    try {
+      deps.onTrace?.(t);
+    } catch {
+      // Sin efecto en el chat.
+    }
   };
 
   return {
     async write(request: ChatWriteRequest): Promise<WrittenText | null> {
+      /** Instante en que se envía la petición (solo entonces hay algo que trazar). */
+      let started: number | null = null;
+      const fail = (error: ChatLlmError): never => {
+        if (started !== null) trace({ source: "local", durationMs: now() - started, reason: error.message });
+        deps.onFailure?.(error);
+        throw error;
+      };
       if (now() < deps.breaker.blockedUntil) fail(new ChatLlmError("cooldown", COOLDOWN_REASONS.local));
 
       // Respeta la cancelación del servicio y, además, su propio `timeoutMs`.
@@ -436,6 +453,7 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       }
 
       let response: Response;
+      started = now();
       try {
         response = await deps.fetch(CHAT_LLM.endpoint, {
           method: "POST",
@@ -474,7 +492,9 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
         if (choice?.finish_reason === "length" && typeof content === "string" && content.trim() !== "") {
           throw new ChatLlmError("invalid_response", "respuesta truncada");
         }
-        return { text: cleanLlmText(content, request), source: "llm" };
+        const text = cleanLlmText(content, request);
+        trace({ source: "llm", durationMs: now() - started });
+        return { text, source: "llm" };
       } catch (error) {
         // Mismo error, con un resumen solo estructural de la respuesta (nunca su texto) para el registro.
         const base = error instanceof ChatLlmError ? error : new ChatLlmError("invalid_response", "respuesta no válida");

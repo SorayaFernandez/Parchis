@@ -7,12 +7,13 @@ import { randomInt, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { isChatCandidate } from "@/lib/chat/director";
 import { scheduleDrain } from "@/lib/chat/schedule";
-import { EngineRejectedActionError, advanceGame } from "@/lib/game/advance";
+import { EngineRejectedActionError, advanceGame, type AdvanceDeps } from "@/lib/game/advance";
 import { readMoveLlmConfig } from "@/lib/game/moveSelector/env";
 import { createMoveBreaker, createMoveSelector, type MoveSelector } from "@/lib/game/moveSelector/gateway";
 import { logMoveError } from "@/lib/game/moveSelector/log";
 import { createLimitedMoveQuota, type MoveQuota } from "@/lib/game/moveSelector/quota";
 import { getGatewayLimiter } from "@/lib/llm/gatewayLimiter";
+import { logLlmTrace } from "@/lib/llm/trace";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
 import { guardAdvance } from "@/lib/security/guards";
@@ -31,7 +32,7 @@ const moveBreaker = createMoveBreaker();
  * sin selector: se usa la estrategia local como siempre. Un error de configuración se registra sin
  * valores (como mucho una vez por minuto); `off` es lo normal.
  */
-function moveSelectorFromEnv(): { moveSelector?: MoveSelector; moveQuota?: MoveQuota } {
+function moveSelectorFromEnv(): { moveSelector?: MoveSelector; moveQuota?: MoveQuota; onMoveTrace?: AdvanceDeps["onMoveTrace"] } {
   const config = readMoveLlmConfig(process.env);
   if (!config.enabled) {
     if (config.reason !== "off") logMoveError("configuración", Object.assign(new Error(config.reason), { name: `configuración ${config.reason}` }));
@@ -52,7 +53,9 @@ function moveSelectorFromEnv(): { moveSelector?: MoveSelector; moveQuota?: MoveQ
     // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
     onRateLimited: (durationMs) => limiter.reportRateLimited(durationMs),
   });
-  return { moveSelector, moveQuota };
+  // Una línea por consulta real al modelo (origen, modelo, duración, motivo y si se guardó). Sin contenido.
+  const onMoveTrace: AdvanceDeps["onMoveTrace"] = (trace) => logLlmTrace({ operation: "movimiento", model: config.model, ...trace });
+  return { moveSelector, moveQuota, onMoveTrace };
 }
 
 async function readBody(request: Request) {
