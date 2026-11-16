@@ -75,14 +75,14 @@ describe("personalidades y frases locales", () => {
 });
 
 describe("concordancia de la frase de ambiente de Chispa (C)", () => {
-  it("«{rival} va a toda máquina» funciona con los cuatro nombres y ya no hay «va lanzado»", () => {
+  it("«{rival} va muy rápido» funciona con los cuatro nombres y ya no hay «va lanzado» ni «a toda máquina»", () => {
     const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
-    const template = "{rival} va a toda máquina. Pero esto no ha acabado.";
+    const template = "{rival} va muy rápido. Pero esto no ha acabado.";
     expect(chispa.chat.lines.ambient_behind).toContain(template);
-    expect(CHARACTERS.flatMap((c) => Object.values(c.chat.lines).flat()).some((l) => /lanzad[oa]/.test(l))).toBe(false);
+    expect(CHARACTERS.flatMap((c) => Object.values(c.chat.lines).flat()).some((l) => /lanzad[oa]|toda máquina/.test(l))).toBe(false);
     for (const rival of CHARACTERS) {
       const u = { speaker: "ai-blue", kind: "ambient_behind", rival: rival.id, trigger: "ambient", replyTo: null, important: false } as Utterance;
-      expect(renderLine(template, u)).toBe(`${CHARACTER_NAMES[rival.id]} va a toda máquina. Pero esto no ha acabado.`);
+      expect(renderLine(template, u)).toBe(`${CHARACTER_NAMES[rival.id]} va muy rápido. Pero esto no ha acabado.`);
     }
   });
 });
@@ -318,10 +318,12 @@ describe("frases locales: comentarios de cuatro personas en la mesa, sin jerga n
     }
   });
 
-  it("Chispa sigue siendo espontáneo y supersticioso con el dado (no un comentarista)", () => {
+  it("Chispa sigue siendo espontáneo (no un comentarista), con algo de suerte y sin supersticiones gratuitas", () => {
     const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
     const all = Object.values(chispa.chat.lines).flat();
-    expect(all.filter((l) => /dado|suerte|amuleto|mal de ojo|gafe|madera|horóscopo|calcetines/i.test(l)).length).toBeGreaterThanOrEqual(8);
+    expect(all.filter((l) => /¡/.test(l)).length / all.length).toBeGreaterThan(0.5);
+    expect(all.filter((l) => /suerte|gafe|mala pata/i.test(l)).length).toBeGreaterThanOrEqual(4);
+    for (const l of all) expect(l).not.toMatch(/amuleto|mal de ojo|horóscopo|calcetines|madera/i);
     expect(`${chispa.personality} ${chispa.chat.register} ${chispa.chat.voice}`).not.toMatch(/comentarista|racha|teatral/i);
   });
 });

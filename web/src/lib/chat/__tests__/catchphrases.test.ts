@@ -13,7 +13,7 @@ describe("detección de coletillas (compartida por el director, el escritor loca
 
   it("variantes al inicio de una frase cuentan; dentro de otra frase, no", () => {
     expect(detectCatchphrases(BRAVA, "¡A casa con eso, Chispa!")).toEqual([0]);
-    expect(detectCatchphrases(BRAVA, "¡A casa, Don Ernesto! ¿Quién es el siguiente?")).toEqual([0, 1]);
+    expect(detectCatchphrases(BRAVA, "¡A casa, Don Ernesto! Voy a por ti.")).toEqual([0, 1]);
     expect(detectCatchphrases(BRAVA, "Vuelve a casa, Chispa.")).toEqual([]);
     expect(detectCatchphrases(BRAVA, "Esa ficha va a casa, Chispa.")).toEqual([]);
     expect(detectCatchphrases(PILAR, "Despacito y buena letra, hijito, que la paciencia gana.")).toEqual([0]);
