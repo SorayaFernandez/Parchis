@@ -1667,7 +1667,7 @@ describe("dirección de las capturas, el propio nombre y expresiones retiradas (
 
   it("fuera de las capturas no hay dirección que comprobar", () => {
     const goal = say("ai-pink", null, { kind: "goal", trigger: "goal", important: false });
-    expect(checkQuality("¡Otra en la meta! Esto marcha.", goal)).toBeNull();
+    expect(checkQuality("¡Otra en la meta! Esto marcha bien.", goal)).toBeNull();
   });
 
   it("«Sigo aquí, y con ganas.» y «¡Dentro! Y sin pedir permiso.»: fuera del catálogo, rechazadas y sin citarse", () => {

@@ -41,19 +41,23 @@ describe("readChatLlmConfig", () => {
     expect(readChatLlmConfig({ NEXT_PUBLIC_AI_GATEWAY_API_KEY: KEY })).toEqual({ enabled: false, reason: "public_secret" });
   });
 
-  it("en Vercel solo se activa en Preview", () => {
-    expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: "preview" })).toMatchObject({ enabled: true, model: MODEL });
-    expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: "preview", CHAT_LLM_PROVIDER: "nvidia" })).toMatchObject({ enabled: true, provider: "nvidia" });
+  it("en Vercel se activa en Preview y en Production, con el mismo modelo gratuito", () => {
+    for (const value of ["preview", "production"]) {
+      expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: value }), value).toMatchObject({ enabled: true, model: MODEL });
+      expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: value, CHAT_LLM_PROVIDER: "nvidia" }), value).toMatchObject({ enabled: true, provider: "nvidia" });
+      // El modelo sigue siendo el único permitido también en Production.
+      expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: value, CHAT_LLM_MODEL: "openai/gpt-5" }), value).toEqual({ enabled: false, reason: "model_not_allowed" });
+    }
   });
 
-  it("en Vercel Production, Development u otro valor queda desactivado", () => {
-    for (const value of ["production", "development", "Preview", " preview", "staging", ""]) {
-      expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: value })).toEqual({ enabled: false, reason: "not_preview" });
+  it("en Vercel Development u otro valor queda desactivado", () => {
+    for (const value of ["development", "Preview", " preview", "Production", "production ", "staging", ""]) {
+      expect(readChatLlmConfig({ ...ok, VERCEL: "1", VERCEL_ENV: value }), value).toEqual({ enabled: false, reason: "env_not_allowed" });
     }
   });
 
   it("en Vercel sin VERCEL_ENV queda desactivado (falla cerrado)", () => {
-    expect(readChatLlmConfig({ ...ok, VERCEL: "1" })).toEqual({ enabled: false, reason: "not_preview" });
+    expect(readChatLlmConfig({ ...ok, VERCEL: "1" })).toEqual({ enabled: false, reason: "env_not_allowed" });
   });
 
   it("en Production sin activarlo sigue siendo `off` (no se registra como error)", () => {
@@ -74,7 +78,7 @@ describe("readChatLlmConfig", () => {
   });
 
   it("el resultado de un error nunca contiene la clave", () => {
-    for (const env of [{ ...ok, CHAT_LLM_MODEL: "otro/modelo" }, { ...ok, NEXT_PUBLIC_AI_GATEWAY_API_KEY: KEY }, { ...ok, VERCEL: "1", VERCEL_ENV: "production" }]) {
+    for (const env of [{ ...ok, CHAT_LLM_MODEL: "otro/modelo" }, { ...ok, NEXT_PUBLIC_AI_GATEWAY_API_KEY: KEY }, { ...ok, VERCEL: "1", VERCEL_ENV: "development" }]) {
       expect(JSON.stringify(readChatLlmConfig(env))).not.toContain(KEY);
     }
   });

@@ -9,9 +9,10 @@
 // - CHAT_LLM_PROVIDER (opcional): fija el proveedor (providerOptions.gateway.only) para que
 //   AI Gateway no cambie a otro proveedor del mismo modelo.
 //
-// En Vercel (`VERCEL=1`) solo se activa en Preview (`VERCEL_ENV=preview`): en Production, Development
-// u otro valor, o si falta `VERCEL_ENV`, queda desactivado (falla cerrado). Fuera de Vercel
-// (desarrollo local, pruebas) no se aplica esta restricción.
+// En Vercel (`VERCEL=1`) solo se activa en Preview y Production (`VERCEL_ENV` exactamente `preview` o
+// `production`): en Development u otro valor, o si falta `VERCEL_ENV`, queda desactivado (falla cerrado).
+// Fuera de Vercel (desarrollo local, pruebas) no se aplica esta restricción. En todos los entornos
+// rigen los mismos límites (limitador global de AI Gateway en Upstash, compartido; sin él, todo local).
 
 import { z } from "zod";
 import { CHAT_LLM } from "../config";
@@ -24,14 +25,17 @@ export type ChatLlmConfig =
       enabled: false;
       /**
        * `off`: no se ha activado (lo normal). Los demás son errores de configuración que conviene
-       * registrar (sin valores): activado en Vercel fuera de Preview, faltan datos, modelo no permitido
-       * o clave expuesta al navegador.
+       * registrar (sin valores): activado en un entorno de Vercel no permitido, faltan datos, modelo no
+       * permitido o clave expuesta al navegador.
        */
-      reason: "off" | "not_preview" | "missing_key" | "missing_model" | "model_not_allowed" | "invalid_provider" | "public_secret";
+      reason: "off" | "env_not_allowed" | "missing_key" | "missing_model" | "model_not_allowed" | "invalid_provider" | "public_secret";
     };
 
 /** Variables que jamás deben existir con el prefijo público (llegarían al navegador). */
 const FORBIDDEN_PUBLIC = ["NEXT_PUBLIC_AI_GATEWAY_API_KEY", "NEXT_PUBLIC_CHAT_LLM_API_KEY"];
+
+/** Entornos de Vercel (`VERCEL_ENV`, comparación exacta) en los que puede activarse. */
+export const CHAT_LLM_VERCEL_ENVS: readonly string[] = ["preview", "production"];
 
 const ProviderSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,49}$/);
 
@@ -39,8 +43,8 @@ export function readChatLlmConfig(env: EnvSource): ChatLlmConfig {
   // Una clave con prefijo público es un error grave aunque el LLM esté desactivado.
   if (FORBIDDEN_PUBLIC.some((name) => (env[name] ?? "").trim() !== "")) return { enabled: false, reason: "public_secret" };
   if ((env.CHAT_LLM_ENABLED ?? "").trim().toLowerCase() !== "true") return { enabled: false, reason: "off" };
-  // En Vercel, solo en Preview. Sin VERCEL_ENV (o con cualquier otro valor) no se activa.
-  if (env.VERCEL === "1" && env.VERCEL_ENV !== "preview") return { enabled: false, reason: "not_preview" };
+  // En Vercel, solo en Preview y Production. Sin VERCEL_ENV (o con cualquier otro valor) no se activa.
+  if (env.VERCEL === "1" && !CHAT_LLM_VERCEL_ENVS.includes(env.VERCEL_ENV ?? "")) return { enabled: false, reason: "env_not_allowed" };
 
   const apiKey = (env.AI_GATEWAY_API_KEY ?? "").trim();
   if (apiKey === "") return { enabled: false, reason: "missing_key" };
