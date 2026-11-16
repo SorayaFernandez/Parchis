@@ -48,9 +48,15 @@ describe("web/.env.example: selector de movimientos", () => {
     expect(getGatewayLimiter(previewWithExample)).not.toBeNull();
   });
 
-  it("Production (y Development o local) sigue desactivado aunque estén todas las variables", () => {
-    for (const env of [{ VERCEL_ENV: "production" }, { VERCEL_ENV: "development" }, { VERCEL: undefined, VERCEL_ENV: undefined }]) {
-      expect(readMoveLlmConfig({ ...previewWithExample, ...env }), JSON.stringify(env)).toEqual({ enabled: false, reason: "not_preview" });
+  it("con el ejemplo en Vercel Production, igual que en Preview: selector activo y con cupo", () => {
+    const productionWithExample = { ...previewWithExample, VERCEL_ENV: "production" };
+    expect(readMoveLlmConfig(productionWithExample)).toMatchObject({ enabled: true, model: MOVES_LLM.model, provider: null });
+    expect(getGatewayLimiter(productionWithExample)).not.toBeNull();
+  });
+
+  it("Development o local siguen desactivados aunque estén todas las variables", () => {
+    for (const env of [{ VERCEL_ENV: "development" }, { VERCEL: undefined, VERCEL_ENV: undefined }]) {
+      expect(readMoveLlmConfig({ ...previewWithExample, ...env }), JSON.stringify(env)).toEqual({ enabled: false, reason: "env_not_allowed" });
     }
   });
 
