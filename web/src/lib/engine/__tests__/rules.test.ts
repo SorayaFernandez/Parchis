@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { getBlockades, getDistanceToHomeEntry, getRealBoardPosition, isSafeCell } from "../board";
 import {
+  COLORS,
   FINAL_POSITION,
   FINAL_SECTION_SIZE,
   FINAL_STRETCH_SIZE,
   HOME_ENTRIES,
   HOME_ENTRY_STEPS,
   MAIN_TRACK_SIZE,
+  START_POSITIONS,
 } from "../constants";
 import { applyAction, createGame, getAvailableMoves } from "../engine";
 import { canMovePiece, getLegalMoves } from "../moves";
@@ -84,12 +86,13 @@ describe("salida con 5", () => {
     expect(canMovePiece(state, "pink", 2, 5)).toEqual({ ok: true });
   });
 
-  it("al salir se captura una ficha rival en la salida, aunque sea casilla segura", () => {
+  it("al salir con una sola ficha rival en la salida no se captura: caben las dos", () => {
     const blueSteps = stepsForCell("blue", 39);
     const state = act(setup({ blue: [blueSteps, -1, -1, -1] }), roll("pink", 5));
     const result = run(state, move("pink", 0));
-    expect(eventTypes(result)).toContain("piece_captured");
-    expect(steps(result.state, "blue")[0]).toBe(-1);
+    expect(eventTypes(result)).not.toContain("piece_captured");
+    expect(steps(result.state, "blue")[0]).toBe(blueSteps);
+    expect(steps(result.state, "pink")[0]).toBe(0);
   });
 
   it("al salir sobre una barrera rival se captura solo la ficha que llegó la última", () => {
@@ -105,7 +108,8 @@ describe("salida con 5", () => {
     const b = stepsForCell("blue", 39);
     // pink + green en la salida: al salir se captura una, quedan 2: válido.
     expect(canMovePiece(setup({ pink: [0, -1, -1, -1], green: [g, -1, -1, -1] }), "pink", 1, 5).ok).toBe(true);
-    // dos rivales distintos: se captura uno y quedan 1 + la nueva = 2: válido.
+    // dos rivales distintos: se captura la última llegada y quedan 1 + la nueva = 2: válido.
+    // (Con una sola rival no hay captura: quedan la rival y la nueva = 2, también válido.)
     expect(canMovePiece(setup({ green: [g, -1, -1, -1], blue: [b, -1, -1, -1] }), "pink", 0, 5).ok).toBe(true);
     // pink + dos rivales: quedan 1 + 1 + la nueva = 3: no válido.
     expect(
@@ -330,11 +334,14 @@ describe("salida de casa con 5 (regla definitiva)", () => {
     expect(maxPerCell(result.state)).toBe(2);
   });
 
-  it("una ficha rival: sale y la captura", () => {
+  it("una ficha rival: sale sin capturar y las dos se quedan en la salida (barrera de dos colores)", () => {
     const result = exitWith({ pink: [-1, -1, -1, -1], green: [greenAt39, -1, -1, -1] }, 0);
-    expect(eventTypes(result)).toContain("piece_captured");
-    expect(steps(result.state, "green")[0]).toBe(-1);
+    expect(eventTypes(result)).not.toContain("piece_captured");
+    expect(eventTypes(result)).not.toContain("bonus_granted");
+    expect(steps(result.state, "green")[0]).toBe(greenAt39);
     expect(steps(result.state, "pink")[0]).toBe(0);
+    expect(getBlockades(result.state)).toEqual([{ color: null, cell: 39 }]);
+    expect(maxPerCell(result.state)).toBe(2);
   });
 
   it("una propia y una rival (barrera de dos colores): sale y captura a la rival", () => {
@@ -413,6 +420,102 @@ describe("salida de casa con 5 (regla definitiva)", () => {
     ] as Parameters<typeof setup>[0][]) {
       const result = run(act(setup(pieces), roll("pink", 5)), move("pink", getAvailableMoves(act(setup(pieces), roll("pink", 5)))[0]));
       expect(maxPerCell(result.state)).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+describe("salida de casa con 5: solo se captura si no caben (regresión)", () => {
+  /** Partida con el turno de `color` y un 5 en el dado. */
+  const withFive = (pieces: Parameters<typeof setup>[0], color: (typeof COLORS)[number]) => {
+    const state = setup(pieces);
+    state.turn = color;
+    return act(state, roll(color, 5));
+  };
+  /** Un rival que puede estar en la salida de `color` (su `steps` está en el recorrido). */
+  const rivalAt = (color: (typeof COLORS)[number]) => {
+    const cell = START_POSITIONS[color];
+    for (const rival of COLORS) {
+      if (rival === color) continue;
+      try {
+        return { rival, steps: stepsForCell(rival, cell), cell };
+      } catch {
+        // Ese color no puede estar en esa casilla (ya ha pasado su entrada): se prueba con otro.
+      }
+    }
+    throw new Error(`ningún rival puede estar en la salida de ${color}`);
+  };
+
+  for (const color of COLORS) {
+    it(`${color}: con una sola rival en su salida, sale sin capturar, sin bonus y quedan las dos`, () => {
+      const { rival, steps: rivalSteps, cell } = rivalAt(color);
+      const result = run(withFive({ [rival]: [rivalSteps, -1, -1, -1] }, color), move(color, 0));
+      expect(eventTypes(result)).not.toContain("piece_captured");
+      expect(eventTypes(result)).not.toContain("bonus_granted");
+      expect(steps(result.state, rival)[0]).toBe(rivalSteps);
+      expect(steps(result.state, color)[0]).toBe(0);
+      expect(getBlockades(result.state)).toEqual([{ color: null, cell }]);
+      // El turno sigue como en una salida a una casilla vacía (un 5 no repite tirada).
+      const empty = run(withFive({}, color), move(color, 0));
+      expect(result.state.turn).toBe(empty.state.turn);
+      expect(result.state.pendingBonus).toBeNull();
+    });
+  }
+
+  it("la barrera que forman la ficha salida y la rival bloquea el paso a los demás", () => {
+    const greenAt39 = stepsForCell("green", 39);
+    const result = run(withFive({ green: [greenAt39, -1, -1, -1], purple: [stepsForCell("purple", 37), -1, -1, -1] }, "pink"), move("pink", 0));
+    expect(canMovePiece(result.state, "purple", 0, 4)).toEqual({ ok: false, error: "BLOCKADE_IN_PATH" }); // la atravesaría
+    expect(canMovePiece(result.state, "purple", 0, 2)).toEqual({ ok: false, error: "BLOCKADE_IN_PATH" }); // caería en ella
+  });
+
+  it("con una sola rival no se captura tanto si llegó hace mucho como si acaba de llegar", () => {
+    const greenAt39 = stepsForCell("green", 39);
+    for (const arrivalOrder of [1, 999]) {
+      const state = setup({ pink: [-1, -1, -1, -1], green: [greenAt39, -1, -1, -1] });
+      state.players.find((p) => p.color === "green")!.pieces[0].arrivalOrder = arrivalOrder;
+      state.moveCounter = Math.max(state.moveCounter, arrivalOrder);
+      const result = run(act(state, roll("pink", 5)), move("pink", 0));
+      expect(eventTypes(result)).not.toContain("piece_captured");
+      expect(steps(result.state, "green")[0]).toBe(greenAt39);
+    }
+  });
+
+  it("dos rivales de colores distintos: captura a la última llegada y da el bonus de 20", () => {
+    const state = setup({ green: [stepsForCell("green", 39), -1, -1, -1], blue: [stepsForCell("blue", 39), -1, -1, -1] });
+    const result = run(act(state, roll("pink", 5)), move("pink", 0));
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "piece_captured", victimId: "blue", cell: 39 }));
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "bonus_granted", amount: 20, reason: "capture" }));
+  });
+
+  it("una propia y una rival: captura a la rival y da el bonus de 20", () => {
+    const state = setup({ pink: [0, -1, -1, -1], green: [stepsForCell("green", 39), -1, -1, -1] });
+    const result = run(act(state, roll("pink", 5)), move("pink", 1));
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "piece_captured", victimId: "green", cell: 39 }));
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "bonus_granted", amount: 20, reason: "capture" }));
+    expect(steps(result.state, "pink").slice(0, 2)).toEqual([0, 0]);
+  });
+
+  it("con una sola rival en la salida se mantiene la obligación de sacar ficha", () => {
+    const state = act(setup({ pink: [10, -1, -1, -1], green: [stepsForCell("green", 39), -1, -1, -1] }), roll("pink", 5));
+    expect(getAvailableMoves(state)).toEqual([1, 2, 3]);
+    expect(applyAction(state, move("pink", 0))).toEqual({ ok: false, error: "MUST_EXIT_HOME" });
+  });
+
+  it("canMovePiece da lo mismo que antes para cada ocupación de la salida", () => {
+    const g = stepsForCell("green", 39);
+    const b = stepsForCell("blue", 39);
+    const cases: [Parameters<typeof setup>[0], number, ReturnType<typeof canMovePiece>][] = [
+      [{}, 0, { ok: true }], // vacía
+      [{ pink: [0, -1, -1, -1] }, 1, { ok: true }], // una propia
+      [{ pink: [0, 0, -1, -1] }, 2, { ok: false, error: "OWN_BLOCKADE_ON_EXIT" }], // dos propias
+      [{ green: [g, -1, -1, -1] }, 0, { ok: true }], // una rival
+      [{ green: [g, -1, -1, -1], blue: [b, -1, -1, -1] }, 0, { ok: true }], // dos rivales distintas
+      [{ blue: [b, b, -1, -1] }, 0, { ok: true }], // dos del mismo color rival
+      [{ pink: [0, -1, -1, -1], green: [g, -1, -1, -1] }, 1, { ok: true }], // propia + rival
+      [{ pink: [0, -1, -1, -1], green: [g, -1, -1, -1], blue: [b, -1, -1, -1] }, 1, { ok: false, error: "EXIT_FULL" }], // propia + 2 rivales
+    ];
+    for (const [pieces, index, expected] of cases) {
+      expect(canMovePiece(setup(pieces), "pink", index, 5)).toEqual(expected);
     }
   });
 });
