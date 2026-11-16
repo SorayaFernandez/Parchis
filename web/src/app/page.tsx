@@ -19,11 +19,16 @@ const DEMO_LINK =
 
 /**
  * Textos de ejemplo que la portada muestra de otra forma (solo aquí: el catálogo, el chat y la demo de
- * /tablero no cambian). La réplica de Abuela Pilar a la captura de Chispa se enseña más directa.
+ * /tablero no cambian). La réplica de Abuela Pilar a la captura de Chispa se enseña más directa, y la meta
+ * de Brava (su primera ficha en la meta, v251 de la partida de la demostración) con otra de sus frases de meta.
  */
 const HOME_TEXT: Readonly<Record<string, string>> = {
   "Bueno, Chispa, mi ficha a casita. No hay mal que por bien no venga.": "Ay, Chispa, me has comido la ficha.",
+  "¡Otra en la meta! Esto marcha.": "¡Una dentro! Las demás van detrás.",
 };
+
+/** Personajes de las dos burbujas de la portada, en este orden: Abuela Pilar y Brava. */
+const HOME_SPEAKERS = ["ai-green", "ai-pink"] as const;
 
 const STEPS = [
   { icon: "/ui/dice-5.svg", title: "Pulsa «Nueva partida»", text: "Se prepara un tablero con los cuatro personajes." },
@@ -38,13 +43,11 @@ const STEPS = [
  */
 export default async function Home() {
   const match = await createDemoMatch();
-  // Dos comentarios reales de esa partida, para enseñar el chat: los más recientes de dos personajes distintos.
-  const bubbles = [...match.messages]
-    .reverse()
-    .filter((m, i, all) => all.findIndex((o) => o.characterId === m.characterId) === i)
-    .slice(0, 2)
-    .reverse()
-    .map((m) => ({ ...m, text: HOME_TEXT[m.text] ?? m.text }));
+  // Dos comentarios de esa partida, para enseñar el chat: el más reciente de Abuela Pilar y el de Brava.
+  const bubbles = HOME_SPEAKERS.flatMap((id) => match.messages.findLast((m) => m.characterId === id) ?? []).map((m) => ({
+    ...m,
+    text: HOME_TEXT[m.text] ?? m.text,
+  }));
 
   return (
     <main className="dark relative isolate flex flex-1 flex-col overflow-hidden bg-[#020617] text-slate-100">
