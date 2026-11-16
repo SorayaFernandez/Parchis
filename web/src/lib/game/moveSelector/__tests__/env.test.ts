@@ -25,9 +25,20 @@ describe("readMoveLlmConfig", () => {
     expect(readMoveLlmConfig({ ...PREVIEW, CHAT_LLM_ENABLED: "true", AI_GATEWAY_API_KEY: KEY, CHAT_LLM_MODEL: MOVES_LLM.model })).toEqual({ enabled: false, reason: "off" });
   });
 
-  it("solo en Vercel Preview: Production, Development, otros valores, sin VERCEL_ENV o fuera de Vercel → not_preview", () => {
+  it("en Vercel Production, igual que en Preview: el mismo modelo exacto y las mismas comprobaciones", () => {
+    const production = { ...valid, VERCEL_ENV: "production" };
+    expect(readMoveLlmConfig(production)).toEqual({ enabled: true, apiKey: KEY, model: MOVES_LLM.model, provider: null });
+    expect(readMoveLlmConfig({ ...production, MOVES_LLM_PROVIDER: "nvidia" })).toMatchObject({ enabled: true, provider: "nvidia" });
+    expect(readMoveLlmConfig({ ...production, MOVES_LLM_MODEL: "openai/gpt-4o" })).toEqual({ enabled: false, reason: "model_not_allowed" });
+    expect(readMoveLlmConfig({ ...production, MOVES_LLM_ENABLED: "false" })).toEqual({ enabled: false, reason: "off" });
+    expect(readMoveLlmConfig({ ...production, NEXT_PUBLIC_MOVES_LLM_API_KEY: KEY })).toEqual({ enabled: false, reason: "public_secret" });
+  });
+
+  it("solo en Vercel Preview y Production: Development, otros valores, sin VERCEL_ENV o fuera de Vercel → env_not_allowed", () => {
     for (const env of [
-      { VERCEL: "1", VERCEL_ENV: "production" },
+      { VERCEL: "1", VERCEL_ENV: "Production" },
+      { VERCEL: "1", VERCEL_ENV: "production " },
+      { VERCEL_ENV: "production" },
       { VERCEL: "1", VERCEL_ENV: "development" },
       { VERCEL: "1", VERCEL_ENV: "Preview" },
       { VERCEL: "1", VERCEL_ENV: "preview " },
@@ -37,7 +48,7 @@ describe("readMoveLlmConfig", () => {
     ]) {
       expect(readMoveLlmConfig({ MOVES_LLM_ENABLED: "true", AI_GATEWAY_API_KEY: KEY, MOVES_LLM_MODEL: MOVES_LLM.model, ...env }), JSON.stringify(env)).toEqual({
         enabled: false,
-        reason: "not_preview",
+        reason: "env_not_allowed",
       });
     }
   });
@@ -57,7 +68,7 @@ describe("readMoveLlmConfig", () => {
   });
 
   it("ningún resultado desactivado contiene la clave", () => {
-    for (const env of [{ ...valid, MOVES_LLM_MODEL: "x" }, { ...valid, VERCEL_ENV: "production" }, { ...valid, NEXT_PUBLIC_AI_GATEWAY_API_KEY: KEY }]) {
+    for (const env of [{ ...valid, MOVES_LLM_MODEL: "x" }, { ...valid, VERCEL_ENV: "development" }, { ...valid, NEXT_PUBLIC_AI_GATEWAY_API_KEY: KEY }]) {
       expect(JSON.stringify(readMoveLlmConfig(env))).not.toContain(KEY);
     }
   });
