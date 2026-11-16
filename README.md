@@ -75,7 +75,7 @@ web/
 El motor (`web/src/lib/engine/`) es TypeScript puro: no depende de React, Next.js, la base de datos ni servicios externos, y no usa azar ni temporizadores (el dado lo tira el servidor y se pasa como dato).
 
 - `getAvailableMoves(state)` calcula las jugadas legales del jugador en turno; `applyAction(state, action)` valida y aplica una acción sin modificar el estado de entrada.
-- Reglas implementadas: salir de casa con un 5 (obligatorio si alguna ficha puede salir), como máximo dos fichas por casilla, barreras que nadie puede atravesar, obligación de abrir una barrera propia con un 6, capturas fuera de las casillas seguras con +20, meta con tirada exacta y +10, repetir tirada con un 6 y penalización por tres seises seguidos.
+- Reglas implementadas: salir de casa con un 5 (obligatorio si alguna ficha puede salir; si en la salida hay una sola ficha rival, sale sin capturarla y las dos forman una barrera; solo se captura si no caben), como máximo dos fichas por casilla, barreras que nadie puede atravesar, obligación de abrir una barrera propia con un 6, capturas fuera de las casillas seguras con +20, meta con tirada exacta y +10, repetir tirada con un 6 y penalización por tres seises seguidos.
 - **Ninguna jugada se aplica sin pasar por el motor**: ni las de la IA heurística ni las que elige un modelo de lenguaje.
 
 ## Inteligencia artificial
@@ -83,12 +83,12 @@ El motor (`web/src/lib/engine/`) es TypeScript puro: no depende de React, Next.j
 ### Decisión de las jugadas
 
 - **Siempre disponible:** una IA heurística (`web/src/lib/game/ai.ts`) puntúa cada jugada legal simulándola con el motor y aplica el perfil del personaje.
-- **Selector con LLM (solo en Vercel Preview):** cuando hay dos o más jugadas legales, el modelo recibe las opciones (con identificadores `A`–`D` y sus consecuencias calculadas por el motor) y debe responder solo con `{"choice":"…"}`. El servidor comprueba que la opción existe, que sigue siendo legal y que el motor la acepta. Ante cualquier fallo (tiempo agotado, error, respuesta no válida, límite o cupo agotado) se usa la jugada de la IA heurística.
+- **Selector con LLM (en Vercel Preview y Production, si se configura):** cuando hay dos o más jugadas legales, el modelo recibe las opciones (con identificadores `A`–`D` y sus consecuencias calculadas por el motor) y debe responder solo con `{"choice":"…"}`. El servidor comprueba que la opción existe, que sigue siendo legal y que el motor la acepta. Ante cualquier fallo (tiempo agotado, error, respuesta no válida, límite o cupo agotado) se usa la jugada de la IA heurística.
 
 ### Chat
 
 - **Por defecto, frases locales:** cada personaje tiene su propio catálogo de frases por tipo de acontecimiento.
-- **Con LLM (en Vercel, solo en Preview):** el modelo escribe únicamente las intervenciones importantes (capturas, rachas y victoria). Todo lo demás, y cualquier respuesta rechazada o fallida, usa la frase local.
+- **Con LLM (en Vercel Preview y Production, si se configura; también en local):** el modelo escribe únicamente las intervenciones importantes (capturas, rachas y victoria). Todo lo demás, y cualquier respuesta rechazada o fallida, usa la frase local.
 
 ### Cómo se usa Vercel AI Gateway
 
@@ -96,7 +96,8 @@ El motor (`web/src/lib/engine/`) es TypeScript puro: no depende de React, Next.j
 - Modelo: `nvidia/nemotron-3.5-lightning-free` (la variante gratuita), el único permitido por el código para el chat y para las jugadas.
 - Una petición por intervención o por decisión, sin reintentos, con tiempo máximo (8 s en el chat y 3 s en las jugadas).
 - **Límite global compartido** en Upstash Redis: como mucho 4 llamadas por minuto entre chat y jugadas (2 cada uno) y 20 consultas de jugadas por partida. Si el proveedor responde 429, se bloquean las llamadas de todos durante el tiempo indicado.
-- Sin Upstash, o fuera de Preview en Vercel, no se llama al modelo.
+- Sin Upstash, o en Vercel Development, no se llama al modelo. El selector de jugadas, además, solo funciona en Vercel (Preview o Production).
+- **Preview y Production deben usar la misma base de Upstash.** Las claves del límite global no dependen del entorno (el límite del modelo gratuito es de todo el equipo): con la misma base, los dos entornos se reparten las 4 llamadas por minuto; con bases distintas, cada uno contaría las suyas y entre los dos podrían superar las 5 que admite el modelo gratuito.
 
 ## El chat contextual
 
@@ -149,7 +150,10 @@ La plantilla está en [`web/.env.example`](web/.env.example). Ningún valor de e
 
 - **Desarrollo local:** bastan las tres de Supabase. El chat con LLM puede activarse en local (con la clave, `CHAT_LLM_ENABLED=true`, el modelo y Upstash); el selector de jugadas con LLM, no.
 - **Vercel Preview:** Supabase, Upstash y, para probar la IA, la clave y las variables `CHAT_LLM_*` y `MOVES_LLM_*`.
-- **Vercel Production:** Supabase y Upstash. Los LLM permanecen desactivados: el código no los activa fuera de Preview aunque existan sus variables.
+- **Vercel Production:** Supabase y Upstash y, para usar la IA, las mismas variables que en Preview (la clave, `CHAT_LLM_*` y `MOVES_LLM_*`, con el mismo modelo gratuito) y **la misma base de Upstash que Preview**.
+- **Vercel Development:** los LLM no se activan aunque existan sus variables.
+
+Vercel aplica los cambios de variables solo a los despliegues nuevos: tras añadirlas o cambiarlas hay que volver a desplegar.
 
 ## Instalación y ejecución local
 
@@ -186,20 +190,21 @@ bash tests/redis/run-llm-limiter-redis-tests.sh   # limitador de IA contra un Re
 
 - La suite de Vitest tiene más de mil pruebas: motor, rutas de la API, IA, chat y validador, Realtime simulado y seguridad. Las pruebas de Redis real se omiten en la suite normal y se ejecutan con su propio script.
 - Las pruebas SQL y de Redis usan contenedores desechables y no tocan Supabase ni Upstash.
-- `npm test` también ejecuta la suite, pero en un equipo muy cargado alguna prueba que juega partidas completas puede superar el tiempo por defecto de Vitest (5 s). Con `--maxWorkers=2` no ocurre.
+- `npm test` ejecuta la misma suite. Las pruebas tienen un tiempo máximo de 30 s (`vitest.config.mts`), porque algunas juegan partidas completas y, con la suite en paralelo, superaban los 5 s por defecto de Vitest.
 
 ## Despliegue en Vercel
 
 1. Importa el repositorio en Vercel con **Root Directory** `web` (el código de la aplicación está en esa carpeta).
-2. Configura las variables de entorno de cada entorno (ver «Variables de entorno»). Las `NEXT_PUBLIC_` deben existir antes de compilar.
-3. Para los límites de peticiones, añade una base de Upstash Redis (por ejemplo, desde el Marketplace de Vercel).
-4. El proyecto no necesita `vercel.json`.
+2. Configura las variables de entorno de cada entorno (ver «Variables de entorno»). Las `NEXT_PUBLIC_` deben existir antes de compilar, y cualquier cambio de variables necesita un despliegue nuevo.
+3. Para los límites de peticiones y la IA, añade una base de Upstash Redis (por ejemplo, desde el Marketplace de Vercel) y usa **la misma** en Preview y Production.
+4. El chat se procesa después de responder (`after()` de Next.js) dentro de la misma función: en el peor caso, unos 110 s (hasta 4 lotes con reservas de 30 s). La duración máxima de las funciones del proyecto debe permitirlo (con Fluid compute de Vercel, recomendado). Si una ejecución se corta antes, no se pierde nada: la reserva caduca y la siguiente ejecución continúa donde se quedó.
+5. El proyecto no necesita `vercel.json`.
 
 ## Estado del proyecto y limitaciones
 
 **Implementado y desplegado:** motor completo, partida en directo con Supabase y Realtime, chat con frases locales, demostración, portada, protección de los POST y límites de peticiones (si Upstash está configurado).
 
-**Solo en Vercel Preview:** el chat escrito por el modelo y el selector de jugadas con LLM. En Production están desactivados por código.
+**IA con LLM (Vercel AI Gateway, modelo gratuito):** el chat escrito por el modelo y el selector de jugadas, en Vercel Preview y Production cuando se configuran sus variables y Upstash. Su funcionamiento real está comprobado en los registros de Preview; en Production depende de esa configuración.
 
 **Limitaciones conocidas:**
 

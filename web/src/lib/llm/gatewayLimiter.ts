@@ -209,6 +209,9 @@ const UpstashEnvSchema = z.object({
   token: z.string().min(10),
 });
 
+/** Una variable vacía (o solo con espacios) cuenta como ausente: así se usa la alternativa (`KV_REST_API_*`). */
+const present = (value: string | undefined): string | undefined => (value === undefined || value.trim() === "" ? undefined : value);
+
 let shared: { credentials: string; limiter: GatewayLimiter } | null = null;
 
 /**
@@ -218,8 +221,8 @@ let shared: { credentials: string; limiter: GatewayLimiter } | null = null;
  */
 export function getGatewayLimiter(env: Readonly<Record<string, string | undefined>> = process.env): GatewayLimiter | null {
   const parsed = UpstashEnvSchema.safeParse({
-    url: env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL,
-    token: env.UPSTASH_REDIS_REST_TOKEN ?? env.KV_REST_API_TOKEN,
+    url: present(env.UPSTASH_REDIS_REST_URL) ?? present(env.KV_REST_API_URL),
+    token: present(env.UPSTASH_REDIS_REST_TOKEN) ?? present(env.KV_REST_API_TOKEN),
   });
   if (!parsed.success) return null;
   const credentials = `${parsed.data.url} ${parsed.data.token}`;

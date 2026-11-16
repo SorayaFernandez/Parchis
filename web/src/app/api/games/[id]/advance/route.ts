@@ -27,8 +27,8 @@ const BodySchema = z.strictObject({
 const moveBreaker = createMoveBreaker();
 
 /**
- * Selector estratégico con LLM y su cupo por partida, solo si su configuración lo activa (Vercel Preview,
- * `MOVES_LLM_ENABLED`, clave y modelo exacto) **y** hay Upstash para el limitador global compartido con el
+ * Selector estratégico con LLM y su cupo por partida, solo si su configuración lo activa (Vercel Preview
+ * o Production, `MOVES_LLM_ENABLED`, clave y modelo exacto) **y** hay Upstash para el limitador global compartido con el
  * chat y el cupo de 20 consultas por partida. Si no,
  * sin selector: se usa la estrategia local como siempre. Un error de configuración se registra sin
  * valores (como mucho una vez por minuto); `off` es lo normal.

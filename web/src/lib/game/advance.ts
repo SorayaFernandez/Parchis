@@ -40,8 +40,8 @@ export interface AdvanceDeps {
   random?: RandomSource;
   /**
    * Selector estratégico con LLM (fase 8.3). Solo se consulta tras reservar y con dos o más movimientos
-   * legales; su elección se valida con el motor y, si falla, se usa la estrategia local. Sin él (lo
-   * normal fuera de Vercel Preview), el comportamiento es exactamente el de siempre.
+   * legales; su elección se valida con el motor y, si falla, se usa la estrategia local. Sin él (sin
+   * configurar, fuera de Vercel o en Development), el comportamiento es exactamente el de siempre.
    */
   moveSelector?: MoveSelector;
   /**

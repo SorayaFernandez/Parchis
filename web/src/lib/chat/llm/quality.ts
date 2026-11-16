@@ -1046,6 +1046,13 @@ const EAT_FORM = String.raw`(?:${EAT_PAST}|${CLITIC}\s+${EAT_PRESENT})`;
 /** De quién es la ficha: un personaje (o alias) o un pronombre («de ti», «de usted», «de las tuyas»). */
 const WHOSE = String.raw`brava|chispa|(?:don\s+)?ernesto|(?:la\s+)?(?:abuela\s+)?pilar|(?:la\s+)?abuela|ti|usted|ustedes|el|ella|ellos|ellas|vosotr[oa]s|nosotr[oa]s|las\s+(?:tuyas|suyas|mias|vuestras|nuestras)|(?:tus|sus|mis|vuestras|nuestras)\s+fichas`;
 
+/** «irse» (sin tildes) para «Se fue la de {rival}» y «Me fui yo». */
+const GO_CLITIC = String.raw`(?:me|te|se|nos|os)`;
+const GO_HAVE = String.raw`(?:(?:he|has|ha|hemos|habeis|han)\s+)?`;
+const GO_FORM = String.raw`(?:fui|fuiste|fue|fuimos|fuisteis|fueron|voy|vas|va|vamos|vais|van|ido|iba|ibas|ibamos|iban)`;
+/** «la de alguien» o un posesivo («la tuya», «las mías»). */
+const GONE_PIECE = String.raw`las?\s+(?:de\s+(?:${WHOSE})|tuyas?|suyas?|mias?|nuestras?|vuestras?)`;
+
 const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "golpe", re: /(?<![\p{L}])(?<!de\s)golpes?(?![\p{L}])(?!\s+de\s+suerte)/u },
   { term: "da sus frutos", re: /(?<![\p{L}])(?:da|dan|dar|dio|dieron|ha\s+dado|han\s+dado)\s+sus\s+frutos(?![\p{L}])/u },
@@ -1234,6 +1241,37 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
       String.raw`(?<![\p{L}])${EAT_FORM}\s+otr[ao]s?(?:\s+(?:dos|tres|cuatro|\d+))?(?:\s+mas)?(?:\s+fichas?)?(?:\s+de\s+(?:${WHOSE})|\s+(?:tuy|suy|mi|vuestr|nuestr)[ao]s?(?![\p{L}])|(?=\s*(?:[,.!?;:…]|$)))`,
       "u",
     ),
+  },
+  // «Se fue la de {rival}»: «irse» con «la de alguien» o un posesivo («la tuya», «la mía»), en cualquier persona,
+  // tiempo y orden («se ha ido la de Chispa», «se va la tuya», «la de Brava se fue», «se fue a casa la de Chispa»).
+  {
+    term: "se fue la de",
+    re: new RegExp(
+      String.raw`(?<![\p{L}])(?:${GO_CLITIC}\s+${GO_HAVE}${GO_FORM}\s+(?:a\s+casa\s+)?${GONE_PIECE}|${GONE_PIECE}\s+(?:ya\s+)?${GO_CLITIC}\s+${GO_HAVE}${GO_FORM})(?![\p{L}])`,
+      "u",
+    ),
+  },
+  // «Me fui yo»: «irse» con el sujeto detrás para remarcarlo («me he ido yo», «me voy yo», «te fuiste tú», «se
+  // fue ella», «nos fuimos nosotros»). «tú» y «él» (sin tilde tras `normalize`) solo al final de la frase, porque
+  // también son posesivo y artículo («se fue el turno»). Siguen valiendo «Me voy a casa» o «Se fue a casa».
+  {
+    term: "me fui yo",
+    re: new RegExp(
+      String.raw`(?<![\p{L}])${GO_CLITIC}\s+${GO_HAVE}${GO_FORM}\s+(?:yo|ella|usted|ustedes|ellos|ellas|nosotr[oa]s|vosotr[oa]s|(?:tu|el)(?=\s*(?:[,.!?;:…]|$)))(?![\p{L}])`,
+      "u",
+    ),
+  },
+  // «Ya cerré mi ruta»: cerrar (o terminar, acabar, completar) «la/mi/tu/su ruta», en cualquier persona y tiempo, o
+  // «la ruta (ya está) cerrada». En el parchís no hay «rutas». Siguen valiendo «Cierra la barrera» o «Sigo».
+  {
+    term: "ya cerre mi ruta",
+    re: /(?<![\p{L}])(?:(?:cerr|cierr|termin|acab|complet)\p{L}*\s+(?:ya\s+)?(?:mi|tu|su|la|nuestra|vuestra|esta|esa)\s+ruta|(?:mi|tu|su|la|nuestra|vuestra)\s+ruta\s+(?:ya\s+)?(?:(?:esta|queda|ha\s+quedado|se\s+ha|se)\s+)?(?:cerr|cierr|termin|acab|complet)\p{L}*)(?![\p{L}])/u,
+  },
+  // «Le he comido la ficha negra»: en el parchís no hay fichas negras (son rosa, morada, verde y azul). «ficha(s)
+  // negra(s)» o «de color negro», y «comer la negra». Siguen valiendo «racha negra» o «la ficha morada».
+  {
+    term: "ficha negra",
+    re: new RegExp(String.raw`(?<![\p{L}])(?:fichas?\s+(?:de\s+color\s+)?negr[ao]s?|${EAT_FORM}\s+(?:la|las|tu|tus|su|sus|una)\s+negras?)(?![\p{L}])`, "u"),
   },
   // «Ya va siendo hora» y sus variantes («va/iba siendo hora», «ya era hora», «ya es hora»).
   { term: "ya va siendo hora", re: /(?<![\p{L}])(?:(?:ya\s+)?(?:va|iba)\s+siendo\s+hora|ya\s+(?:era|es)\s+hora)(?![\p{L}])/u },
@@ -1573,14 +1611,27 @@ function checkCaptureTopic(text: string, request: ChatWriteRequest): QualityIssu
  */
 const REPEAT_MARK = String.raw`(?:de\s+nuevo|otra\s+vez|una\s+vez\s+mas)`;
 const CAPTURE_VERB = String.raw`(?:comid[oa]s?|comiste|comio|comi|comes|come|como|comer|pillad[oa]s?|pillaste|pillo|pille|pillas|pilla|pillar|cazad[oa]s?|cazaste|cazo|cace|cazas|caza|cazar|capturad[oa]s?|capturaste|capturo|capture|capturas|captura|capturar|mandad[oa]s?|mandaste|mando|mande|mandas|manda|mandar)`;
-const CAPTURE_OBJECT = String.raw`(me|nos|te|le|la|lo|os)`;
+/**
+ * Pronombre de la captura (sus grupos, junto con la persona del verbo, deciden la dirección): «me»/«nos» (también
+ * con «la/lo» detrás) con el verbo en segunda o tercera persona («me la has comido», «me comiste», «nos vuelves a
+ * comer») es una captura del rival a quien habla; con el verbo en primera persona («me lo he comido», «me lo comí»,
+ * «nos lo hemos comido»), el «me/nos» es reflexivo y la captura es de quien habla al rival (`FIRST_PERSON`). «te»,
+ * «le», «os», «se» (con o sin «la/lo») o «la/lo» solos, una de quien habla al rival. Incluye el espacio final.
+ */
+const CAPTURE_OBJECT = String.raw`(?:(me|nos|te|le|les|os|se)\s+(?:l[ao]s?\s+)?|(la|lo|las|los)\s+)`;
 const HAVE = String.raw`(?:(?:has|ha|he|hemos|habeis|han)\s+)?`;
 const AFTER_VERB = String.raw`(?:\s+(?:la|una|mi|tu|su|esa)\s+ficha)?(?:\s+a\s+(?:casa|casita))?`;
+/**
+ * Verbo (auxiliar o forma de captura) en primera persona dentro de la coincidencia: con él, quien habla es quien
+ * captura aunque lleve «me/nos» («me lo he comido otra vez», «otra vez me lo comí», «nos lo hemos comido»).
+ */
+const FIRST_PERSON =
+  /(?<![\p{L}])(?:he|hemos|comi|comimos|como|comemos|pille|pillo|pillamos|cace|cazo|cazamos|capture|capturo|capturamos|mande|mando|mandamos|vuelvo|volvemos)(?![\p{L}])/u;
 const REPEATED_CAPTURE: readonly RegExp[] = [
-  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}\s+${HAVE}${CAPTURE_VERB}${AFTER_VERB}\s*,?\s+${REPEAT_MARK}(?![\p{L}])`, "u"),
-  new RegExp(String.raw`(?<![\p{L}])${REPEAT_MARK}\s*,?\s+${CAPTURE_OBJECT}\s+${HAVE}${CAPTURE_VERB}(?![\p{L}])`, "u"),
-  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}\s+${HAVE}${CAPTURE_VERB}\s+otra\s+ficha(?![\p{L}])`, "u"),
-  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}\s+(?:vuelves|vuelve|vuelvo|has\s+vuelto|ha\s+vuelto|he\s+vuelto)\s+a\s+(?:comer|pillar|cazar|capturar|mandar)(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}${HAVE}${CAPTURE_VERB}${AFTER_VERB}\s*,?\s+${REPEAT_MARK}(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${REPEAT_MARK}\s*,?\s+${CAPTURE_OBJECT}${HAVE}${CAPTURE_VERB}(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}${HAVE}${CAPTURE_VERB}\s+otra\s+ficha(?![\p{L}])`, "u"),
+  new RegExp(String.raw`(?<![\p{L}])${CAPTURE_OBJECT}(?:vuelves|vuelve|vuelvo|has\s+vuelto|ha\s+vuelto|he\s+vuelto)\s+a\s+(?:comer|pillar|cazar|capturar|mandar)(?![\p{L}])`, "u"),
 ];
 
 function checkRepeatedCapture(text: string, request: ChatWriteRequest): QualityIssue | null {
@@ -1589,7 +1640,8 @@ function checkRepeatedCapture(text: string, request: ChatWriteRequest): QualityI
   for (const re of REPEATED_CAPTURE) {
     const match = re.exec(t);
     if (!match) continue;
-    const towardsSpeaker = match[1] === "me" || match[1] === "nos";
+    const pronoun = match[1] ?? match[2];
+    const towardsSpeaker = (pronoun === "me" || pronoun === "nos") && !FIRST_PERSON.test(match[0]);
     const pair = facts?.history === "complete" ? (towardsSpeaker ? facts.rivalOnSelf : facts.selfOnRival) : null;
     if (!pair || pair.count < 2) return { reason: "afirmación no respaldada", term: "captura repetida" };
   }

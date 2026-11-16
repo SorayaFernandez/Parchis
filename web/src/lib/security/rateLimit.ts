@@ -154,6 +154,9 @@ const UpstashEnvSchema = z.object({
   token: z.string().min(10),
 });
 
+/** Una variable vacía (o solo con espacios) cuenta como ausente: así se usa la alternativa (`KV_REST_API_*`). */
+const present = (value: string | undefined): string | undefined => (value === undefined || value.trim() === "" ? undefined : value);
+
 let shared: RateLimiter | null = null;
 let warnedDisabled = false;
 
@@ -165,8 +168,8 @@ let warnedDisabled = false;
 export function getRateLimiter(env: Env = process.env): RateLimiter {
   if (shared) return shared;
   const parsed = UpstashEnvSchema.safeParse({
-    url: env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL,
-    token: env.UPSTASH_REDIS_REST_TOKEN ?? env.KV_REST_API_TOKEN,
+    url: present(env.UPSTASH_REDIS_REST_URL) ?? present(env.KV_REST_API_URL),
+    token: present(env.UPSTASH_REDIS_REST_TOKEN) ?? present(env.KV_REST_API_TOKEN),
   });
   if (!parsed.success) {
     if (env.VERCEL === "1" && !warnedDisabled) {
