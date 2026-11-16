@@ -1019,6 +1019,21 @@ const DICE_REQUEST = [
  * Expresiones que no son naturales para lo que pasa en el parchís: «golpe» (salvo «de golpe» y «golpe de
  * suerte», que sí lo son) y «da sus frutos».
  */
+/**
+ * «Racha dos», «Racha 2», «racha tres», «Racha: 3», «racha nº 4»…: «racha» seguida directamente de un número, en
+ * letras o en cifras, con o sin separador («:», «#», «-», «x», «nº»; la coma no). Prohibido con cualquier número, aunque la racha sea real. No cuentan
+ * «una racha de dos capturas» (con «de»), «mi racha sigue» ni «racha de suerte». «un»/«una»/«un par de» no se
+ * usan aquí («una racha un poco rara» no es esta estructura); «uno», sí.
+ */
+const STREAK_NUMBER_WORDS = Object.keys(NUMBER_WORDS)
+  .filter((w) => !/^un(?:a|\s+par\s+de)?$/.test(w))
+  .sort((a, b) => b.length - a.length)
+  .join("|");
+const STREAK_NUMBER = new RegExp(
+  `(?<![\\p{L}])rachas?\\s*(?:[:#\\-–—x×]\\s*|(?:numero|num|n[ºo°]\\.?)\\s*)?(?:\\d+|${STREAK_NUMBER_WORDS})(?![\\p{L}\\p{N}])`,
+  "u",
+);
+
 const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "golpe", re: /(?<![\p{L}])(?<!de\s)golpes?(?![\p{L}])(?!\s+de\s+suerte)/u },
   { term: "da sus frutos", re: /(?<![\p{L}])(?:da|dan|dar|dio|dieron|ha\s+dado|han\s+dado)\s+sus\s+frutos(?![\p{L}])/u },
@@ -1237,6 +1252,7 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "sigo sin captura",
     re: /(?<![\p{L}])(?:(?:la|una)\s+captura\s+y\s+yo\s+(?:sigo\s+|me\s+quedo\s+)?sin|(?:sigo|seguimos|sigues|sigue|siguen|me\s+quedo|me\s+he\s+quedado)\s+sin\s+(?:ella|ninguna(?:\s+captura)?|capturas?|capturar|comer(?:me)?(?:\s+(?:nada|ninguna|ni\s+una))?))(?![\p{L}])/u,
   },
+  { term: "racha + número", re: STREAK_NUMBER },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
