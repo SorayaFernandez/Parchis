@@ -26,7 +26,7 @@ import { describeEvent } from "@/lib/hud/events";
 import { pieceStateForSteps } from "./journey";
 
 /** Semilla y número de acciones de la partida inicial (elegidas para una partida avanzada y variada). */
-export const DEMO_SEED = 4;
+export const DEMO_SEED = 13339;
 export const DEMO_START_ACTIONS = 300;
 /** Entradas de «Últimas jugadas» que se conservan (las mismas que en la partida en directo). */
 export const DEMO_LOG_SIZE = 60;

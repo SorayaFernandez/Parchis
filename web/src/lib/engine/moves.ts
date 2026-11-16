@@ -67,7 +67,9 @@ export function canMovePiece(
     ).length;
     if (ownOnExit >= 2) return { ok: false, error: "OWN_BLOCKADE_ON_EXIT" };
 
-    // Al salir se captura una ficha rival de la salida, si la hay.
+    // Cabe si, tras la posible captura, quedan como mucho MAX_PIECES_ON_EXIT. Con la ficha nueva solo
+    // se captura cuando no caben (ver `resolveCapture`); suponer aquí siempre una captura da el mismo
+    // resultado, porque con una sola rival caben las dos de todos modos.
     const enemiesOnExit = countPiecesOnCell(state, exitCell) - ownOnExit;
     const remainingAfterCapture = ownOnExit + Math.max(enemiesOnExit - 1, 0);
     if (remainingAfterCapture + 1 > MAX_PIECES_ON_EXIT) {
@@ -229,6 +231,11 @@ export function resolveCapture(
   const cell = getRealBoardPosition(player.color, movedPiece.steps);
   const exitingToOwnStart = leftBase && movedPiece.steps === 0;
   if (!exitingToOwnStart && (isSafeCell(cell) || isCellBlocked(state, cell))) {
+    return null;
+  }
+  // Al salir de casa solo se captura si no caben: más de MAX_PIECES_ON_EXIT contando la ficha
+  // recién salida (ya colocada). Con una sola rival en la salida, se quedan las dos.
+  if (exitingToOwnStart && countPiecesOnCell(state, cell) <= MAX_PIECES_ON_EXIT) {
     return null;
   }
 
