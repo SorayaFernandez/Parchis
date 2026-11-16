@@ -1,6 +1,6 @@
 -- Pruebas de `chat_commit` (8.2a-chat.sql): persistencia de `director_state` sin mensajes.
 -- SOLO PARA PRUEBAS LOCALES: lo ejecuta `run-chat-sql-tests.sh` sobre un PostgreSQL desechable, después
--- de `supabase-stub.sql`, `8.2a-chat.sql` y `8.2a-chat.test.sql`. Usa su propia partida y sus propias
+-- de `supabase-stub.sql`, `6.1-games.sql`, `8.2a-chat.sql` y `8.2a-chat.test.sql`. Usa su propia partida y sus propias
 -- funciones auxiliares (las de `pg_temp` no pasan de una sesión de psql a otra). No modifica el SQL.
 --
 -- Por qué importa (fase 8.2b, continuidad del historial): cuando una versión defectuosa se salta sin
@@ -24,15 +24,20 @@ create function pg_temp.advance2() returns integer language plpgsql as $$
 declare v integer;
 begin
   set local role service_role;
-  update public.games set version = version + 1, state = jsonb_build_object('v', version + 1), last_events = '[]'
-   where id = 'dddddddd-0000-4000-8000-000000000001'
+  -- Protocolo real (advanceGame): reservar el turno (`games_guard` fija `processing_until`) y
+  -- confirmar la versión + 1 con el mismo token y `last_action`; la confirmación libera la reserva.
+  update public.games set lock_token = '99999999-0000-4000-8000-000000000001'
+   where id = 'dddddddd-0000-4000-8000-000000000001' and status = 'playing';
+  update public.games set version = version + 1, state = jsonb_build_object('status', 'playing', 'v', version + 1),
+         last_action = '{"type":"roll"}', last_events = '[]', lock_token = '99999999-0000-4000-8000-000000000001'
+   where id = 'dddddddd-0000-4000-8000-000000000001' and lock_token = '99999999-0000-4000-8000-000000000001'
   returning version into v;
   reset role;
   return v;
 end;
 $$;
 
-insert into public.games (id, state) values ('dddddddd-0000-4000-8000-000000000001', '{"v":1}');
+insert into public.games (id, state) values ('dddddddd-0000-4000-8000-000000000001', '{"status":"playing","v":1}');
 
 -- ─── S1. Confirmación sin mensajes: guarda el estado, avanza el cursor y vacía el lote ────────
 do $$

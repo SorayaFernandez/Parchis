@@ -1,6 +1,6 @@
 -- Pruebas de `8.2a-chat.sql` (trigger tolerante, cola, reservas y duplicados).
 -- SOLO PARA PRUEBAS LOCALES: se ejecuta con `run-chat-sql-tests.sh` sobre un PostgreSQL desechable,
--- después de `supabase-stub.sql` y `8.2a-chat.sql`. Cada comprobación aborta con error si falla.
+-- después de `supabase-stub.sql`, `6.1-games.sql` y `8.2a-chat.sql`. Cada comprobación aborta con error si falla.
 -- Los WARNING del trigger (que SQL no puede capturar) los comprueba el script en la salida de psql.
 
 \set ON_ERROR_STOP 1
@@ -14,12 +14,18 @@ end;
 $$;
 
 -- Avance como lo hace la aplicación: versión + 1 con el estado y los eventos nuevos (rol del servidor).
+-- Las partidas empiezan en juego (`status: playing`), en la versión 1 y sin reserva, como exige `games_guard`.
 create function pg_temp.advance(p_events jsonb) returns integer language plpgsql as $$
 declare v integer;
 begin
   set local role service_role;
-  update public.games set version = version + 1, state = jsonb_build_object('v', version + 1), last_events = p_events
-   where id = '751bb3b5-52dc-4e00-86eb-3085d4357dad'
+  -- Protocolo real (advanceGame): reservar el turno (`games_guard` fija `processing_until`) y
+  -- confirmar la versión + 1 con el mismo token y `last_action`; la confirmación libera la reserva.
+  update public.games set lock_token = '99999999-0000-4000-8000-000000000001'
+   where id = '751bb3b5-52dc-4e00-86eb-3085d4357dad' and status = 'playing';
+  update public.games set version = version + 1, state = jsonb_build_object('status', 'playing', 'v', version + 1),
+         last_action = '{"type":"roll"}', last_events = p_events, lock_token = '99999999-0000-4000-8000-000000000001'
+   where id = '751bb3b5-52dc-4e00-86eb-3085d4357dad' and lock_token = '99999999-0000-4000-8000-000000000001'
   returning version into v;
   reset role;
   return v;
@@ -34,7 +40,7 @@ create function pg_temp.queued(v integer) returns integer language sql as $$
    where game_id = '751bb3b5-52dc-4e00-86eb-3085d4357dad' and version = v;
 $$;
 
-insert into public.games (id, state) values ('751bb3b5-52dc-4e00-86eb-3085d4357dad', '{"v":1}');
+insert into public.games (id, state) values ('751bb3b5-52dc-4e00-86eb-3085d4357dad', '{"status":"playing","v":1}');
 
 -- ─── 1. Encolado correcto ─────────────────────────────────────────────────────────────────
 do $$
@@ -43,14 +49,15 @@ begin
   v := pg_temp.advance('[{"type":"dice_rolled","playerId":"ai-pink","value":3}]');
   select * into q from public.game_chat_queue where version = v;
   perform pg_temp.check(v = 2 and q.version = 2, '1a. avance confirmado → versión encolada');
-  perform pg_temp.check(q.events = '[{"type":"dice_rolled","playerId":"ai-pink","value":3}]' and q.state = '{"v":2}', '1b. con sus eventos y su estado');
+  perform pg_temp.check(q.events = '[{"type":"dice_rolled","playerId":"ai-pink","value":3}]' and q.state = '{"status":"playing","v":2}', '1b. con sus eventos y su estado');
   perform pg_temp.check(q.is_victory = false and q.attempts = 0, '1c. sin victoria y sin intentos');
 
   v := pg_temp.advance('[{"type":"player_finished","playerId":"ai-green","place":1}]');
   perform pg_temp.check((select is_victory from public.game_chat_queue where version = v), '1d. victoria detectada (puesto 1)');
   v := pg_temp.advance('[{"type":"player_finished","playerId":"ai-pink","place":2}]');
   perform pg_temp.check(not (select is_victory from public.game_chat_queue where version = v), '1e. puesto 2 no es victoria');
-  v := pg_temp.advance('{"no":"es un array"}');
+  -- `last_events` siempre es un array (CHECK games_last_events_array): eventos con forma inesperada dentro.
+  v := pg_temp.advance('[{"no":"es un evento"}]');
   perform pg_temp.check(pg_temp.queued(v) = 1, '1f. eventos con forma inesperada: se encola igual, sin error');
 
   -- Reserva de `games` (misma versión): no encola nada.
@@ -122,11 +129,11 @@ end $$;
 do $$
 begin
   begin
-    -- Saltarse una versión: lo rechaza la guarda de `games` (fuera del bloque del trigger).
+    -- Saltarse una versión: lo rechaza la guarda de `games` con 23514 (fuera del bloque del trigger).
     set local role service_role;
     update public.games set version = version + 2 where id = '751bb3b5-52dc-4e00-86eb-3085d4357dad';
     raise exception 'la guarda debía rechazar el avance';
-  exception when sqlstate '55P03' then
+  exception when sqlstate '23514' then
     reset role;
   end;
   perform pg_temp.check(pg_temp.game_version() = 10 and pg_temp.queued(12) = 0, '4a. el error de games_guard sigue abortando el avance (nada encolado)');
@@ -242,7 +249,7 @@ $$;
 
 -- ─── 9. B5: qué puede hacer la clave publicable (anon/authenticated) ─────────────────────
 -- Otra partida con un mensaje, para comprobar que la lectura no está limitada a una partida.
-insert into public.games (id, state) values ('00000000-0000-4000-8000-000000000002', '{}');
+insert into public.games (id, state) values ('00000000-0000-4000-8000-000000000002', '{"status":"playing"}');
 insert into public.game_messages (game_id, version, seq, character_id, trigger, text)
 values ('00000000-0000-4000-8000-000000000002', 2, 0, 'ai-blue', 'goal', '¡Ficha en meta!');
 do $$
@@ -270,8 +277,8 @@ $$;
 -- ─── 10. Realtime y cascada ───────────────────────────────────────────────────────────────
 do $$ begin
   perform pg_temp.check(
-    (select array_agg(tablename::text order by tablename) from pg_publication_tables where pubname = 'supabase_realtime') = array['game_messages'],
-    '10a. Realtime publica solo game_messages (ni la cola ni game_chat)');
+    (select array_agg(tablename::text order by tablename) from pg_publication_tables where pubname = 'supabase_realtime') = array['game_messages', 'games'],
+    '10a. Realtime publica game_messages y games (ni la cola ni game_chat)');
   delete from public.games where id = '751bb3b5-52dc-4e00-86eb-3085d4357dad';
   perform pg_temp.check(
     (select count(*) from public.game_chat_queue) = 0 and (select count(*) from public.game_chat) = 0
