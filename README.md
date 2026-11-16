@@ -9,7 +9,7 @@
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL_+_Realtime-3ecf8e?logo=supabase&logoColor=white)](https://supabase.com)
 [![Vercel](https://img.shields.io/badge/Vercel-AI_Gateway-000000?logo=vercel&logoColor=white)](https://vercel.com)
 
-**Demo:** [parchis-gamma.vercel.app](https://parchis-gamma.vercel.app) · **Repositorio:** [github.com/SorayaFernandez/Parchis](https://github.com/SorayaFernandez/Parchis)
+**Demo:** [parchis-gamma.vercel.app](https://parchis-gamma.vercel.app) 
 
 ## Contenido
 
@@ -100,8 +100,8 @@ Después de la carga inicial, la partida es un componente de cliente: el navegad
 ### Una jugada, paso a paso
 
 1. El navegador pide avanzar indicando la versión que conoce.
-2. El servidor reserva el turno (versión y token de reserva, con un *trigger* de PostgreSQL que impide aplicar dos veces la misma acción, aunque varios espectadores pidan avanzar a la vez).
-3. Tira el dado y obtiene las jugadas legales del motor. Si hay varias, consulta al modelo; si no, o si el modelo no está disponible, decide la estrategia local.
+2. El servidor reserva el turno (versión y token de reserva, con un *trigger* de PostgreSQL que impide aplicar dos veces la misma acción).
+3. Tira el dado y obtiene las jugadas legales del motor. Si hay varias, consulta al modelo. Si el modelo no está disponible, decide la estrategia local.
 4. Comprueba que la jugada elegida sigue siendo legal y la aplica con el motor.
 5. Confirma la versión siguiente en Supabase. Todos los espectadores la reciben por Realtime.
 6. Un *trigger* encola la versión para el chat en la misma transacción; tras responder, el servidor procesa la cola y publica los mensajes.
@@ -155,8 +155,6 @@ En el editor SQL de un proyecto de Supabase, ejecuta en este orden los dos scrip
 1. `web/supabase/6.1-games.sql`: la tabla `games`, su *trigger* de integridad, RLS y Realtime.
 2. `web/supabase/8.2a-chat.sql`: depende de `games`, crea las tablas, la cola, el *trigger* y las funciones del chat, con su RLS y Realtime.
 
-Los dos son idempotentes y usan los roles y la publicación de Realtime que ya trae Supabase. Sin el segundo, la aplicación funciona sin chat.
-
 ### Comandos
 
 Desde `web/`:
@@ -174,7 +172,7 @@ npm run start    # servir la compilación
 ```bash
 npm test                                          # suite de Vitest
 npx tsc --noEmit                                  # comprobación de tipos
-bash supabase/tests/run-chat-sql-tests.sh         # SQL en un PostgreSQL 17 desechable (Docker)
+bash supabase/tests/run-chat-sql-tests.sh         # SQL en un PostgreSQL (Docker)
 bash tests/redis/run-llm-limiter-redis-tests.sh   # límite global de IA contra un Redis 7 real (Docker)
 ```
 
@@ -185,19 +183,19 @@ Las pruebas cubren:
 - **IA:** estrategias de los personajes, selector de jugadas con el modelo simulado y respaldo local ante cada tipo de fallo.
 - **Chat:** director, cola persistente, coherencia con los hechos reales y validador de las respuestas del modelo.
 - **Límites y seguridad:** límites de peticiones, límite global del modelo, protección de los POST y validación de las variables de entorno.
-- **Base de datos:** esquema, *triggers*, funciones y permisos, en PostgreSQL real.
+- **Base de datos:** esquema, *triggers*, funciones y permisos, en PostgreSQL.
 
-Los servicios externos (Supabase, AI Gateway y Upstash) se sustituyen por dobles o contenedores locales: ninguna prueba los utiliza.
+Los servicios externos (Supabase, AI Gateway y Upstash) se sustituyen por dobles o contenedores locales.
 
 ## Despliegue
 
 ### Lo que exige el código
 
 - La aplicación está en `web/`, así que en Vercel el **Root Directory** debe ser `web`. No necesita `vercel.json`.
-- En Vercel, los modelos de lenguaje solo se activan en los entornos **Preview** y **Production** (`VERCEL_ENV`), con sus variables y Upstash; en Development no. Los límites son los mismos en los dos entornos.
+- En Vercel, los modelos de lenguaje solo se activan en los entornos **Preview** y **Production** (`VERCEL_ENV`), con sus variables y Upstash, en Development no. Los límites son los mismos en los dos entornos.
 - Las claves del límite global en Upstash no dependen del entorno, porque el límite del modelo gratuito es de todo el equipo. Preview y Production deben usar **la misma base de Upstash**: con bases distintas, cada uno contaría sus propias llamadas y entre los dos podrían superar ese límite.
 - Las variables `NEXT_PUBLIC_` se incorporan al compilar, y Vercel solo aplica los cambios de variables a despliegues nuevos: tras cambiarlas, hay que volver a desplegar.
-- El chat se procesa después de responder (`after()`), dentro de la misma función. Se recomienda **Fluid compute** para que su duración máxima lo permita; si una ejecución se interrumpe, la siguiente continúa donde se quedó.
+- El chat se procesa después de responder (`after()`), dentro de la misma función. Se recomienda **Fluid compute** para que su duración máxima lo permita, si una ejecución se interrumpe, la siguiente continúa donde se quedó.
 
 ### Configuración actual
 
@@ -209,13 +207,12 @@ Esta parte depende de la configuración de Vercel, Supabase y Upstash, no del re
 
 ## Seguridad
 
-- **Credenciales en el servidor:** los módulos que usan claves privadas solo pueden importarse en el servidor. Al navegador solo llegan la URL de Supabase y la clave publicable, limitadas por RLS. La aplicación rechaza claves privadas en variables `NEXT_PUBLIC_`.
-- **Base de datos:** RLS en todas las tablas. `games` y `game_messages` se pueden leer con la clave publicable; solo el servidor, con la clave secreta (`service_role`), puede escribir en ellas. La cola (`game_chat_queue`) y el estado del chat (`game_chat`) no tienen acceso público, y las funciones del chat solo las ejecuta el servidor.
+- **Credenciales en el servidor:** los módulos que usan claves privadas solo pueden importarse en el servidor. Al navegador solo llegan la URL de Supabase y la clave publicable, limitadas por RLS.
+- **Base de datos:** RLS en todas las tablas. `games` y `game_messages` se pueden leer con la clave publicable. Solo el servidor, con la clave secreta (`service_role`), puede escribir en ellas. La cola (`game_chat_queue`) y el estado del chat (`game_chat`) no tienen acceso público, y las funciones del chat solo las ejecuta el servidor.
 - **Jugadas validadas:** ninguna jugada, ni de la estrategia local ni del modelo, se aplica sin que el motor la acepte.
 - **Entradas y errores:** cuerpos validados con esquemas estrictos, identificadores comprobados antes de consultar la base de datos y errores genéricos sin detalles internos.
 - **Protección de los POST:** se rechazan las peticiones de otros sitios y las que no envían JSON.
 - **Límites de uso** por IP con Upstash Redis: crear partidas (5 cada 10 minutos), avanzar (180 por minuto por partida y 600 en total) y leer (120 por minuto), además de los límites del modelo descritos en [Límites y respaldo](#límites-y-respaldo).
-- **Registros sin datos sensibles:** nunca se registran claves, *prompts* ni textos del modelo.
 
 ---
 
