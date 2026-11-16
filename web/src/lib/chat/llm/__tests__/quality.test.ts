@@ -3094,3 +3094,50 @@ describe("«Me lo he quedado» y sus variantes, prohibidas", () => {
     expect(`${system.content}\n${user.content}`).not.toMatch(/lo he quedado/i);
   });
 });
+
+describe("«Racha dos» y equivalentes con cualquier número, prohibidos", () => {
+  const [BRAVA, CHISPA] = ["ai-pink", "ai-blue"];
+  const term = { reason: "expresión poco natural", detail: "termino=racha + número" };
+  // Racha real de Brava: dos capturas seguidas a Chispa (así, «racha» por sí sola está respaldada).
+  const streak = say(BRAVA, CHISPA, {
+    kind: "streak_boast",
+    trigger: "capture_streak",
+    streak: { count: 2, consecutive: true },
+    captures: factsOf([cap(10, BRAVA, CHISPA), cap(11, BRAVA, CHISPA)], BRAVA),
+  });
+
+  it("se rechaza con números en letras y en cifras, con o sin separador, aunque la racha sea real", () => {
+    for (const text of [
+      "¡Racha dos, Chispa!", "Racha 2, Chispa.", "¡Racha tres!", "Racha 3.", "¡Racha cuatro, Chispa!", "Racha 10.", "Racha uno.",
+      "¡Racha veintidós!", "Racha: 2.", "Racha nº 2.", "Racha número dos.", "¡Rachas dos!", "Racha x2.", "racha dos, chispa",
+    ]) {
+      expect(reject(text, streak), text).toEqual(term);
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    // Con «#», el escritor ya la rechaza antes por formato (Markdown); la regla también la detecta.
+    expect(reject("Racha #3.", streak)).not.toBeNull();
+    expect(hasDiscardedExpression("Racha #3.")).toBe(true);
+  });
+
+  it("no bloquea los usos legítimos de «racha» sin esa estructura", () => {
+    // Con la racha real, siguen valiendo.
+    for (const text of ["¡Llevo dos capturas seguidas, Chispa!", "Mi racha sigue, Chispa.", "¡Qué racha llevo, Chispa!"]) {
+      expect(reject(text, streak), text).toBeNull();
+    }
+    for (const text of ["Una racha de dos capturas.", "Racha de suerte con el dado.", "Vaya racha un poco rara.", "La racha de Brava sigue.", "Ha sido una racha, dos fichas menos."]) {
+      expect(hasDiscardedExpression(text), text).toBe(false);
+    }
+  });
+
+  it("el catálogo, las réplicas, la demostración y el prompt no la contienen ni la citan", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...Object.values(c.chat.replies).flat(), ...c.catchphrases, c.chat.voice]) {
+        expect(line, `${c.name}: ${line}`).not.toMatch(/rachas?\s*[:#,x]?\s*(?:\d|\{count\}|\{Count\}|dos|tres|cuatro)/iu);
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+    const [system, user] = buildChatPrompt({ ...streak, recent: [{ speaker: BRAVA, text: "¡Racha dos, Chispa!" }] });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/racha\s*(?:\d|dos|tres)/iu);
+  });
+});
