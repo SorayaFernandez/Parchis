@@ -217,7 +217,7 @@ export const CHARACTERS: readonly Character[] = [
           "¡Ja! Eso por correr tanto, {rival}.",
           "Tres seises, {rival}. Te quedas sin turno.",
           "¡Castigo sin mover un dedo! Mala suerte, {rival}.",
-          "{rival}, eso me viene muy bien.",
+          "{rival}, ¡te has pasado de seises!",
         ],
         goal: [
           "¡Una dentro! Las demás van detrás.",

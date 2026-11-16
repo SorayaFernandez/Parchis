@@ -1183,6 +1183,12 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "narración de la jugada",
     re: /(?<![\p{L}])(?:(?:vuelve|vuelven|regresa|regresan|volvera|volveran|se\s+va|se\s+van)\s+a\s+su\s+casa|(?:comid[oa]s?|comi|como|comio|comiste|pillad[oa]s?|pille|pillo|capturad[oa]s?|capture|capturo)(?![\p{L}])[^.!?…]*?\s+y\s+(?:(?:su|tu|mi|la|esa)\s+ficha\s+)?(?:vuelve|vuelves|vuelvo|regresa|regresas|se\s+va|te\s+vas|me\s+voy|va|vas|voy|volvera|volveras)\s+a\s+(?:su\s+|tu\s+|mi\s+)?(?:casa|casita|la\s+salida))(?![\p{L}])/u,
   },
+  // «Eso me viene muy bien» y «Me he quedado solo en la meta», con sus variantes.
+  {
+    term: "me viene muy bien",
+    re: /(?<![\p{L}])me\s+(?:viene|vino|ha\s+venido|vendra|va\s+a\s+venir)\s+(?:muy\s+bien|bien|genial|de\s+perlas|de\s+maravilla|estupendamente|que\s+ni\s+pintad[oa])(?![\p{L}])/u,
+  },
+  { term: "solo en la meta", re: /(?<![\p{L}])(?:me\s+(?:he\s+)?qued\p{L}*|estoy|sigo)\s+(?:yo\s+)?sol[oa]s?\s+en\s+la\s+meta(?![\p{L}])/u },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
@@ -1235,6 +1241,37 @@ const ORDINAL_GOAL = new RegExp(
  * ordinal sin respaldo (`afirmación no respaldada`). Va la última del conjunto: no cambia el motivo de
  * ningún rechazo anterior.
  */
+// ── Atribuir pensamientos o emociones a otros ─────────────────────────────────────────────────────
+
+/**
+ * Atribuir a otro jugador pensamientos, expectativas, intenciones o emociones que nada respalda: el chat solo
+ * sabe lo que ha pasado en el tablero. «¡Vaya, y tú pensando que tenías la partida ganada!», «te creías la
+ * ganadora», «ibas a por mí», «estás nerviosa», «te has asustado», «pensaba usted que…». Solo segunda persona
+ * (también de usted): lo que dice de sí mismo quien habla («creía que…», «estoy contenta») sí vale, igual que
+ * las exhortaciones («no te confíes», «tú tranquila») y «te veo venir».
+ */
+const ATTRIBUTION: readonly { term: string; re: RegExp }[] = [
+  {
+    term: "atribuye pensamientos",
+    re: /(?<![\p{L}])(?:(?:y\s+)?tu\s+pensando|pensabas|pensaste|creias|creiste|te\s+creias|te\s+creiste|te\s+lo\s+creias|esperabas|imaginabas|te\s+imaginabas|te\s+veias|confiabas|tenias\s+(?:la\s+partida|el\s+juego)\s+ganad[oa]|(?:pensaba|creia|esperaba|imaginaba)\s+usted|usted\s+(?:pensaba|creia|esperaba|imaginaba|se\s+creia))(?![\p{L}])/u,
+  },
+  {
+    term: "atribuye intenciones",
+    // Dentro de una creencia propia («Creía que me ibas a comer») no se atribuye nada: lo cuenta quien habla.
+    re: /(?<![\p{L}])(?<!(?:creia|pensaba|crei|pense|sabia|imaginaba|temia)\s+que\s+(?:(?:me|te|lo|la|nos)\s+)?)(?:querias|pretendias|ibas\s+a|tenias\s+pensado|(?:queria|pretendia)\s+usted|usted\s+(?:queria|pretendia|iba\s+a))(?![\p{L}])/u,
+  },
+  {
+    term: "atribuye emociones",
+    re: /(?<![\p{L}])(?:(?:estas|estaras|te\s+veo|te\s+noto|se\s+te\s+ve|se\s+te\s+nota|pareces|esta\s+usted|parece\s+usted|se\s+le\s+ve)\s+(?:muy\s+|un\s+poco\s+|algo\s+|bastante\s+|tan\s+)?(?:content[oa]|nervios[oa]|asustad[oa]|preocupad[oa]|enfadad[oa]|mosquead[oa]|picad[oa]|triste|celos[oa]|feliz|confiad[oa]|desesperad[oa]|frustrad[oa]|agobiad[oa]|rabios[oa]|molest[oa]|ilusionad[oa])|te\s+has\s+(?:asustado|enfadado|mosqueado|picado|agobiado|puesto\s+nervios[oa]))(?![\p{L}])/u,
+  },
+];
+
+function checkAttribution(text: string): QualityIssue | null {
+  const t = normalize(text);
+  for (const { term, re } of ATTRIBUTION) if (re.test(t)) return { reason: "afirmación no respaldada", term };
+  return null;
+}
+
 // ── Tratamiento según quien habla ──────────────────────────────────────────────────────────────────
 
 const CHISPA_ID = "ai-blue";
@@ -1504,6 +1541,7 @@ export function hasDiscardedExpression(text: string): boolean {
     disallowedDiminutive(text, null, null) !== null ||
     UNNATURAL.some(({ re }) => re.test(t)) ||
     KEEP_IT.test(t) ||
+    ATTRIBUTION.some(({ re }) => re.test(t)) ||
     ORDINAL_GOAL.test(t) ||
     gameTerm(t) !== null ||
     GOAL_DISTANCE.some((re) => re.test(t)) ||
@@ -1532,6 +1570,7 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkGameTalk(text, request) ??
     checkRepeatedCapture(text, request) ??
     checkNaturalness(text, request) ??
+    checkAttribution(text) ??
     checkDiminutives(text, request) ??
     // Las últimas: no cambian el diagnóstico de ninguna regla anterior.
     checkSelfAddress(text, request.utterance.speaker) ??
