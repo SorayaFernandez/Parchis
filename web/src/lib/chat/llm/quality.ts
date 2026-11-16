@@ -34,6 +34,7 @@ export const QUALITY_REASONS = [
   "contradice quién captura",
   "no responde a la captura",
   "se nombra a sí mismo",
+  "repite el mensaje anterior",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -548,6 +549,8 @@ const SCOPE_CUES: readonly [CountScope, RegExp, boolean][] = [
   ["selfStreak", cue(`mi\\s+racha(?!\\s+${BAD_SUFFIX})`), false],
   ["rivalStreak", cue(`(?:tu|su)\\s+racha(?!\\s+${BAD_SUFFIX})`), false],
   ["selfMade", cue(`(?<!(?:me|te|le|la|lo|os)\\s)(?:he|hemos)\\s+${PERFECT}`), true],
+  // «Ya me he comido tres fichas»: el «me» enfático no cambia el sujeto (las ha comido quien habla).
+  ["selfMade", cue(`me\\s+(?:he|hemos)\\s+comido`), true],
   ["selfMade", cue(`llevo|(?<!(?:me|te|le|la|lo|os)\\s)(?:he|hemos)\\s+hecho|mis?\\s+(?:\\p{L}+\\s+)?capturas?`), false],
   ["rivalMade", cue(`(?<!(?:me|te|le|la|lo|os)\\s)(?:has|ha)\\s+${PERFECT}`), true],
   ["rivalMade", cue(`llevas|lleva|(?<!(?:me|te|le|la|lo|os)\\s)(?:has|ha)\\s+hecho|(?:tus?|sus?)\\s+(?:\\p{L}+\\s+)?capturas?`), false],
@@ -1189,6 +1192,13 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     re: /(?<![\p{L}])me\s+(?:viene|vino|ha\s+venido|vendra|va\s+a\s+venir)\s+(?:muy\s+bien|bien|genial|de\s+perlas|de\s+maravilla|estupendamente|que\s+ni\s+pintad[oa])(?![\p{L}])/u,
   },
   { term: "solo en la meta", re: /(?<![\p{L}])(?:me\s+(?:he\s+)?qued\p{L}*|estoy|sigo)\s+(?:yo\s+)?sol[oa]s?\s+en\s+la\s+meta(?![\p{L}])/u },
+  // «¡Me he dado el gustazo de comerte la ficha!» y sus variantes («qué gustazo», «darme el gusto de…»).
+  { term: "gustazo", re: /(?<![\p{L}])(?:gustazo|(?:me\s+(?:he\s+dado|doy|di|voy\s+a\s+dar)|darme)\s+el\s+gusto\s+de)(?![\p{L}])/u },
+  // «Le he comido la ficha a Brava» dicho a la propia Brava: se dice «Le he comido su ficha, Brava».
+  {
+    term: "ficha a + nombre",
+    re: /(?<![\p{L}])(?:comid[oa]|comi|comio|pillad[oa]|pille|capturad[oa]|capture)\s+(?:la|su|tu|una)\s+ficha\s+a\s+(?:la\s+abuela|abuela\s+pilar|pilar|don\s+ernesto|ernesto|brava|chispa)(?![\p{L}])/u,
+  },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
@@ -1265,6 +1275,38 @@ const ATTRIBUTION: readonly { term: string; re: RegExp }[] = [
     re: /(?<![\p{L}])(?:(?:estas|estaras|te\s+veo|te\s+noto|se\s+te\s+ve|se\s+te\s+nota|pareces|esta\s+usted|parece\s+usted|se\s+le\s+ve)\s+(?:muy\s+|un\s+poco\s+|algo\s+|bastante\s+|tan\s+)?(?:content[oa]|nervios[oa]|asustad[oa]|preocupad[oa]|enfadad[oa]|mosquead[oa]|picad[oa]|triste|celos[oa]|feliz|confiad[oa]|desesperad[oa]|frustrad[oa]|agobiad[oa]|rabios[oa]|molest[oa]|ilusionad[oa])|te\s+has\s+(?:asustado|enfadado|mosqueado|picado|agobiado|puesto\s+nervios[oa]))(?![\p{L}])/u,
   },
 ];
+
+/**
+ * «¡Abre la barrera!» y sus variantes solo tienen sentido cuando una barrera de ese rival corta el paso de
+ * verdad: el director solo ofrece ese tipo de intervención (`blockade_complaint`) con un bloqueo real
+ * (`blockedByRivalBarrier`). En cualquier otra intervención, pedir que abran una barrera se rechaza.
+ */
+const BARRIER_REQUEST =
+  /(?<![\p{L}])(?:(?:abre|abra|abrid|abran|quita|quite|quitad|deshaz)\s+(?:usted\s+)?(?:la|esa|tu|su|vuestra)\s+barrera|barrera\s+(?:no\s+me\s+deja\s+pasar|me\s+(?:cierra|corta|tapa)\s+el\s+paso))(?![\p{L}])/u;
+
+function checkBarrierTalk(text: string, request: ChatWriteRequest): QualityIssue | null {
+  if (request.utterance.kind === "blockade_complaint") return null;
+  return BARRIER_REQUEST.test(normalize(text)) ? { reason: "afirmación no respaldada", term: "barrera sin bloqueo" } : null;
+}
+
+/**
+ * Una réplica contesta al mensaje anterior; no lo repite desde el otro lado. Si, quitando los nombres y las
+ * palabras de la propia captura (comer, pillar, ficha, pronombres…), no queda nada, la réplica no dice nada
+ * nuevo: «Te comí la ficha» como respuesta a «Me has comido una ficha». «Sí, te comí la ficha», «Te comí la
+ * ficha, jeje» o «¡A casa!» sí contestan.
+ */
+const ECHO_WORDS = new Set([
+  "te", "me", "le", "la", "lo", "las", "los", "su", "sus", "tu", "tus", "mi", "mis", "una", "un", "el", "ficha", "fichas",
+  "he", "has", "ha", "hemos", "han", "usted", "comi", "comido", "comida", "comiste", "comio", "como", "comes", "come", "comer",
+  "pille", "pillado", "pillaste", "pillo", "capture", "capturado", "capturaste", "capturo",
+  "brava", "don", "ernesto", "abuela", "pilar", "chispa",
+]);
+
+function checkReplyEcho(text: string, request: ChatWriteRequest): QualityIssue | null {
+  if (request.utterance.replyTo === null || !request.replyToText) return null;
+  const words = normalize(text).match(/\p{L}+/gu) ?? [];
+  return words.length > 0 && words.every((w) => ECHO_WORDS.has(w)) ? { reason: "repite el mensaje anterior", term: "eco" } : null;
+}
 
 function checkAttribution(text: string): QualityIssue | null {
   const t = normalize(text);
@@ -1571,12 +1613,14 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     checkRepeatedCapture(text, request) ??
     checkNaturalness(text, request) ??
     checkAttribution(text) ??
+    checkBarrierTalk(text, request) ??
     checkDiminutives(text, request) ??
     // Las últimas: no cambian el diagnóstico de ninguna regla anterior.
     checkSelfAddress(text, request.utterance.speaker) ??
     checkCaptureDirection(text, request) ??
     checkCaptureTopic(text, request) ??
-    checkOwnName(text, request.utterance.speaker)
+    checkOwnName(text, request.utterance.speaker) ??
+    checkReplyEcho(text, request)
   );
 }
 

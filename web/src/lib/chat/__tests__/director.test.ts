@@ -437,13 +437,15 @@ describe("frecuencia, pausas y límites", () => {
     expect(plan([capture(BRAVA, ERNESTO)], { messageCount: max - 2, state: game({ ranking: [PILAR] }) }).utterances).toHaveLength(2);
   });
 
-  it("los personajes habladores intervienen más que los reservados", () => {
-    const rate = (by: string, victim: string) => {
+  it("Abuela Pilar, la más reservada, comenta menos sus propias metas que Brava", () => {
+    const rate = (who: string) => {
       let spoken = 0;
-      for (let seed = 1; seed <= 1000; seed++) spoken += plan([capture(by, victim)], { random: createSeededRandom(seed) }).utterances.length;
+      for (let seed = 1; seed <= 1000; seed++) {
+        spoken += plan([{ type: "piece_reached_goal", playerId: who, pieceIndex: 0 } as GameEvent], { random: createSeededRandom(seed) }).utterances.length;
+      }
       return spoken / 1000;
     };
-    expect(rate(BRAVA, CHISPA)).toBeGreaterThan(rate(ERNESTO, PILAR) * 1.3);
+    expect(rate(BRAVA)).toBeGreaterThan(rate(PILAR) * 1.3);
   });
 
   it("recordPublished recuerda las frases usadas por cada personaje (sin duplicar, con límite)", () => {
@@ -674,10 +676,10 @@ describe("participación: las ganas de hablar cuentan una sola vez", () => {
     return { rate: spoke / n, share: (id: string) => (counts[id] ?? 0) / spoke };
   };
 
-  it("Don Ernesto y Abuela Pilar hablan más que Brava y Chispa, pero ellos siguen siendo los más habladores", () => {
+  it("ganas de hablar: Brava, Don Ernesto y Chispa 1; Abuela Pilar, la más reservada, 0,65", () => {
     expect(talkOf("ai-pink")).toBe(1);
     expect(talkOf("ai-blue")).toBe(1);
-    expect(talkOf(ERNESTO_ID)).toBe(0.8);
+    expect(talkOf(ERNESTO_ID)).toBe(1);
     expect(talkOf(PILAR_ID)).toBe(0.65);
   });
 
@@ -685,16 +687,14 @@ describe("participación: las ganas de hablar cuentan una sola vez", () => {
     // Don Ernesto captura a Brava: antes él hablaba en ~0,5 × 0,8 × 0,8/1,6 y Brava en ~0,5 × 1 × 0,8/1,6.
     const { rate, share } = sample(ERNESTO_ID, BRAVA_ID);
     expect(rate).toBeCloseTo(TRIGGER_CHANCE.capture * Math.max(talkOf(ERNESTO_ID), talkOf(BRAVA_ID)), 1);
-    // Pesos: quien captura, su ganas de hablar; la víctima, ×0,8 → Don Ernesto 0,8 frente a Brava 0,8: a medias.
-    expect(share(ERNESTO_ID)).toBeGreaterThan(0.45);
-    expect(share(ERNESTO_ID)).toBeLessThan(0.55);
+    // Pesos: quien captura, sus ganas de hablar; la víctima, ×0,8 → Don Ernesto 1 frente a Brava 0,8 (≈ 0,56).
+    expect(share(ERNESTO_ID)).toBeGreaterThan(0.5);
+    expect(share(ERNESTO_ID)).toBeLessThan(0.62);
   });
 
-  it("entre dos reservados la conversación sigue siendo más tranquila", () => {
-    const quiet = sample(PILAR_ID, ERNESTO_ID).rate;
-    const lively = sample(BRAVA_ID, "ai-blue").rate;
-    expect(quiet).toBeCloseTo(TRIGGER_CHANCE.capture * talkOf(ERNESTO_ID), 1);
-    expect(quiet).toBeLessThan(lively);
+  it("una captura con Abuela Pilar se comenta con la probabilidad del más dispuesto (su rival)", () => {
+    const withPilar = sample(PILAR_ID, ERNESTO_ID).rate;
+    expect(withPilar).toBeCloseTo(TRIGGER_CHANCE.capture * Math.max(talkOf(PILAR_ID), talkOf(ERNESTO_ID)), 1);
   });
 });
 

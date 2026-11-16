@@ -3,7 +3,8 @@
 // (`ChatLineKind`) y si hay una réplica. No escribe el texto: eso lo hace un `ChatWriter`
 // (frases locales ahora; un LLM en la fase 8.2b), así que el director no cambia al sustituirlo.
 
-import type { GameEvent, GameState, PlayerId } from "@/lib/engine";
+import { canMovePiece, getBlockades, getMoveDistance, getRealBoardPosition, isOnMainTrack, type GameEvent, type GameState, type PlayerId } from "@/lib/engine";
+import { isEnteringHomeStretch } from "@/lib/engine/board";
 import { getCharacter, type ChatLineKind } from "@/lib/game/characters";
 import { getPlayerSummaries } from "@/lib/hud/summary";
 import { addCatchphrases, detectCatchphrases } from "./catchphrases";
@@ -198,6 +199,7 @@ export const initialDirectorState = (): DirectorState => ({
   usedCatchphrases: {},
   observedThrough: null,
   historyGapThrough: null,
+  spoken: {},
 });
 
 const RELEVANT_EVENTS = new Set<GameEvent["type"]>([
@@ -217,6 +219,37 @@ export function isChatCandidate(events: readonly GameEvent[], version: number): 
 }
 
 const talk = (id: PlayerId) => getCharacter(id)?.chat.talkativeness ?? 0.5;
+
+/**
+ * Reparto de la palabra (2026-11-16). Cada personaje tiene una cuota orientativa de las intervenciones
+ * espontáneas (`chat.share`: Brava, Don Ernesto y Chispa 27 %, Abuela Pilar 19 %). Cuando el director elige
+ * entre varios candidatos, el peso de cada uno se multiplica por `balanceFactor`: sube si ha hablado menos
+ * de lo que le toca y baja si ha hablado más. No es una cuota rígida:
+ * - el recuento se suaviza con `BALANCE_PRIOR` intervenciones «virtuales» repartidas según la cuota, así que
+ *   al principio de la partida apenas corrige;
+ * - el factor está acotado entre `BALANCE_MIN` y `BALANCE_MAX`;
+ * - solo reparte entre los candidatos que ya tenía la jugada (nunca crea mensajes ni cambia la probabilidad de
+ *   que alguien hable, que sigue siendo la del más dispuesto);
+ * - quien lleva más de `LONG_SILENCE` versiones sin hablar recibe además un empujón (`LONG_SILENCE_BOOST`).
+ * Las réplicas no pasan por aquí: quien recibe un mensaje responde con su probabilidad de siempre.
+ */
+const BALANCE_PRIOR = 8;
+const BALANCE_MIN = 0.4;
+const BALANCE_MAX = 2.5;
+const BALANCE_EXPONENT = 1.5;
+const LONG_SILENCE = 150;
+const LONG_SILENCE_BOOST = 1.5;
+const share = (id: PlayerId) => getCharacter(id)?.chat.share ?? 0.25;
+
+export function balanceFactor(director: DirectorState, players: readonly PlayerId[], id: PlayerId, version: number): number {
+  const totalShare = players.reduce((sum, p) => sum + share(p), 0) || 1;
+  const target = share(id) / totalShare;
+  const spokenTotal = players.reduce((sum, p) => sum + (director.spoken[p] ?? 0), 0);
+  const observed = ((director.spoken[id] ?? 0) + BALANCE_PRIOR * target) / (spokenTotal + BALANCE_PRIOR);
+  const factor = Math.min(BALANCE_MAX, Math.max(BALANCE_MIN, (target / observed) ** BALANCE_EXPONENT));
+  const last = director.lastSpokeAt[id] ?? 0;
+  return version - last > LONG_SILENCE ? factor * LONG_SILENCE_BOOST : factor;
+}
 
 /** Elige uno al azar con pesos > 0; `null` si no hay ninguno. */
 function pick<T>(items: readonly T[], weight: (item: T) => number, random: Random): T | null {
@@ -281,6 +314,7 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
   const bypass = events.some((e) => e.type === "game_finished");
   const sinceLast = director.lastMessageVersion === null ? Infinity : version - director.lastMessageVersion;
   if (!bypass && sinceLast < CHAT_LIMITS.globalCooldown) return done([]);
+  const balance = (id: PlayerId) => balanceFactor(director, players, id, version);
   const rested = (id: PlayerId) => {
     const last = director.lastSpokeAt[id];
     return bypass || last === undefined || version - last >= CHAT_LIMITS.characterCooldown;
@@ -295,7 +329,8 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
     const ready = candidates.filter((c) => rested(c.speaker) && c.weight > 0);
     const willing = Math.max(0, ...ready.map((c) => talk(c.speaker)));
     if (ready.length === 0 || !chance(triggerChance * willing, random)) return null;
-    const main = pick(ready, (c) => c.weight, random);
+    // Quién habla: su peso por el reparto de la palabra (ver `balanceFactor`). La réplica, no.
+    const main = pick(ready, (c) => c.weight * balance(c.speaker), random);
     if (!main) return null;
     const utterances: Utterance[] = [
       { speaker: main.speaker, kind: main.kind, trigger, rival: main.rival, replyTo: null, important, ...(main.streak ? { streak: main.streak } : {}) },
@@ -319,7 +354,7 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
   const penalty = events.find((e) => e.type === "third_six_penalty");
   if (penalty) {
     const victim = penalty.playerId;
-    const teaser = pick(others(victim), talk, random);
+    const teaser = pick(others(victim), (id) => talk(id) * balance(id), random);
     const candidates: Candidate[] = [
       {
         speaker: victim,
@@ -401,6 +436,15 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
     if (plan) return done(plan);
   }
 
+  // ── Barrera de un rival que corta el paso de verdad ──
+  const blocked = blockedByRivalBarrier(state);
+  if (blocked) {
+    const plan = choose("ambient", TRIGGER_CHANCE.blockade, [
+      { speaker: blocked.speaker, kind: "blockade_complaint", rival: blocked.owner, weight: 1 },
+    ], false);
+    if (plan) return done(plan);
+  }
+
   // ── Ambiente tras un silencio largo ──
   if (
     !bypass &&
@@ -413,6 +457,40 @@ export function planChat(situation: ChatSituation, random: Random): { utterances
   }
 
   return done([]);
+}
+
+/**
+ * Barrera que corta el paso de verdad: el jugador en turno tiene dado (o bonus) y alguna de sus fichas del
+ * recorrido no puede moverse porque el motor lo impide por una barrera (`BLOCKADE_IN_PATH`), y la primera
+ * barrera de su camino es de UN rival (dos fichas de su color). Devuelve quién se queja y de quién es la
+ * barrera, o `null`. No basta con que haya dos fichas juntas: tienen que impedir este movimiento. No cuentan
+ * las barreras propias ni las de dos colores (no hay un dueño a quien pedírselo). Usa solo funciones del
+ * motor, sin duplicar sus reglas.
+ */
+export function blockedByRivalBarrier(state: GameState): { speaker: PlayerId; owner: PlayerId } | null {
+  if (state.status !== "playing") return null;
+  const distance = getMoveDistance(state);
+  const player = state.players.find((p) => p.id === state.turn);
+  if (distance === null || !player) return null;
+  const blockades = getBlockades(state);
+  for (let i = 0; i < player.pieces.length; i++) {
+    const piece = player.pieces[i];
+    if (!isOnMainTrack(piece)) continue;
+    const check = canMovePiece(state, player.id, i, distance);
+    if (check.ok || check.error !== "BLOCKADE_IN_PATH") continue;
+    const start = getRealBoardPosition(player.color, piece.steps);
+    for (let step = 1; step <= distance; step++) {
+      if (isEnteringHomeStretch(player.color, piece.steps, step)) break;
+      const cell = getRealBoardPosition(player.color, piece.steps + step);
+      if (cell === start) continue;
+      const barrier = blockades.find((b) => b.cell === cell);
+      if (!barrier) continue;
+      const owner = barrier.color === null || barrier.color === player.color ? undefined : state.players.find((p) => p.color === barrier.color);
+      if (owner) return { speaker: player.id, owner: owner.id };
+      break; // la primera barrera del camino es propia o de dos colores
+    }
+  }
+  return null;
 }
 
 /**
@@ -555,14 +633,16 @@ export function historyComplete(director: DirectorState, version: number): boole
 export function recordPublished(
   director: DirectorState,
   version: number,
-  published: readonly { speaker: PlayerId; text: string; lineId?: string }[],
+  published: readonly { speaker: PlayerId; text: string; lineId?: string; spontaneous?: boolean }[],
 ): DirectorState {
   if (published.length === 0) return director;
   const lastSpokeAt = { ...director.lastSpokeAt };
+  const spoken = { ...director.spoken };
   const usedLines = { ...director.usedLines };
   const usedCatchphrases = { ...director.usedCatchphrases };
   for (const p of published) {
     lastSpokeAt[p.speaker] = version;
+    if (p.spontaneous) spoken[p.speaker] = (spoken[p.speaker] ?? 0) + 1;
     // Coletillas de quien habla en el texto publicado (del LLM o local). Solo lo publicado de verdad:
     // las respuestas rechazadas nunca llegan aquí.
     const detected = detectCatchphrases(p.speaker, p.text);
@@ -580,6 +660,7 @@ export function recordPublished(
     lastSpokeAt,
     usedLines,
     usedCatchphrases,
+    spoken,
     recent: [...director.recent, ...published.map((p) => ({ speaker: p.speaker, text: p.text }))].slice(-CHAT_LIMITS.recentTexts),
   };
 }

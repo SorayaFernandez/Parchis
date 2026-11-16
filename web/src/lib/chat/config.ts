@@ -103,6 +103,8 @@ export const TRIGGER_CHANCE = {
   finishPlace: 0.9,
   goal: 0.65,
   ambient: 0.55,
+  /** Quejarse de una barrera rival que corta el paso de verdad (poco: no debe volverse repetitivo). */
+  blockade: 0.1,
 } as const;
 
 /** Probabilidad base de una réplica (se multiplica por las ganas de hablar de quien replica). */

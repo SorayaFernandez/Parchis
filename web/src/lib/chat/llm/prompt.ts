@@ -114,6 +114,7 @@ function situation(utterance: Utterance): string {
     ambient_lead: `Vas el primero de la partida, en solitario${rival ? `; ${rival} va el último` : ""}.`,
     ambient_ahead: `Vas avanzando, pero no vas ganando${rival ? `; ${rival} va el último` : ""}.`,
     ambient_behind: `Vas por detrás en la partida${rival ? `; ${rival} va el primero` : ""}.`,
+    blockade_complaint: `Una barrera de ${rival} no te deja pasar en esta tirada. Pídele que la abra.`,
   };
   return byKind[utterance.kind];
 }
@@ -161,7 +162,9 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
   if (request.replyToText) {
     // En las réplicas, el rival es quien dijo el mensaje al que se responde (ver director.ts).
     const author = utterance.rival ? nameOf(utterance.rival) : null;
-    lines.push(author ? `Respondes a lo que acaba de decir ${author}: «${clip(request.replyToText)}»` : `Respondes a este mensaje: «${clip(request.replyToText)}»`);
+    // Contestar, no repetir: la réplica responde a lo que ha dicho el otro («Sí, te comí la ficha»), no lo dice
+    // otra vez desde el otro lado («Te comí la ficha»). Ver `checkReplyEcho` en quality.ts.
+    lines.push(author ? `Contesta a ${author} sin repetir su frase: «${clip(request.replyToText)}»` : `Contesta sin repetir este mensaje: «${clip(request.replyToText)}»`);
   }
   // Las frases recientes que se piden no repetir, sin las que contengan una expresión descartada (de una
   // partida empezada antes de una corrección): no deben servir de modelo de estilo, y el validador las

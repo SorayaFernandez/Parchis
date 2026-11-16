@@ -127,5 +127,11 @@ export const DirectorStateSchema = z.object({
    * habido ninguna. Nunca retrocede. El historial es completo cuando ya no puede afectar a la ventana.
    */
   historyGapThrough: z.number().int().min(1).nullable().default(null),
+  /**
+   * Intervenciones espontáneas publicadas por cada personaje (mensajes principales, sin réplicas ni
+   * victoria). El director las usa para repartir la palabra según `chat.share` (ver `balanceFactor`). Un
+   * estado guardado sin este campo se lee como vacío.
+   */
+  spoken: z.record(z.string(), z.number().int().min(0)).default({}),
 });
 export type DirectorState = z.infer<typeof DirectorStateSchema>;

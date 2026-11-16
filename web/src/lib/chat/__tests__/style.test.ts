@@ -78,6 +78,7 @@ describe("frases locales: relacionadas con lo que pasa en la partida", () => {
     streak_boast: /captur|casa|casita|otra|van|llevo|caza|\{count\}|\{Count\}/u,
     streak_lament: /captur|casa|casita|otra vez|veces|van|ficha|\{count\}|\{Count\}|lista/u,
     third_six_self: /seis|seises|dado|suerte|castig|turno|regla|penaliz/iu,
+    blockade_complaint: /barrera|paso|pasar|pase/iu,
     third_six_tease: /seis|seises|dado|suerte|castig|regla|prisa|corr|madera|fortuna/iu,
     goal: /meta|dentro|entra|ficha|salvo|asegurad/iu,
     finish_place: /termin|meta|puesto|fichas|recorrido|listo|hecho|ganado|partida/iu,

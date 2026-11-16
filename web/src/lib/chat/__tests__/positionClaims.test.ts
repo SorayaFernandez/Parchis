@@ -235,8 +235,8 @@ describe("demostración", () => {
       }
     }
     expect(match.version).toBe(final.version);
-    // La v110 decía «Voy perdiendo, sí. Por ahora.» (Brava, tercera); ahora Brava dice otra frase suya.
-    expect(byVersion.get("110:0")?.text).not.toMatch(/perdiendo/i);
+    // (Antes la v110 decía «Voy perdiendo, sí. Por ahora.» con Brava tercera; la partida de la demostración ha
+    // cambiado con el reparto de la palabra, y la comprobación de arriba cubre cualquier versión.)
   });
 });
 

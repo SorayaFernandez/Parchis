@@ -1246,10 +1246,13 @@ describe("integración: una respuesta a una captura que habla de otra cosa (part
     expect(main).toMatchObject({ character_id: "ai-pink", trigger: "capture", seq: 0, reply_to_seq: null, source: "local" });
     expect(reply).toMatchObject({ character_id: "ai-green", trigger: "capture", seq: 1, reply_to_seq: 0, source: "local" });
     // Las frases locales son de captura (de su tipo y su papel), nunca de la meta.
-    const rendered = (id: string, kind: "capture_boast" | "capture_lament", rival: string) =>
-      CHARACTERS.find((c) => c.id === id)!.chat.lines[kind].map((l) => l.replaceAll("{rival}", rival));
+    // La réplica usa las frases de réplica de su tipo (contesta, no repite el mensaje).
+    const rendered = (id: string, kind: "capture_boast" | "capture_lament", rival: string, asReply = false) => {
+      const chat = CHARACTERS.find((c) => c.id === id)!.chat;
+      return (asReply ? (chat.replies[kind] ?? []) : chat.lines[kind]).map((l) => l.replaceAll("{rival}", rival));
+    };
     expect(rendered("ai-pink", "capture_boast", "Abuela Pilar")).toContain(main.text);
-    expect(rendered("ai-green", "capture_lament", "Brava")).toContain(reply.text);
+    expect(rendered("ai-green", "capture_lament", "Brava", true)).toContain(reply.text);
     for (const row of memory.rows) expect(row.text).not.toMatch(/meta/i);
     expect(memory.queue).toEqual([]);
   });

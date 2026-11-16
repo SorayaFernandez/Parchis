@@ -19,12 +19,12 @@ const DEMO_LINK =
 
 /**
  * Textos de ejemplo que la portada muestra de otra forma (solo aquí: el catálogo, el chat y la demo de
- * /tablero no cambian). La réplica de Abuela Pilar a la captura de Chispa se enseña más directa, y la meta
- * de Brava (su primera ficha en la meta, v251 de la partida de la demostración) con otra de sus frases de meta.
+ * /tablero no cambian). Son los últimos mensajes de Abuela Pilar (su réplica a una captura, v167 de la partida
+ * de la demostración) y de Brava (v251); la portada los enseña con estas frases, las mismas de siempre.
  */
 const HOME_TEXT: Readonly<Record<string, string>> = {
-  "Bueno, Chispa, mi ficha a casita. No hay mal que por bien no venga.": "Ay, Chispa, me has comido la ficha.",
-  "¡Otra en la meta! Esto marcha.": "¡Una dentro! Las demás van detrás.",
+  "Ya me las pagarás, Don Ernesto.": "Ay, Chispa, me has comido la ficha.",
+  "Una menos. ¡A por las demás!": "¡Una dentro! Las demás van detrás.",
 };
 
 /** Personajes de las dos burbujas de la portada, en este orden: Abuela Pilar y Brava. */

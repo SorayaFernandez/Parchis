@@ -2295,7 +2295,7 @@ describe("expresiones retiradas tras la prueba real en Preview", () => {
     expect(lines(BRAVA).ambient_lead).toContain("Voy ganando. Así me gusta.");
     expect(lines(ERNESTO).ambient_lead).toContain("{rival}, le saco ventaja. Debería reaccionar.");
     expect(lines(PILAR).victory_reply).toContain("Bien hecho, {rival}. Pero no te lo creas mucho.");
-    expect(lines(PILAR).capture_lament).toContain("Me has comido, {rival}. Qué le vamos a hacer.");
+    expect(lines(PILAR).capture_lament).toContain("Me has comido, {rival}... pero qué le vamos a hacer.");
   });
 
   it("la demostración no contiene ninguna", async () => {
@@ -2320,7 +2320,9 @@ describe("revisión de lenguaje: presentarse, «tener» o «quedarse con» la fi
 
   it("cada expresión se rechaza por el flujo completo del escritor LLM, también las que ya estaban retiradas", () => {
     // Las nuevas.
-    expect(reject("Soy Don Ernesto y le he comido la ficha a Abuela Pilar.", say(ERNESTO, PILAR))).toEqual({ reason: OWN, detail: "termino=don ernesto" });
+    // El mensaje real se rechaza (ahora, antes, por «le he comido la ficha a Abuela Pilar»: ver «ficha a + nombre»).
+    expect(reject("Soy Don Ernesto y le he comido la ficha a Abuela Pilar.", say(ERNESTO, PILAR))).not.toBeNull();
+    expect(reject("Soy Don Ernesto y le he comido su ficha, Abuela Pilar.", say(ERNESTO, PILAR))).toEqual({ reason: OWN, detail: "termino=don ernesto" });
     expect(reject("Tengo la tuya, Chispa.", say(BRAVA, CHISPA))).toEqual(term("tener la ficha"));
     expect(reject("Me he quedado con la tuya, Chispa.", say(BRAVA, CHISPA))).toEqual(term("quedarse con la ficha"));
     expect(reject("Bien visto, Brava.", say(CHISPA, BRAVA, { kind: "capture_lament" }))).toEqual(term("bien visto"));

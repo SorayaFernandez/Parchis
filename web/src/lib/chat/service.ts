@@ -195,7 +195,13 @@ async function processItem(
   next = recordPublished(
     next,
     item.version,
-    written.map(({ message, lineId }) => ({ speaker: message.character_id, text: message.text, lineId })),
+    written.map(({ message, lineId }) => ({
+      speaker: message.character_id,
+      text: message.text,
+      lineId,
+      // Espontánea: el mensaje principal de la versión, salvo la victoria (que siempre dice el ganador).
+      spontaneous: message.seq === 0 && message.trigger !== "victory",
+    })),
   );
   return { director: next, messages: written.map((w) => w.message) };
 }
