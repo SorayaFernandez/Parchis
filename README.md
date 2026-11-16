@@ -201,7 +201,8 @@ Los servicios externos (Supabase, AI Gateway y Upstash) se sustituyen por dobles
 
 Esta parte depende de la configuración de Vercel, Supabase y Upstash, no del repositorio:
 
-- **Production** sirve la rama `main` en [parchis-gamma.vercel.app](https://parchis-gamma.vercel.app); **Preview** crea un despliegue por cada rama o *pull request*.
+- **Production** sirve la rama `main` en [parchis-gamma.vercel.app](https://parchis-gamma.vercel.app)
+- **Preview** crea un despliegue por cada rama o *pull request*.
 - Preview y Production tienen configurada la IA con el modelo gratuito `nvidia/nemotron-3.5-lightning-free`.
 - Las variables de Supabase y Upstash se configuran en cada entorno de Vercel.
 
