@@ -103,8 +103,8 @@ function situation(utterance: Utterance): string {
   const byKind: Record<ChatLineKind, string> = {
     victory_win: "Acabas de terminar el primero: has ganado la partida (los demás siguen jugando por los otros puestos).",
     victory_reply: `${rival} acaba de ganar la partida, no tú. La partida no ha terminado: los demás seguís jugando por los otros puestos. Reaccionas a su victoria.`,
-    capture_boast: `Acabas de capturar una ficha de ${rival}: vuelve a su casa. ${youWin(rival, usted)}${facts}`,
-    capture_lament: `${rival} acaba de capturar una de tus fichas: vuelve a tu casa. ${youLose(rival, usted)}${facts}`,
+    capture_boast: `Acabas de capturar una ficha de ${rival}; coméntalo sin narrarlo. ${youWin(rival, usted)}${facts}`,
+    capture_lament: `${rival} acaba de capturar una de tus fichas; coméntalo sin narrarlo. ${youLose(rival, usted)}${facts}`,
     streak_boast: `Acabas de capturar una ficha de ${rival}.${streak} ${youWin(rival, usted)}${facts}`,
     streak_lament: `${rival} acaba de capturar una de tus fichas.${hunted} ${youLose(rival, usted)}${facts}`,
     third_six_self: "Has sacado tres seises seguidos y te han castigado.",
