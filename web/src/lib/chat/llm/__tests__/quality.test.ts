@@ -1541,16 +1541,21 @@ describe("expresiones retiradas, «Voy ganando» con respaldo y capturas repetid
     expect(checkQuality("Vas perdiendo, Chispa.", withLeader(capture("ai-pink", "ai-blue"), "ai-pink"))).toEqual(unsupportedIssue("vas perdiendo"));
   });
 
-  it("«me comiste la ficha de nuevo» y equivalentes solo con dos capturas reales de esa pareja", () => {
+  it("«otra vez me pillas» y equivalentes solo con dos capturas reales de esa pareja", () => {
     const once = factsOf([cap(10, "ai-pink", "ai-blue")], "ai-blue");
     const twice = factsOf([cap(10, "ai-pink", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-blue");
     const otherRival = factsOf([cap(10, "ai-green", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-blue");
+    // «comer… de nuevo» y «comer otra (ficha)» están prohibidas siempre, también con dos capturas reales (ver
+    // «Se lo he comido de nuevo» y «He comido otra de {rival}»); sin respaldo, ya las frena la captura repetida.
+    for (const text of ["Maldición, me comiste la ficha de nuevo, Brava.", "Me has comido otra ficha, Brava."]) {
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: once })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: twice })), text).toMatchObject({ reason: "expresión poco natural" });
+    }
     const variants = [
-      "Maldición, me comiste la ficha de nuevo, Brava.",
       "Otra vez me pillas, Brava.",
-      "Me has comido otra ficha, Brava.",
       "Me vuelves a comer, Brava.",
       "Me has mandado a casa otra vez, Brava.",
+      "Maldición, me comiste la ficha otra vez, Brava.",
     ];
     for (const text of variants) {
       expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: once })), text).toEqual(unsupportedIssue("captura repetida"));
@@ -3092,6 +3097,97 @@ describe("«Me lo he quedado» y sus variantes, prohibidas", () => {
     for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
     const [system, user] = buildChatPrompt({ ...capturer(BRAVA, CHISPA), recent: [{ speaker: BRAVA, text: "¡Me lo he quedado!" }] });
     expect(`${system.content}\n${user.content}`).not.toMatch(/lo he quedado/i);
+  });
+});
+
+describe("«Se lo he comido de nuevo» y «¡He comido otra de {rival}!», prohibidas", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const AGAIN = { reason: "expresión poco natural", detail: "termino=se lo he comido de nuevo" };
+  const ANOTHER = { reason: "expresión poco natural", detail: "termino=he comido otra de" };
+  // Con dos capturas reales de la pareja (la captura repetida está respaldada): se rechazan igualmente.
+  const twice = (by: string, victim: string) => [cap(10, by, victim), cap(20, by, victim)];
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf(twice(speaker, victim), speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf(twice(by, speaker), speaker) });
+
+  it("se rechazan con cualquier pronombre, persona, género, tiempo, signo y rival, aunque la captura se repita de verdad", () => {
+    const cases: [string, ReturnType<typeof say>, typeof AGAIN][] = [
+      ["Se lo he comido de nuevo.", capturer(BRAVA, CHISPA), AGAIN],
+      ["¡Se la he comido de nuevo!", capturer(BRAVA, CHISPA), AGAIN],
+      ["Te he comido de nuevo, Chispa.", capturer(BRAVA, CHISPA), AGAIN],
+      ["De nuevo te he comido, Chispa.", capturer(BRAVA, CHISPA), AGAIN],
+      ["Te como de nuevo, Chispa.", capturer(BRAVA, CHISPA), AGAIN],
+      ["Me has comido de nuevo, Brava.", victimOf(CHISPA, BRAVA), AGAIN],
+      ["De nuevo me has comido...", victimOf(CHISPA, BRAVA), AGAIN],
+      ["Le he comido de nuevo, Abuela Pilar.", capturer(ERNESTO, PILAR), AGAIN],
+      ["Se la comí de nuevo, Abuela Pilar.", capturer(ERNESTO, PILAR), AGAIN],
+      ["¡He comido otra de Chispa!", capturer(BRAVA, CHISPA), ANOTHER],
+      ["He comido otra de Brava.", capturer(PILAR, BRAVA), ANOTHER],
+      ["¡Me he comido otra de Chispa!", capturer(BRAVA, CHISPA), ANOTHER],
+      ["¡Te he comido otra!", capturer(BRAVA, CHISPA), ANOTHER],
+      ["Te he comido otra, Chispa.", capturer(BRAVA, CHISPA), ANOTHER],
+      ["Te he comido otro, Chispa.", capturer(BRAVA, CHISPA), ANOTHER],
+      ["Me he comido otra de las tuyas, Chispa.", capturer(BRAVA, CHISPA), ANOTHER],
+      ["Me comí otra tuya, Chispa.", capturer(BRAVA, CHISPA), ANOTHER],
+      ["Comí otra más de Chispa.", capturer(BRAVA, CHISPA), ANOTHER],
+      ["Le he comido otra de las suyas, Abuela Pilar.", capturer(ERNESTO, PILAR), ANOTHER],
+      ["Me has comido otra ficha, Brava.", victimOf(CHISPA, BRAVA), ANOTHER],
+      ["¡Me has comido otra de las mías, Brava!", victimOf(CHISPA, BRAVA), ANOTHER],
+    ];
+    for (const [text, request, term] of cases) {
+      expect(reject(text, request), text).toEqual(term);
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    // Sin dos capturas reales también se rechazan (antes, como captura repetida no respaldada), y con «me la/lo»
+    // también (la comprobación de capturas repetidas las frena antes, con otro motivo).
+    const once = say(BRAVA, CHISPA, { kind: "capture_boast", captures: factsOf([cap(10, BRAVA, CHISPA)], BRAVA) });
+    for (const text of ["Te he comido de nuevo, Chispa.", "¡He comido otra de Chispa!", "Te he comido otra, Chispa."]) expect(reject(text, once), text).not.toBeNull();
+    for (const text of ["Me la has comido de nuevo, Brava.", "Me lo has comido de nuevo..."]) {
+      expect(reject(text, victimOf(CHISPA, BRAVA)), text).not.toBeNull();
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no bloquean las capturas ni los «de nuevo» y «otra» legítimos", () => {
+    for (const [text, request] of [
+      ["Te he comido otra vez, Chispa.", capturer(BRAVA, CHISPA)],
+      ["¡Te pillé, Chispa! A empezar de nuevo.", capturer(BRAVA, CHISPA)],
+      ["Te comí, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Me comiste una ficha, Brava.", victimOf(CHISPA, BRAVA)],
+      ["Le he comido su ficha, Abuela Pilar.", capturer(ERNESTO, PILAR)],
+      ["Me como su ficha, Abuela Pilar. Lo tenía calculado.", capturer(ERNESTO, PILAR)],
+    ] as const) expect(reject(text, request), text).toBeNull();
+    for (const text of [
+      "Como de nuevo no saques un cinco, mal vamos.",
+      "Vuelve a casa de nuevo, Chispa.",
+      "Ha salido otra vez un seis.",
+      "Otra de las mías: ¡un seis!",
+      "Te toca de nuevo, Brava.",
+      "Te he comido. Otra más y gano.",
+      "He comido una ficha de Brava.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo, las réplicas, la demostración y el prompt no las contienen ni las citan", async () => {
+    const rivals = ["Brava", "Don Ernesto", "Abuela Pilar", "Chispa"];
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...Object.values(c.chat.replies).flat(), ...c.catchphrases, c.chat.voice]) {
+        for (const rival of rivals) {
+          const text = line.replaceAll("{rival}", rival).replaceAll("{count}", "tres").replaceAll("{Count}", "Tres").replaceAll("{ritmo}", "seguidas");
+          expect(hasDiscardedExpression(text), `${c.name}: ${text}`).toBe(false);
+        }
+        expect(line, `${c.name}: ${line}`).not.toMatch(/com\p{L}* de nuevo|com\p{L}* otr[ao]s?\b(?! vez)/iu);
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+    const [system, user] = buildChatPrompt({
+      ...capturer(BRAVA, CHISPA),
+      recent: [
+        { speaker: BRAVA, text: "Se lo he comido de nuevo." },
+        { speaker: PILAR, text: "¡He comido otra de Chispa!" },
+      ],
+    });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/comido de nuevo|comido otra/i);
   });
 });
 

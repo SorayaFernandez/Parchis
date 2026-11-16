@@ -1034,6 +1034,18 @@ const STREAK_NUMBER = new RegExp(
   "u",
 );
 
+/**
+ * Formas de «comer» (sin tildes, tras `normalize`) para «Se lo he comido de nuevo» y «He comido otra de
+ * {rival}». El presente («como», «come»…) solo cuenta con un pronombre delante: sin él, «como» suele ser
+ * comparativo («como de nuevo…»).
+ */
+const CLITIC = String.raw`(?:me|te|se|nos|os|le|les|lo|la|los|las)`;
+const EAT_PAST = String.raw`(?:comid[oa]s?|comi|comiste|comio|comimos|comisteis|comieron|comiendo(?:me|te|se|nos|os|l[aeo]s?)*|comer(?:me|te|se|nos|os|l[aeo]s?)*|comere|comeras|comera|comeremos|comeran)`;
+const EAT_PRESENT = String.raw`(?:como|comes|come|comemos|comeis|comen)`;
+const EAT_FORM = String.raw`(?:${EAT_PAST}|${CLITIC}\s+${EAT_PRESENT})`;
+/** De quién es la ficha: un personaje (o alias) o un pronombre («de ti», «de usted», «de las tuyas»). */
+const WHOSE = String.raw`brava|chispa|(?:don\s+)?ernesto|(?:la\s+)?(?:abuela\s+)?pilar|(?:la\s+)?abuela|ti|usted|ustedes|el|ella|ellos|ellas|vosotr[oa]s|nosotr[oa]s|las\s+(?:tuyas|suyas|mias|vuestras|nuestras)|(?:tus|sus|mis|vuestras|nuestras)\s+fichas`;
+
 const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "golpe", re: /(?<![\p{L}])(?<!de\s)golpes?(?![\p{L}])(?!\s+de\s+suerte)/u },
   { term: "da sus frutos", re: /(?<![\p{L}])(?:da|dan|dar|dio|dieron|ha\s+dado|han\s+dado)\s+sus\s+frutos(?![\p{L}])/u },
@@ -1199,6 +1211,29 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   {
     term: "me la he comido",
     re: /(?<![\p{L}])(?:(?:me|nos)\s+(?:la|las)\s+(?:(?:he|hemos|habia|habiamos)\s+comido|comi|comimos|como|comemos|comere|comeremos|comeria|acabo\s+de\s+comer|acabamos\s+de\s+comer|voy\s+a\s+comer|vamos\s+a\s+comer)|comermelas?|comernoslas?)(?![\p{L}])/u,
+  },
+  // «Se lo he comido de nuevo»: «comer» junto a «de nuevo» (delante o detrás), en cualquier persona, número,
+  // género y tiempo, con o sin pronombres («te he comido de nuevo», «me la has comido de nuevo», «se la comió
+  // de nuevo», «de nuevo te he comido», «comérsela de nuevo»). Prohibida aunque la captura se repita de verdad.
+  // Siguen valiendo «Te he comido otra vez» (con dos capturas reales) y «de nuevo» lejos de «comer» («¡Te
+  // pillé! A empezar de nuevo»).
+  {
+    term: "se lo he comido de nuevo",
+    re: new RegExp(
+      String.raw`(?<![\p{L}])(?:${EAT_FORM}(?:\s+(?:la|una|mi|tu|su|esa|otra)\s+fichas?)?\s*,?\s+de\s+nuevo|de\s+nuevo\s*,?\s+(?:${CLITIC}\s+){1,2}(?:(?:he|has|ha|hemos|habeis|han)\s+)?(?:${EAT_PAST}|${EAT_PRESENT}))(?![\p{L}])`,
+      "u",
+    ),
+  },
+  // «¡He comido otra de {rival}!»: «comer» + «otra/otro(s)» (con «más» o «ficha(s)») de alguien —un nombre,
+  // «ti», «usted», «las tuyas»— o con un posesivo («otra tuya»), o sin nada detrás («¡Te he comido otra!»,
+  // «Me has comido otra ficha, Brava»), en cualquier persona y tiempo. Siguen valiendo «Te he comido otra vez»
+  // (con dos capturas reales), «Me comiste una ficha» y «He comido una ficha de Brava».
+  {
+    term: "he comido otra de",
+    re: new RegExp(
+      String.raw`(?<![\p{L}])${EAT_FORM}\s+otr[ao]s?(?:\s+(?:dos|tres|cuatro|\d+))?(?:\s+mas)?(?:\s+fichas?)?(?:\s+de\s+(?:${WHOSE})|\s+(?:tuy|suy|mi|vuestr|nuestr)[ao]s?(?![\p{L}])|(?=\s*(?:[,.!?;:…]|$)))`,
+      "u",
+    ),
   },
   // «Ya va siendo hora» y sus variantes («va/iba siendo hora», «ya era hora», «ya es hora»).
   { term: "ya va siendo hora", re: /(?<![\p{L}])(?:(?:ya\s+)?(?:va|iba)\s+siendo\s+hora|ya\s+(?:era|es)\s+hora)(?![\p{L}])/u },
