@@ -233,7 +233,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_lead: [
           "Voy ganando. ¡Que se note!",
-          "Voy delante. Así me gusta.",
+          "Voy ganando. Así me gusta.",
           "Voy ganando. Hoy me salen las tiradas.",
           "{rival}, ¿te espero? Te has quedado muy atrás.",
         ],
@@ -344,7 +344,7 @@ export const CHARACTERS: readonly Character[] = [
           "Las cuentas me salen, de momento.",
           "Voy por delante, y sin arriesgar.",
           "Encabezo la partida, tal como había calculado.",
-          "{rival}, la distancia ya es considerable. Le conviene reaccionar.",
+          "{rival}, le saco ventaja. Debería reaccionar.",
         ],
         ambient_ahead: [
           "Analizo cada tirada. El plan sigue en marcha.",
@@ -399,7 +399,7 @@ export const CHARACTERS: readonly Character[] = [
         victory_reply: [
           "Muy bien, {rival}, cariño. Te lo has ganado.",
           "Enhorabuena, {rival}. Ya decía yo que tenías buena mano.",
-          "Bien hecho, {rival}. Pero no te lo creas mucho, ¿eh?",
+          "Bien hecho, {rival}. Pero no te lo creas mucho.",
           "Felicidades, {rival}. A la próxima, la abuela se pone seria.",
         ],
         capture_boast: [
@@ -413,7 +413,7 @@ export const CHARACTERS: readonly Character[] = [
           "Ay, {rival}, qué prisas por comerme. Con la abuela no se hace eso.",
           "Bueno, {rival}, mi ficha a casita. No hay mal que por bien no venga.",
           "Ay, mi ficha. Paciencia, que la partida es larga, {rival}.",
-          "{rival}, a la abuela se la respeta, ¿eh?",
+          "Me has comido, {rival}. Qué le vamos a hacer.",
           "Vaya, {rival}, me has pillado. Ya me tocará a mí.",
         ],
         streak_boast: [
