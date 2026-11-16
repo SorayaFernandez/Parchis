@@ -102,7 +102,7 @@ describe("chatWriters (escritor LLM o local según las variables)", () => {
   });
 
   it("activo y bien configurado: lo importante llama a AI Gateway; lo demás, no", async () => {
-    const fetch = vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Meta para Brava, sin despeinarse!" } }] }));
+    const fetch = vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Otra ficha en la meta, sin despeinarme!" } }] }));
     vi.stubGlobal("fetch", fetch);
     const { writer, fallbackWriter } = chatWriters(enabled);
     expect(writer).not.toBe(fallbackWriter);
@@ -115,7 +115,7 @@ describe("chatWriters (escritor LLM o local según las variables)", () => {
 
   it("activo: cada petición real al modelo deja una línea [llm-trace] con el origen y el modelo, sin el texto ni la clave", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Meta para Brava, sin despeinarse!" } }] })));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Otra ficha en la meta, sin despeinarme!" } }] })));
     const { writer } = chatWriters(enabled);
     await writer.write(request(false)); // lo no importante no llama al modelo: sin traza
     expect(await writer.write(request(true))).toMatchObject({ source: "llm" });

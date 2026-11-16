@@ -32,6 +32,7 @@ export const QUALITY_REASONS = [
   "se dirige a sí mismo",
   "contradice quién captura",
   "no responde a la captura",
+  "se nombra a sí mismo",
 ] as const;
 export type QualityReason = (typeof QUALITY_REASONS)[number];
 
@@ -190,12 +191,22 @@ export const OTHER_GAMES = [
   "naipes", "baraja", "ruleta", "bingo", "domino", "la oca", "poker", "mus", "home run", "strike",
 ];
 /**
- * Metáforas deportivas de comentarista («¡Golazo por la escuadra!»): solo las puede usar Chispa, cuya
- * forma de hablar es la de un comentarista (sus frases locales ya las usan). Para el resto, prohibidas.
+ * Metáforas deportivas («¡Golazo por la escuadra!»): prohibidas para todos, también para Chispa (antes se le
+ * permitían como «comentarista»; ya no lo es). «gol» incluye sus derivados (goles, golazo, goleada…).
  */
 export const SPORTS_METAPHORS = ["gol", "golazo", "por la escuadra", "triple", "canasta", "futbol", "baloncesto", "tenis"];
-/** Chispa: su forma de hablar es la de un comentarista (ver `characters.ts`). */
-export const COMMENTATOR = "ai-blue";
+
+/** Derivados de «gol» como palabra completa (no «golpe», «golosina» ni «golondrina»). */
+const GOAL_WORDS = /(?<![\p{L}])gol(?:es|azos?|ito|eada|eadas|ear|ea|eo|eamos|eador|eadora|eadores)?(?![\p{L}])/u;
+/** Un término de otro juego o deporte como palabra o expresión completa; si es una sola palabra, también en plural. */
+const gameTermRe = (term: string) => (/\s/.test(term) ? wordsRe(term) : new RegExp(`(?<![${LETTER}])${escape(term)}(?:s|es)?(?![${LETTER}])`, "u"));
+/** Primer término de otros juegos o deportes que aparece en el texto (ya normalizado), o `null`. */
+function gameTerm(t: string): string | null {
+  for (const term of OTHER_GAMES) if (gameTermRe(term).test(t)) return term;
+  if (GOAL_WORDS.test(t)) return "gol";
+  for (const term of SPORTS_METAPHORS) if (gameTermRe(term).test(t)) return term;
+  return null;
+}
 
 const STREAK_TRIGGERS: ReadonlySet<ChatTrigger> = new Set(["capture_streak", "bad_streak"]);
 
@@ -218,7 +229,7 @@ const STATE_CLAIMS: readonly RegExp[] = [
   /(?<![\p{L}])(?:casi\s+fuera|fuera\s+de\s+la\s+partida|eliminad[oa]s?)(?![\p{L}])/u,
   // Posición en la partida («voy ganando», «vas el último», «eres el último»), pero no «es la primera
   // vez» ni «va la primera ficha».
-  /(?<![\p{L}])(?:vas|va|voy|vais|van|vamos)\s+(?:el\s+|la\s+)?(?:ultim[oa]|primer[oa]|ganando|perdiendo|en\s+cabeza|por\s+delante|por\s+detras|a\s+la\s+cola)(?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada|en\s+\p{L}+))/u,
+  /(?<![\p{L}])(?:vas|va|voy|vais|van|vamos)\s+(?:el\s+|la\s+)?(?:ultim[oa]|primer[oa]|ganando|perdiendo|en\s+cabeza|(?:por\s+)?delante|por\s+detras|a\s+la\s+cola)(?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada|en\s+\p{L}+))/u,
   /(?<![\p{L}])(?:eres|es|soy|sois)\s+(?:el|la)\s+ultim[oa](?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada|en\s+\p{L}+))/u,
   /(?<![\p{L}])(?:farolillo\s+rojo|en\s+cabeza|a\s+punto\s+de\s+(?:ganar|perder|terminar|acabar))(?![\p{L}])/u,
 ];
@@ -255,10 +266,8 @@ function unsupportedStreakWord(t: string, request: ChatWriteRequest): string | n
 
 function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | null {
   const t = normalize(text);
-  for (const term of OTHER_GAMES) if (wordsRe(term).test(t)) return { reason: "expresión ajena al parchís", term };
-  if (request.utterance.speaker !== COMMENTATOR) {
-    for (const term of SPORTS_METAPHORS) if (wordsRe(term).test(t)) return { reason: "expresión ajena al parchís", term };
-  }
+  const game = gameTerm(t);
+  if (game) return { reason: "expresión ajena al parchís", term: game };
   if (!hasStreakContext(request)) {
     const term = unsupportedStreakWord(t, request);
     if (term) return { reason: "afirmación no respaldada", term };
@@ -289,8 +298,8 @@ const SELF_NAMES: Readonly<Record<string, readonly string[]>> = {
 /**
  * El propio nombre (o alias) como destinatario: un vocativo al principio de la frase o entre signos
  * («He comido su ficha, Don Ernesto.», «Pues nada, Don Ernesto, …», «Chispa, ¡qué suerte!» dicho por
- * Chispa). Nadie se habla a sí mismo: se nombra, si acaso, al rival. «¡Gol de Chispa!» o «Soy Brava» no
- * son vocativos.
+ * Chispa). Nadie se habla a sí mismo: se nombra, si acaso, al rival. (Cualquier otra mención del propio
+ * nombre la rechaza `checkOwnName`.)
  */
 function checkSelfAddress(text: string, speaker: string): QualityIssue | null {
   const t = normalize(text);
@@ -316,7 +325,7 @@ const SPEECH_VERBS =
  * El personaje se nombra a sí mismo en tercera persona:
  * - Con artículo o contracción: «la Chispa», «al Ernesto», «la Pilar».
  * - Su nombre seguido de un verbo en tercera persona: «Chispa ha caído», «Don Ernesto nunca se equivoca».
- * Se permite su nombre en otras construcciones («¡Gol de Chispa!», «Soy Brava») y nombrar a los rivales.
+ * Nombrar a los rivales se permite. Las demás menciones del propio nombre las rechaza `checkOwnName`.
  */
 function checkSelfThirdPerson(text: string, speaker: string): QualityIssue | null {
   const t = normalize(text);
@@ -333,6 +342,25 @@ function checkSelfThirdPerson(text: string, speaker: string): QualityIssue | nul
       "u",
     );
     if (narrated.test(t)) return { reason: "habla de sí mismo en tercera persona", term: `narración+${name}` };
+  }
+  return null;
+}
+
+/**
+ * El personaje nombra su propio nombre o alias, en cualquier construcción: se presenta («Soy Don Ernesto y le
+ * he comido la ficha a Abuela Pilar», «Le habla Don Ernesto»), se jalea («¡Gol de Chispa!») o se cita. Nadie
+ * dice su propio nombre en una partida en casa. Pilar sí puede llamarse «la abuela» (no es su nombre: ver
+ * `SELF_NAMES`). «Brava» y «Chispa» solo cuentan con mayúscula, para no confundirlas con el adjetivo o la
+ * palabra común («¡Qué brava!», «una chispa de suerte»).
+ */
+function checkOwnName(text: string, speaker: string): QualityIssue | null {
+  for (const name of SELF_NAMES[speaker] ?? []) {
+    const words = name.split(/\s+/).map(escape).join("\\s+");
+    const re = new RegExp(`(?<![${LETTER}])${words}(?![${LETTER}])`, "giu");
+    const common = name === "brava" || name === "chispa";
+    // Sin tildes y sin distinguir mayúsculas, salvo «Brava»/«Chispa», que deben empezar por mayúscula.
+    const found = common ? [...text.matchAll(re)].some((m) => /^\p{Lu}/u.test(m[0])) : re.test(normalize(text));
+    if (found) return { reason: "se nombra a sí mismo", term: name };
   }
   return null;
 }
@@ -1021,6 +1049,8 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "de libro", re: /(?<![\p{L}])de\s+(?:libro|manual)(?![\p{L}])/u },
   // Frase retirada: «¡Ay, pobre Abuela! Se le escapa la captura.» (y sus dos giros por separado).
   { term: "pobre abuela", re: /(?<![\p{L}])pobre\s+abuela(?![\p{L}])/u },
+  // La misma compasión con cualquier otro personaje («…, pobre Don Ernesto!»).
+  { term: "pobre + nombre", re: /(?<![\p{L}])pobre\s+(?:don\s+ernesto|ernesto|pilar|brava|chispa)(?![\p{L}])/u },
   { term: "se le escapa la captura", re: /(?<![\p{L}])se\s+(?:le|te|me|les|nos|os)\s+(?:escapa|escapo|escapan|ha\s+escapado|han\s+escapado)\s+(?:la|una|esa|otra)\s+captura(?![\p{L}])/u },
   // Al grupo, Abuela Pilar dice «hijos», no «cariños». «Cariño», a un solo rival, sí.
   { term: "cariños", re: /(?<![\p{L}])cariños(?![\p{L}])/u },
@@ -1080,7 +1110,8 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "será el amuleto",
     re: /(?<![\p{L}])(?:(?:sera|es|ha\s+sido|habra\s+sido|cosa|culpa|gracias|merito)\s+(?:de\s+|a\s+)?(?:el|mi|del|al)\s+amuleto|(?:dice|funciona|no\s+falla|me\s+protege|me\s+ayuda)\s+mi\s+amuleto|mi\s+amuleto\s+(?:dice|funciona|no\s+falla|me\s+protege|me\s+ayuda)|(?:dejado|dejarme|dejar|olvidado|olvidarme)\s+(?:el|mi)\s+amuleto)(?![\p{L}])/u,
   },
-  { term: "superstición", re: /(?<![\p{L}])(?:horoscopo|calcetines\s+de\s+la\s+suerte|mal\s+de\s+ojo)(?![\p{L}])/u },
+  // También la astrología: «hoy la luna está en mal aspecto», «los astros».
+  { term: "superstición", re: /(?<![\p{L}])(?:horoscopo|calcetines\s+de\s+la\s+suerte|mal\s+de\s+ojo|(?:la\s+)?luna\s+(?:esta\s+|anda\s+)?en\s+mal\s+aspecto|los\s+astros)(?![\p{L}])/u },
   // Coletillas retiradas del catálogo por artificiales: «Todo según lo previsto» (y «todo según el plan»),
   // «Estadísticamente era inevitable», «Quien ríe el último…» y «¿Quién es el siguiente?»; y los refranes
   // retirados «La avaricia rompe el saco» y «Quien mucho corre pronto para». Y la disculpa de broma
@@ -1103,6 +1134,31 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   { term: "te quedas atrás", re: /(?<![\p{L}])(?:(?:ahora|ya)\s+(?:si\s+)?(?:que\s+)?)?te\s+quedas\s+atras(?![\p{L}])/u },
   { term: "qué mal te lo pasas", re: /(?<![\p{L}])(?:que\s+mal\s+te\s+lo\s+pas\p{L}*|te\s+lo\s+(?:estas\s+)?pas\p{L}*\s+(?:muy\s+)?(?:mal|fatal)|lo\s+estas\s+pasando\s+(?:muy\s+)?(?:mal|fatal))(?![\p{L}])/u },
   { term: "me he quedado sin ficha", re: /(?<![\p{L}])(?:me\s+)?(?:he\s+)?qued(?:ado|o|e|ando)\s+sin\s+(?:(?:mi|esa|la|una)\s+)?fichas?(?![\p{L}])/u },
+  // Contar una captura como «tener» o «quedarse con» la ficha del rival: «Tengo la tuya», «Ya tengo tu ficha»,
+  // «Me he quedado con la tuya», «me quedé con su ficha», «quedarme con la ficha de Brava». Y el elogio
+  // «Bien visto». Siguen valiendo «Tengo otra ficha en meta», «Me he quedado con una ficha en casa» o
+  // «Tienes mi ficha a tiro».
+  {
+    term: "tener la ficha",
+    re: /(?<![\p{L}])(?:ya\s+)?(?:tengo|tenemos|tienes|tiene)\s+(?:la\s+(?:tuya|suya|vuestra|mia)|(?:tu|su|vuestra|mi|esa)\s+ficha)(?![\p{L}])(?!\s+a\s+tiro)/u,
+  },
+  {
+    term: "quedarse con la ficha",
+    re: /(?<![\p{L}])qued\p{L}*\s+con\s+(?:la\s+(?:tuya|suya|vuestra|mia|ficha\s+de)|(?:tu|su|vuestra|esa|mi)\s+ficha)(?![\p{L}])/u,
+  },
+  { term: "bien visto", re: /(?<![\p{L}])bien\s+visto(?![\p{L}])/u },
+  // «¡He llegado a casa!»: el final es la meta; a casa vuelve una ficha comida.
+  { term: "he llegado a casa", re: /(?<![\p{L}])lleg(?:ado|ue|o|a|as|amos|aron|ar)\s+a\s+casa(?![\p{L}])/u },
+  // «¡Vamos por todas!», «¡A por todas!», «voy a por todas».
+  { term: "vamos por todas", re: /(?<![\p{L}])(?:(?:vamos|voy|vais|van)\s+(?:a\s+)?|a\s+)por\s+todas(?![\p{L}])(?!\s+partes)/u },
+  // Amenaza vaga, variante de la coletilla retirada «¿Quién es el siguiente?».
+  { term: "ojo con el siguiente", re: /(?<![\p{L}])ojo\s+con\s+(?:el|la)\s+siguiente(?![\p{L}])/u },
+  // Explicación táctica inventada de una captura («Previsible. Ha dejado esa ficha sola.», «esa ficha era la
+  // única que tenía a salvo»): el chat no sabe si la ficha estaba sola, protegida o a salvo.
+  {
+    term: "explicación táctica",
+    re: /(?<![\p{L}])(?:(?:dej\p{L}*|tenia|tenias|estaba|estaban)\s+(?:(?:esa|la|tu|su|mi|una)\s+)?ficha\s+(?:sola|sin\s+(?:cubrir|proteger|proteccion)|desprotegida|expuesta|al\s+descubierto)|(?:la\s+)?unica\s+que\s+(?:tenia|tenias|tenia\s+usted)\s+a\s+salvo)(?![\p{L}])/u,
+  },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
@@ -1121,6 +1177,8 @@ const YOU_ARE_AT =
  * tienen una ficha cerca, pero sin números.
  */
 const NUMBER_WORD = String.raw`(?:\d+|una?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte)`;
+/** «Voy primero/a»: retirado; `checkGameTalk` ya lo rechaza, y así tampoco se cita en el prompt. */
+const OWN_RANK = /(?<![\p{L}])voy\s+(?:el\s+|la\s+)?primer[oa](?![\p{L}])(?!\s+(?:vez|ficha|fichas|casilla|tirada))/u;
 const GOAL_DISTANCE: readonly RegExp[] = [
   new RegExp(String.raw`(?<![\p{L}])(?:a|hasta|para)\s+(?:la\s+)?meta\s+(?:en|con|a)\s+(?:solo\s+)?(?:un\s+)?${NUMBER_WORD}(?![\p{L}\p{N}])`, "u"),
   new RegExp(String.raw`(?<![\p{L}])${NUMBER_WORD}\s+(?:casillas?\s+)?(?:de|para|hasta)\s+(?:la\s+)?meta(?![\p{L}])`, "u"),
@@ -1378,7 +1436,10 @@ export function hasDiscardedExpression(text: string): boolean {
     UNNATURAL.some(({ re }) => re.test(t)) ||
     KEEP_IT.test(t) ||
     ORDINAL_GOAL.test(t) ||
-    [...OTHER_GAMES, ...SPORTS_METAPHORS, ...DISCARDED_EXPRESSIONS].some((term) => wordsRe(term).test(t))
+    gameTerm(t) !== null ||
+    GOAL_DISTANCE.some((re) => re.test(t)) ||
+    OWN_RANK.test(t) ||
+    DISCARDED_EXPRESSIONS.some((term) => wordsRe(term).test(t))
   );
 }
 
@@ -1406,7 +1467,8 @@ export function checkQuality(text: string, request: ChatWriteRequest): QualityIs
     // Las últimas: no cambian el diagnóstico de ninguna regla anterior.
     checkSelfAddress(text, request.utterance.speaker) ??
     checkCaptureDirection(text, request) ??
-    checkCaptureTopic(text, request)
+    checkCaptureTopic(text, request) ??
+    checkOwnName(text, request.utterance.speaker)
   );
 }
 
