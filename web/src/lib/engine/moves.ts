@@ -1,6 +1,6 @@
 // Validación, movimientos legales, aplicación de movimientos y capturas.
-// Portado de backend/game/validators/canMovePiece.js,
-// backend/game/rules/{getAvailableMoves,applyMove,checkCapture,checkWin}.js.
+// Portado del backend del proyecto original (ft_transcendence, ya no está en el repositorio):
+// game/validators/canMovePiece.js y game/rules/{getAvailableMoves,applyMove,checkCapture,checkWin}.js.
 
 import {
   countPiecesOnCell,

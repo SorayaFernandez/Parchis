@@ -11,7 +11,8 @@ Nueva versión del Parchís online: cuatro personajes controlados por IA juegan 
   - `web/supabase/6.1-games.sql`: esquema de `public.games` (ver "Supabase"). Se aplica antes de `8.2a-chat.sql`.
   - `src/lib/chat/`, `src/components/hud/ChatPanel.tsx` y `web/supabase/8.2a-chat.sql`: chat entre personajes (ver "Chat entre personajes").
   - `src/app/globals.css`: tema de Tailwind CSS 4. **Tipografía:** `--font-sans: var(--font-sans)` se referencia a sí misma, así que no es válida y el navegador usa su fuente estándar (en Chrome, «Times New Roman»; en Linux se pinta con Liberation Serif). Es la apariencia que ha tenido siempre el proyecto y se mantiene a propósito: en el commit `8089f90` se conectó a Geist (`--font-sans: var(--font-geist-sans)`; `layout.tsx` carga Geist con `next/font`), pero se revirtió para recuperar el aspecto anterior. Los tamaños de texto (en `rem`) no cambiaron en ningún momento: solo cambian las métricas de la fuente.
-- `frontend/`, `backend/`, `nginx/`, `vault/`, `docker-compose.yml`, `Makefile`: **proyecto original** (ft_transcendence). Solo de referencia. **No modificar ni eliminar.**
+- **Proyecto original (ft_transcendence), eliminado del repositorio (2026-11-16):** la interfaz (`frontend/`, React + Vite), el backend (Node.js/Express, sockets y el motor original del Parchís), Vault, nginx, `docker-compose.yml` y el `Makefile`. Ninguno lo usaban `web/`, sus pruebas, sus scripts ni el despliegue (Vercel compila desde `web/`). Siguen en el historial de git, por ejemplo en el commit inicial `abc4e1f` (`git show abc4e1f:backend/game/utils/boardMap.js`). El motor de `web/src/lib/engine/` y la geometría de `web/src/lib/board/geometry.ts` se portaron de ese backend (los comentarios de cada archivo indican de qué archivos del original procede cada parte); los recursos de `web/public/` (tablero, fichas y dados) se copiaron de la interfaz, y `PlayersPanel` se adaptó de su HUD. No se porta nada más del original (tampoco la animación de victoria).
+- Raíz del repositorio: `CLAUDE.md`, `.gitignore` y `README.md` (este último aún describe el proyecto original; pendiente de reescribir).
 
 ## Motor (`web/src/lib/engine/`)
 
@@ -65,7 +66,7 @@ Solo dibuja el `GameState` del motor; no contiene reglas. Todo se dibuja en un �
 ### `src/lib/board/` (sin React)
 
 - `geometry.ts`: coordenadas en el viewBox 1600.
-  - `TRACK_CELLS`: las 68 casillas, portadas de `backend/game/utils/boardMap.js` y verificadas sobre `board-path.svg`.
+  - `TRACK_CELLS`: las 68 casillas, portadas de `game/utils/boardMap.js` del backend del proyecto original (ya no está en el repositorio; ver «Estructura») y verificadas sobre `board-path.svg`.
   - `HOME_STRETCH`: las 7 casillas de color por color, portadas de `homeStretchMap.js`. Blue y green están corregidos: en el original estaban desplazados una casilla.
   - `BASE_SLOTS`: posiciones en casa, tomadas de los círculos de `board-base.svg`.
   - `GOAL_SLOTS`: posiciones en la meta (`finishedPositions` del original).
@@ -96,7 +97,7 @@ Solo dibuja el `GameState` del motor; no contiene reglas. Todo se dibuja en un �
 - `BoardPiece.tsx`: ficha con halo, PNG con sombra de color, anillo de resaltado y `<title>` accesible. El halo (`PIECE_HALO_RATIO` = 1,18) y el anillo (`PIECE_RING_RATIO` = 1,3, trazo 3) son proporcionales al tamaño de la ficha: una sola, resaltada, cabe en el ancho de la casilla (≈79), y en casa el halo cabe en el círculo (≈70). Se desplaza con una transición CSS de `transform` que dura `transitionMs`: lineal al moverse casilla a casilla y `ease-out` en el resto.
 - `BoardDemo.tsx` (`"use client"`): la demostración sobre `GameView`. Ver la página `/tablero`.
 
-### Recursos reutilizados (copiados de `frontend/public/`)
+### Recursos reutilizados (copiados de la interfaz del proyecto original)
 
 - `public/board/`: `board-base.svg`, `board-glow.svg`, `board-effects.svg` y `board-home-paths.svg` (escala 1000) y `board-path.svg` (escala 732, con las casillas numeradas). Todas son cuadradas y se superponen sobre el mismo viewBox.
   - `board-home-paths.svg` (solo la copia de `web/`): eliminados del grupo `MAIN TRACK` los 7 rectángulos verdes y los 7 azules que duplicaban `HOME LANES`. **Pendiente de decidir:** rosa y morado tienen el mismo duplicado (y = 55–349 y y = 606–900) y se han dejado sin tocar.
@@ -148,7 +149,7 @@ Ninguno usa hooks; reciben los datos ya calculados.
 
 - `DicePanel.tsx`: la cara del dado y el texto de la fase del turno, con el bonus (+20/+10 y si después repite tirada) y los seises seguidos (3 puntos; el tercero en rojo). Si recibe `onRoll`, muestra el botón *Lanzar dado*, activo solo cuando `canRoll` y no `busy` (animación en curso). El espectador no lo tendrá.
 - `DiceFace.tsx`: la cara del dado (`next/image`). Se anima con `motion-safe:animate-dice-roll` (keyframes en `globals.css`) cuando cambia `rollKey`, y se atenúa si el valor ya se ha usado.
-- `PlayersPanel.tsx`: una tarjeta por jugador con la ficha de su color como avatar, nombre, estado (*En turno*, *Esperando*, *Ganador*, *Nº puesto*), barra de progreso de su color y fichas por zona. El jugador en turno se resalta con borde y halo de su color. Adaptado de `frontend/src/game/hud/PlayersPanel.tsx`; no hay avatares de usuario ni estado de conexión.
+- `PlayersPanel.tsx`: una tarjeta por jugador con la ficha de su color como avatar, nombre, estado (*En turno*, *Esperando*, *Ganador*, *Nº puesto*), barra de progreso de su color y fichas por zona. El jugador en turno se resalta con borde y halo de su color. Adaptado del `PlayersPanel` de la interfaz del proyecto original; no hay avatares de usuario ni estado de conexión.
 - `TurnLog.tsx`: las últimas jugadas, a partir de los eventos del motor. No es el chat.
 - `ChatPanel.tsx`: el chat de los personajes (ver "Chat entre personajes"). Sin hooks.
 - Componentes shadcn usados: `ui/progress.tsx` (Base UI, sin dependencias nuevas) y `ui/button.tsx`.
@@ -203,9 +204,9 @@ Una partida real de los cuatro personajes, jugada en el navegador con el aspecto
 - **Comprobado en Chrome** (compilación de producción, manejado por CDP sin dependencias; la disposición y los controles no dependen de la semilla): sin scroll de página a 1280×720, 1440×900 y 1920×1080 (tablero de 542, 722 y 902 px); a 390 px, apilado y sin desbordamiento horizontal. Reproducción automática, pausa inmediata, siguiente acción, lanzar dado, reiniciar, partida nueva y ejemplo funcionan, sin errores de consola.
   - **Histórico (semilla 4 y regla de salida anterior; no verifica la demo actual):** una partida completa hasta la victoria desde la partida inicial de entonces, sin animaciones, tardó 4,3 min (gana Brava en la v860, con la clasificación y 39 mensajes). Sirve como orden de magnitud de una partida entera en el navegador. Con la semilla 13339 no se ha repetido (ni en Chrome ni en las pruebas: la partida completa de `demo.test.ts` parte de una partida nueva con la semilla 3, no de la inicial).
 
-## Referencias del proyecto original (para las próximas fases)
+## Referencias del proyecto original
 
-- Interfaz pendiente de portar: animación de victoria (`frontend/src/game/animations/VictoryAnimation.tsx`, que usa `react-confetti`). El chat ya está portado (`ChatPanel.tsx`, sin campo de escritura).
+- No queda nada pendiente de portar. El chat se portó (`ChatPanel.tsx`, sin campo de escritura). La animación de victoria del original (`VictoryAnimation.tsx`, con `react-confetti`) se descartó el 2026-11-16 y su carpeta se eliminó (sigue en el historial de git).
 
 ## Decisiones de arquitectura
 
@@ -955,7 +956,7 @@ Objetivo: que cada personaje pueda elegir con el LLM qué ficha mueve cuando tie
    - 🟡 8.2b Textos del chat con LLM vía Vercel AI Gateway (`nvidia/nemotron-3.5-lightning-free`), solo para las intervenciones importantes. Implementado, probado en local con un LLM simulado y con llamadas reales en Preview; **desactivado en Production** (`CHAT_LLM_ENABLED` solo en Preview; el código no lo activa en Production: `not_preview`). Pendiente: los pasos manuales de "Fase 8.2b" antes de activarlo en producción.
    - 🟡 8.3 Selector estratégico de movimientos con LLM: **F1** (opciones, prompt y parser, puros), **F2** (cliente de AI Gateway propio, solo Preview, 3 s, sin reintentos, corte temporal propio), **F3** (integración en `advanceGame` tras la reserva, solo con 2+ opciones, validación con el motor y estrategia local ante cualquier fallo) y **F4** (cupo atómico de 20 consultas por partida en Upstash, falla cerrado) implementadas y probadas sin llamar a AI Gateway ni a Redis; **F5**: variables documentadas en `web/.env.example`. Pendiente (F6): configurarlas en Vercel Preview y la prueba real. Ver «Selector estratégico con LLM».
 9. ✅ Despliegue en Vercel y portada con «Nueva partida».
-10. ⏳ Pendiente: animación de victoria.
+10. ❌ Descartada: animación de victoria (decisión del 2026-11-16: no se porta nada más del proyecto original).
 
 Rediseño de la interfaz (sin numerar, para no confundirlo con las fases técnicas de arriba):
 

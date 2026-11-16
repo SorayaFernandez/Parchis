@@ -1,7 +1,7 @@
 // Punto de entrada del motor: crear partida y aplicar acciones.
-// Sustituye a backend/game/gameEngine.js (executeMove, executeBonusMove), a la
-// tirada de backend/controllers/gameController.js y al cambio de turno por tiempo
-// de backend/game/turnTimer.js, sin temporizadores, I/O ni aleatoriedad.
+// Sustituye, del backend del proyecto original (ft_transcendence, ya no está en el repositorio), a game/gameEngine.js
+// (executeMove, executeBonusMove), a la tirada de controllers/gameController.js y al
+// cambio de turno por tiempo de game/turnTimer.js, sin temporizadores, I/O ni aleatoriedad.
 
 import {
   BASE_STEPS,
