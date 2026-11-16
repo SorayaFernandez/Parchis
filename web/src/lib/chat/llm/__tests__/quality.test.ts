@@ -2389,7 +2389,7 @@ describe("revisión de lenguaje: presentarse, «tener» o «quedarse con» la fi
     const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
     expect(lines(ERNESTO).capture_lament).toContain("Me ha comido una ficha, {rival}. Tendré que reorganizarme.");
     expect(lines(ERNESTO).ambient_lead).toContain("Voy ganando, y sin arriesgar.");
-    expect(lines(PILAR).ambient_lead).toContain("Voy ganando, hijos, y sin correr nada.");
+    expect(lines(PILAR).ambient_lead).toContain("Voy ganando, hijos. Paso a paso.");
     expect(lines(CHISPA).capture_lament).toContain("¡Qué mala pata, {rival}! Vuelta a empezar.");
   });
 
@@ -2891,5 +2891,86 @@ describe("«Eso me viene muy bien», «Me he quedado solo en la meta» y atribui
       expect(system.content, speaker).toContain("ni qué piensan otros");
       expect(user.content, speaker).not.toMatch(/me viene muy bien|pensando que/i);
     }
+  });
+});
+
+describe("cuatro prohibiciones más: «Me he quedado con la ficha», «No ha salido como esperaba», «y sin correr nada» y «Se la ha jugado con el dado»", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+  const lead = (speaker: string, rival: string) => ({ ...say(speaker, rival, { kind: "ambient_lead", trigger: "ambient", important: false }), leader: speaker });
+  const tease = (speaker: string, rival: string) => say(speaker, rival, { kind: "third_six_tease", trigger: "third_six", important: false });
+
+  it("cada expresión y sus variantes de persona, género, tiempo y puntuación se rechazan por el flujo completo y no se citan", () => {
+    const cases: [string, ReturnType<typeof say>, string][] = [
+      ["Me he quedado con la ficha, Chispa.", capturer(BRAVA, CHISPA), "quedarse con la ficha"],
+      ["¡Me quedé con la ficha!", capturer(BRAVA, CHISPA), "quedarse con la ficha"],
+      ["Te has quedado con la ficha, Brava.", victimOf(CHISPA, BRAVA), "quedarse con la ficha"],
+      ["Nos hemos quedado con las fichas.", capturer(BRAVA, CHISPA), "quedarse con la ficha"],
+      ["Me quedo con tus fichas, Chispa.", capturer(BRAVA, CHISPA), "quedarse con la ficha"],
+      ["No ha salido como esperaba, Brava.", victimOf(ERNESTO, BRAVA), "no ha salido como esperaba"],
+      ["No me ha salido como esperaba.", victimOf(ERNESTO, BRAVA), "no ha salido como esperaba"],
+      ["Esto no salió como pensaba, Brava.", victimOf(CHISPA, BRAVA), "no ha salido como esperaba"],
+      ["No ha ido como esperábamos.", victimOf(PILAR, BRAVA), "no ha salido como esperaba"],
+      ["No sale como quería, Brava.", victimOf(CHISPA, BRAVA), "no ha salido como esperaba"],
+      ["Voy ganando, hijos, y sin correr nada.", lead(PILAR, CHISPA), "sin correr nada"],
+      ["Voy ganando sin correr nada.", lead(BRAVA, CHISPA), "sin correr nada"],
+      ["Voy ganando, y sin correr.", lead(CHISPA, BRAVA), "sin correr nada"],
+      ["Se la ha jugado con el dado, Chispa.", tease(BRAVA, CHISPA), "jugársela con el dado"],
+      ["Te la has jugado con el dado, Chispa.", tease(BRAVA, CHISPA), "jugársela con el dado"],
+      ["¡Me la juego con el dado!", tease(CHISPA, BRAVA), "jugársela con el dado"],
+      ["Se la jugó con los dados.", tease(PILAR, CHISPA), "jugársela con el dado"],
+      ["Hay que jugársela con el dado.", tease(BRAVA, CHISPA), "jugársela con el dado"],
+    ];
+    for (const [text, request, expected] of cases) {
+      expect(reject(text, request), text).toEqual(term(expected));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no bloquean frases naturales parecidas", () => {
+    for (const [text, request] of [
+      ["Primer puesto. Ha salido como pensaba.", say(ERNESTO, null, { kind: "victory_win", trigger: "victory" })],
+      ["Sin correr, pero sin parar, Chispa.", say(PILAR, CHISPA, { kind: "ambient_ahead", trigger: "ambient", important: false })],
+      ["Me he quedado con una ficha en casa.", say(CHISPA, BRAVA, { kind: "ambient_behind", trigger: "ambient", important: false })],
+      ["Me he quedado con la ficha en casa.", say(CHISPA, BRAVA, { kind: "ambient_behind", trigger: "ambient", important: false })],
+      ["No esperaba ese seis, Brava.", tease(CHISPA, BRAVA)],
+      ["Me comió usted, Brava. Tomo nota.", victimOf(ERNESTO, BRAVA)],
+      ["Voy ganando, hijos. Paso a paso.", lead(PILAR, CHISPA)],
+      ["Corre, Chispa, que te pillo.", capturer(BRAVA, CHISPA)],
+      ["Tres seises, Chispa. Te quedas sin turno.", tease(BRAVA, CHISPA)],
+    ] as const) expect(reject(text, request), text).toBeNull();
+    for (const text of ["Se la ha jugado.", "Juego con el dado que me toca.", "Ha salido un seis, como esperaba."]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo, las réplicas y la demostración no las contienen; las sustitutas están en su sitio", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...Object.values(c.chat.replies).flat(), ...c.catchphrases]) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(hasDiscardedExpression(text), `${c.name}: ${text}`).toBe(false);
+          expect(text, text).not.toMatch(/quedado con la ficha|salido como esperaba|sin correr nada|jugado con el dado/i);
+        }
+      }
+    }
+    const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
+    expect(lines(ERNESTO).capture_lament).toContain("Me comió usted, {rival}. Tomo nota.");
+    expect(lines(ERNESTO).capture_lament).not.toContain("No ha salido como esperaba, {rival}. Sigamos.");
+    expect(lines(PILAR).ambient_lead).toContain("Voy ganando, hijos. Paso a paso.");
+    expect(lines(PILAR).ambient_lead).not.toContain("Voy ganando, hijos, y sin correr nada.");
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+  });
+
+  it("el prompt no las cita desde los textos recientes", () => {
+    const recent = [
+      { speaker: ERNESTO, text: "No ha salido como esperaba, Brava. Sigamos." },
+      { speaker: PILAR, text: "Voy ganando, hijos, y sin correr nada." },
+      { speaker: CHISPA, text: "Se la ha jugado con el dado, Brava." },
+      { speaker: BRAVA, text: "Me he quedado con la ficha, Chispa." },
+    ];
+    const [system, user] = buildChatPrompt({ ...victimOf(BRAVA, CHISPA), recent });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/salido como esperaba|sin correr nada|jugado con el dado|quedado con la ficha/i);
   });
 });

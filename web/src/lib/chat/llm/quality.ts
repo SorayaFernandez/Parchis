@@ -1147,7 +1147,7 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   },
   {
     term: "quedarse con la ficha",
-    re: /(?<![\p{L}])qued\p{L}*\s+con\s+(?:la\s+(?:tuya|suya|vuestra|mia|ficha\s+de)|(?:tu|su|vuestra|esa|mi)\s+ficha)(?![\p{L}])/u,
+    re: /(?<![\p{L}])qued\p{L}*\s+con\s+(?:la\s+(?:tuya|suya|vuestra|mia)|las\s+(?:tuyas|suyas|mias)|la\s+ficha(?!\s+en(?![\p{L}]))|las\s+fichas(?!\s+en(?![\p{L}]))|(?:tu|tus|su|sus|vuestra|vuestras|esa|esas|mi|mis)\s+fichas?)(?![\p{L}])/u,
   },
   { term: "bien visto", re: /(?<![\p{L}])bien\s+visto(?![\p{L}])/u },
   // «¡He llegado a casa!»: el final es la meta; a casa vuelve una ficha comida.
@@ -1198,6 +1198,21 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   {
     term: "ficha a + nombre",
     re: /(?<![\p{L}])(?:comid[oa]|comi|comio|pillad[oa]|pille|capturad[oa]|capture)\s+(?:la|su|tu|una)\s+ficha\s+a\s+(?:la\s+abuela|abuela\s+pilar|pilar|don\s+ernesto|ernesto|brava|chispa)(?![\p{L}])/u,
+  },
+  // «No ha salido como esperaba» y sus variantes de persona y tiempo («no me ha salido como esperaba», «no salió
+  // como pensaba», «no ha ido como esperábamos»…). «Ha salido como pensaba», sin negar, sigue valiendo.
+  {
+    term: "no ha salido como esperaba",
+    re: /(?<![\p{L}])no\s+(?:me\s+|te\s+|le\s+|nos\s+|os\s+|les\s+)?(?:(?:ha|han|habia|habian|ha\s+terminado\s+de)\s+)?(?:salido|salio|salieron|sale|ido|fue|fueron|va)\s+como\s+(?:yo\s+)?(?:esperaba|esperabas|esperabamos|esperaban|esperaria|queria|querias|queriamos|pensaba|pensabas|pensabamos|creia|tenia\s+previsto|habia\s+previsto|preveia|calculaba|habia\s+calculado|imaginaba)(?![\p{L}])/u,
+  },
+  // «… y sin correr nada» (y «sin correr nada», «y sin correr» al final de la frase). «Sin correr, pero sin
+  // parar» sigue valiendo.
+  { term: "sin correr nada", re: /(?<![\p{L}])(?:(?:y\s+)?sin\s+correr\s+(?:nada|nadita|ni\s+(?:un\s+)?poco)|y\s+sin\s+correr(?=\s*(?:$|[.!?,;…])))(?![\p{L}])/u },
+  // «Se la ha jugado con el dado», con cualquier persona y tiempo («me la juego con el dado», «te la jugaste con
+  // los dados», «jugársela con el dado»).
+  {
+    term: "jugársela con el dado",
+    re: /(?<![\p{L}])(?:(?:me|te|se|nos|os)\s+las?\s+(?:(?:he|has|ha|hemos|habeis|han|voy\s+a|vas\s+a|va\s+a)\s+)?j(?:ug|ueg)\p{L}*|jugar(?:me|te|se|nos|os)las?|jugandos(?:e|ela|elas))\s+con\s+(?:el|los|un)\s+dados?(?![\p{L}])/u,
   },
   {
     term: "mantengo la ventaja",
