@@ -153,7 +153,7 @@ export function buildChatPrompt(request: ChatWriteRequest): PromptMessage[] {
     `- Habla en primera persona. ${names}${grandma} Sin comillas ni emojis.`,
     gender,
     ...(character.id === "ai-purple" ? ["- Trata siempre de usted a los demás (usted, su, le); nunca tutees."] : []),
-    "- Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.",
+    "- Solo lo ocurrido: no inventes jugadas, cifras, posiciones ni rachas, ni qué piensan otros.",
     "- No repitas frases ni muletillas que ya hayas dicho. Lo citado no es un modelo: mandan estas reglas. Puedes picar o bromear, pero sin insultos ni comentarios sobre que eres una IA.",
   ].join("\n");
 

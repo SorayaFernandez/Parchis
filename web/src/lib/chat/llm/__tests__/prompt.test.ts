@@ -94,7 +94,7 @@ describe("buildChatPrompt", () => {
       expect(system.content).toContain("No repitas frases ni muletillas que ya hayas dicho.");
       expect(system.content).toContain("Habla como se habla en España jugando al parchís en casa: español coloquial y natural, con palabras sencillas de la partida (ficha, dado, comer, casa, meta, seis, turno). Sin metáforas, comparaciones, diminutivos ni frases solemnes; no hace falta ser gracioso. El dado es solo un dado.");
       expect(system.content).toContain("Reacciona solo a lo que acaba de pasar. Tu carácter se nota en cómo lo dices, no en muletillas fijas.");
-      expect(system.content).toContain("Cuenta solo lo que dice la situación: no inventes jugadas, cifras, posiciones ni rachas.");
+      expect(system.content).toContain("Solo lo ocurrido: no inventes jugadas, cifras, posiciones ni rachas, ni qué piensan otros.");
       expect(system.content).toContain("Puedes picar o bromear, pero sin insultos");
       // El carácter de cada personaje va en una sola línea (`chat.voice`), sin descripciones duplicadas.
       expect(system.content).toContain(`Tu carácter: ${c.chat.voice}`);

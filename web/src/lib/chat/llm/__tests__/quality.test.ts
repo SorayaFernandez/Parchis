@@ -2807,3 +2807,87 @@ describe("comentar la jugada, no narrarla («Le he comido una ficha a Brava y vu
     }
   });
 });
+
+describe("«Eso me viene muy bien», «Me he quedado solo en la meta» y atribuir pensamientos o emociones a otros", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+  const unbacked = (t: string) => ({ reason: "afirmación no respaldada", detail: `termino=${t}` });
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+  const tease = (speaker: string, rival: string) => say(speaker, rival, { kind: "third_six_tease", trigger: "third_six", important: false });
+
+  it("«Eso me viene muy bien» y sus variantes: rechazadas por el flujo completo y sin citarse", () => {
+    for (const text of ["Chispa, eso me viene muy bien.", "Eso me viene de perlas, Chispa.", "Me viene genial, Chispa.", "Esto me ha venido muy bien.", "Me vino que ni pintado."]) {
+      expect(reject(text, tease(BRAVA, CHISPA)), text).toEqual(term("me viene muy bien"));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("«Me he quedado solo en la meta» y sus variantes: rechazadas y sin citarse", () => {
+    for (const text of ["Me he quedado solo en la meta.", "Me he quedado sola en la meta, Chispa.", "Me quedo solo en la meta.", "Estoy sola en la meta."]) {
+      expect(reject(text, say(BRAVA, CHISPA, { kind: "goal", trigger: "goal", important: false })), text).toEqual(term("solo en la meta"));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("el mensaje real y otras atribuciones de pensamientos, intenciones o emociones a otro jugador se rechazan", () => {
+    expect(reject("¡Vaya, y tú pensando que tenías la partida ganada!", capturer(CHISPA, BRAVA))).toEqual(unbacked("atribuye pensamientos"));
+    for (const [text, expected, request] of [
+      ["Te creías la ganadora, Brava.", "atribuye pensamientos", capturer(CHISPA, BRAVA)],
+      ["Pensabas que no te pillaba, Brava.", "atribuye pensamientos", capturer(CHISPA, BRAVA)],
+      ["Ya te veías en la meta, Brava.", "atribuye pensamientos", capturer(CHISPA, BRAVA)],
+      ["Esperabas otra cosa, Brava.", "atribuye pensamientos", capturer(CHISPA, BRAVA)],
+      ["Creía usted que se libraba, Brava.", "atribuye pensamientos", capturer(ERNESTO, BRAVA)],
+      ["Ibas a por mí, Brava.", "atribuye intenciones", victimOf(CHISPA, BRAVA)],
+      ["Querías salir de casa, Brava.", "atribuye intenciones", capturer(CHISPA, BRAVA)],
+      ["Estás nerviosa, Brava.", "atribuye emociones", capturer(CHISPA, BRAVA)],
+      ["Te veo muy preocupada, Brava.", "atribuye emociones", capturer(CHISPA, BRAVA)],
+      ["Te has enfadado, Brava.", "atribuye emociones", capturer(CHISPA, BRAVA)],
+      ["Está usted muy contenta, Brava.", "atribuye emociones", victimOf(ERNESTO, BRAVA)],
+    ] as const) {
+      expect(reject(text, request), text).toEqual(unbacked(expected));
+    }
+    for (const text of ["Tú pensando que tenías la partida ganada.", "Te creías la ganadora.", "Estás nerviosa.", "Ibas a por mí."]) expect(hasDiscardedExpression(text), text).toBe(true);
+  });
+
+  it("los mensajes naturales siguen valiendo: lo que dice de sí mismo quien habla, exhortaciones y reacciones", () => {
+    for (const [text, request] of [
+      ["Creía que me ibas a comer, Brava.", victimOf(CHISPA, BRAVA)],
+      ["Pensaba que te ibas a escapar, Brava.", capturer(CHISPA, BRAVA)],
+      ["¡Qué contenta estoy! Te comí, Chispa.", capturer(BRAVA, CHISPA)],
+      ["No te confíes, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Tú tranquila, Brava, que ya te pillaré.", victimOf(CHISPA, BRAVA)],
+      ["Te veo venir, Brava.", victimOf(CHISPA, BRAVA)],
+      ["Me has comido, Brava. Qué le vamos a hacer.", victimOf(PILAR, BRAVA)],
+      ["¡Te comí, Chispa! A casa.", capturer(BRAVA, CHISPA)],
+      ["Tres seises, Chispa. Te quedas sin turno.", tease(BRAVA, CHISPA)],
+      ["Me viene el turno, Chispa.", tease(BRAVA, CHISPA)],
+      ["Una ficha más en la meta.", say(BRAVA, null, { kind: "goal", trigger: "goal", important: false })],
+    ] as const) expect(reject(text, request), text).toBeNull();
+  });
+
+  it("catálogo, coletillas y demostración: sin estas expresiones ni atribuciones; la frase de Brava, sustituida", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...c.catchphrases]) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(hasDiscardedExpression(text), `${c.name}: ${text}`).toBe(false);
+        }
+      }
+    }
+    const tease = CHARACTERS.find((c) => c.id === BRAVA)!.chat.lines.third_six_tease;
+    expect(tease).not.toContain("{rival}, eso me viene muy bien.");
+    expect(tease).toContain("{rival}, ¡te has pasado de seises!");
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+  });
+
+  it("el prompt pide no inventar lo que piensan otros y no cita frases recientes con estas expresiones", () => {
+    const recent = [{ speaker: BRAVA, text: "Chispa, eso me viene muy bien." }, { speaker: CHISPA, text: "¡Vaya, y tú pensando que tenías la partida ganada!" }];
+    for (const speaker of [BRAVA, ERNESTO, PILAR, CHISPA]) {
+      const [system, user] = buildChatPrompt({ ...say(speaker, speaker === BRAVA ? CHISPA : BRAVA, { kind: "capture_lament" }), recent });
+      expect(system.content, speaker).toContain("ni qué piensan otros");
+      expect(user.content, speaker).not.toMatch(/me viene muy bien|pensando que/i);
+    }
+  });
+});
