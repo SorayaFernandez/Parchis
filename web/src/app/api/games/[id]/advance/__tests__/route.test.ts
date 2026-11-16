@@ -162,6 +162,11 @@ describe("POST /api/games/[id]/advance", () => {
         expect(typeof deps.moveQuota?.tryConsume).toBe("function");
         expect(deps.signal).toBeInstanceOf(AbortSignal);
         expect(typeof deps.onMoveFallback).toBe("function");
+        // Trazabilidad: una línea con el modelo configurado, sin la clave.
+        const info = vi.spyOn(console, "info").mockImplementation(() => {});
+        deps.onMoveTrace?.({ source: "llm", durationMs: 812, saved: true });
+        expect(info).toHaveBeenCalledExactlyOnceWith("[llm-trace] operacion=movimiento origen=llm modelo=nvidia/nemotron-3.5-lightning-free duracion=812ms guardado=si");
+        expect(String(info.mock.calls[0][0])).not.toContain("clave-de-prueba");
       } finally {
         vi.unstubAllEnvs();
       }

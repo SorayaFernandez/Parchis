@@ -1171,3 +1171,45 @@ describe("integración: una respuesta a una captura que habla de otra cosa (part
     expect(memory.queue).toEqual([]);
   });
 });
+
+describe("trazabilidad del chat (onTrace)", () => {
+  type Trace = Parameters<NonNullable<Parameters<typeof createGatewayWriter>[0]["onTrace"]>>[0];
+  const writerWith = (respond: () => Response, extra: Partial<Parameters<typeof createGatewayWriter>[0]> = {}) => {
+    const traces: Trace[] = [];
+    let t = 1_000;
+    const f = fakeFetch(() => {
+      t += 640; // la llamada tarda 640 ms
+      return respond();
+    });
+    const writer = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), now: () => t, onTrace: (x) => traces.push(x), ...extra });
+    return { writer, traces, f };
+  };
+
+  it("una respuesta válida: origen llm con su duración; el texto devuelto no cambia", async () => {
+    const { writer, traces } = writerWith(() => completion("¡A casa, Chispa!"));
+    expect(await writer.write(request())).toEqual({ text: "¡A casa, Chispa!", source: "llm" });
+    expect(traces).toEqual([{ source: "llm", durationMs: 640 }]);
+  });
+
+  it("una respuesta rechazada o un error: origen local con el motivo fijo, sin el texto del modelo", async () => {
+    const rejected = writerWith(() => completion("¡Ay, Chispa! El dado te ha mirado mal. secreto"));
+    await expect(rejected.writer.write(request())).rejects.toBeInstanceOf(ChatLlmError);
+    expect(rejected.traces).toEqual([{ source: "local", durationMs: 640, reason: "expresión poco natural" }]);
+    expect(JSON.stringify(rejected.traces)).not.toContain("secreto");
+    const failing = writerWith(() => new Response("", { status: 500 }));
+    await expect(failing.writer.write(request())).rejects.toBeInstanceOf(ChatLlmError);
+    expect(failing.traces).toEqual([{ source: "local", durationMs: 640, reason: "AI Gateway respondió 500" }]);
+  });
+
+  it("sin petición al modelo (limitador sin permiso o corte temporal), no hay traza", async () => {
+    const denied = writerWith(() => completion("¡A casa!"), { acquire: async () => "global" });
+    await expect(denied.writer.write(request())).rejects.toBeInstanceOf(ChatLlmError);
+    expect(denied.f.calls).toHaveLength(0);
+    expect(denied.traces).toEqual([]);
+  });
+
+  it("una traza que lanza no cambia lo que devuelve el escritor", async () => {
+    const { writer } = writerWith(() => completion("¡A casa, Chispa!"), { onTrace: () => { throw new Error("traza rota"); } });
+    expect(await writer.write(request())).toEqual({ text: "¡A casa, Chispa!", source: "llm" });
+  });
+});

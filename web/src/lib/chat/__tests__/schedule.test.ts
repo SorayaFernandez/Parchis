@@ -113,6 +113,19 @@ describe("chatWriters (escritor LLM o local según las variables)", () => {
     expect(limiterState.acquired).toBe(1); // solo lo que va al modelo pide permiso
   });
 
+  it("activo: cada petición real al modelo deja una línea [llm-trace] con el origen y el modelo, sin el texto ni la clave", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: "¡Meta para Brava, sin despeinarse!" } }] })));
+    const { writer } = chatWriters(enabled);
+    await writer.write(request(false)); // lo no importante no llama al modelo: sin traza
+    expect(await writer.write(request(true))).toMatchObject({ source: "llm" });
+    const lines = info.mock.calls.map(([l]) => String(l)).filter((l) => l.startsWith("[llm-trace]"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[llm-trace\] operacion=chat origen=llm modelo=nvidia\/nemotron-3\.5-lightning-free duracion=\d+ms$/);
+    expect(lines[0]).not.toContain(KEY);
+    expect(lines[0]).not.toContain("despeinarse");
+  });
+
   it("activo pero sin Upstash: todo local (el LLM exige el limitador global) y un registro sin valores", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const fetch = vi.fn();
