@@ -340,7 +340,7 @@ export const CHARACTERS: readonly Character[] = [
         capture_lament: [
           "Interesante, {rival}. Un riesgo que no había considerado.",
           "Lo anoto, {rival}. Me ha pillado desprevenido.",
-          "No ha salido como esperaba, {rival}. Sigamos.",
+          "Me comió usted, {rival}. Tomo nota.",
           "Me ha comido una ficha, {rival}. Tendré que reorganizarme.",
         ],
         streak_boast: [
@@ -516,7 +516,7 @@ export const CHARACTERS: readonly Character[] = [
         ],
         ambient_lead: [
           "Ay, quién me lo iba a decir: voy ganando.",
-          "Voy ganando, hijos, y sin correr nada.",
+          "Voy ganando, hijos. Paso a paso.",
           "La abuela va ganando. Tomad nota, hijos.",
           "{rival}, cariño, te espero en la meta.",
         ],
