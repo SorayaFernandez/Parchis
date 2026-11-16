@@ -1572,6 +1572,46 @@ describe("expresiones retiradas, «Voy ganando» con respaldo y capturas repetid
     expect(checkQuality("¿Otra vez? ¡Me tenéis manía!", lament("ai-pink", "ai-blue", { captures: factsOf([cap(10, "ai-blue", "ai-pink")], "ai-pink") }))).toBeNull();
   });
 
+  it("dirección de «me la/lo… otra vez»: «me»/«nos» es quien recibe con el verbo en 2.ª/3.ª persona y quien captura en 1.ª", () => {
+    // Regresión: «la/lo» detrás de «me» se tomaba como una captura de quien habla al rival, así que «Me la has
+    // comido otra vez» se rechazaba aunque fuera cierto y se aceptaba con el respaldo en la otra dirección.
+    const rivalTwice = factsOf([cap(10, "ai-pink", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-blue");
+    const rivalOnce = factsOf([cap(10, "ai-pink", "ai-blue")], "ai-blue");
+    // Chispa ha comido dos veces a Brava y Brava a Chispa una (la de ahora): el respaldo está en la otra dirección.
+    const wrongWay = factsOf([cap(5, "ai-blue", "ai-pink"), cap(10, "ai-blue", "ai-pink"), cap(20, "ai-pink", "ai-blue")], "ai-blue");
+    for (const text of ["Me la has comido otra vez, Brava.", "Me lo has comido otra vez, Brava.", "Otra vez me la has comido, Brava.", "Nos la has comido otra vez, Brava."]) {
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: rivalTwice })), text).toBeNull();
+      expect(reject(text, lament("ai-blue", "ai-pink", { captures: rivalTwice })), text).toBeNull();
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: rivalOnce })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: wrongWay })), text).toEqual(unsupportedIssue("captura repetida"));
+    }
+    // Desde quien captura: «te la», «se la» y «la» solos siguen contando como capturas de quien habla al rival.
+    const selfTwice = factsOf([cap(10, "ai-pink", "ai-blue"), cap(20, "ai-pink", "ai-blue")], "ai-pink");
+    const selfOnce = factsOf([cap(10, "ai-pink", "ai-blue")], "ai-pink");
+    for (const text of ["Te la he comido otra vez, Chispa.", "Otra vez te lo he comido, Chispa."]) {
+      expect(checkQuality(text, capture("ai-pink", "ai-blue", { captures: selfTwice })), text).toBeNull();
+      expect(checkQuality(text, capture("ai-pink", "ai-blue", { captures: selfOnce })), text).toEqual(unsupportedIssue("captura repetida"));
+    }
+    // Primera persona («me/nos» reflexivo): quien habla es quien captura, también con «otra vez» delante.
+    // Regresión: con el «me» tomado siempre como víctima, estas frases se aceptaban con las capturas del rival
+    // a quien habla (y «Otra vez me lo he comido» ya se aceptaba antes sin comprobar nada).
+    const rivalTwiceOnSelf = factsOf([cap(5, "ai-blue", "ai-pink"), cap(10, "ai-blue", "ai-pink"), cap(20, "ai-pink", "ai-blue")], "ai-pink");
+    for (const text of ["Me lo he comido otra vez, Chispa.", "Me lo comí otra vez, Chispa.", "Nos lo hemos comido otra vez, Chispa.", "Otra vez me lo he comido, Chispa."]) {
+      expect(checkQuality(text, capture("ai-pink", "ai-blue", { captures: selfOnce })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, capture("ai-pink", "ai-blue", { captures: rivalTwiceOnSelf })), text).toEqual(unsupportedIssue("captura repetida"));
+      expect(checkQuality(text, capture("ai-pink", "ai-blue", { captures: selfTwice })), text).toBeNull();
+      expect(reject(text, capture("ai-pink", "ai-blue", { captures: selfTwice })), text).toBeNull();
+    }
+    // Y con el verbo en segunda o tercera persona, «me» sigue siendo quien recibe: «Otra vez me lo has comido».
+    expect(checkQuality("Otra vez me lo has comido, Brava.", lament("ai-blue", "ai-pink", { captures: rivalTwice }))).toBeNull();
+    expect(checkQuality("Otra vez me lo has comido, Brava.", lament("ai-blue", "ai-pink", { captures: wrongWay }))).toEqual(unsupportedIssue("captura repetida"));
+    // Las prohibiciones permanentes no cambian: con respaldo real se rechazan por su término.
+    for (const text of ["Me la has comido de nuevo, Brava.", "Me lo has comido de nuevo, Brava."]) {
+      expect(checkQuality(text, lament("ai-blue", "ai-pink", { captures: rivalTwice })), text).toMatchObject({ reason: "expresión poco natural", term: "se lo he comido de nuevo" });
+    }
+    expect(checkQuality("Me has comido otra ficha, Brava.", lament("ai-blue", "ai-pink", { captures: rivalTwice }))).toMatchObject({ reason: "expresión poco natural", term: "he comido otra de" });
+  });
+
   it("catálogo: ninguna expresión retirada, «ganando» solo en `ambient_lead` y la frase de Chispa sin «de nuevo»", () => {
     for (const c of CHARACTERS) {
       for (const [kind, lines] of Object.entries(c.chat.lines)) {
@@ -3118,6 +3158,8 @@ describe("«Se lo he comido de nuevo» y «¡He comido otra de {rival}!», prohi
       ["Te como de nuevo, Chispa.", capturer(BRAVA, CHISPA), AGAIN],
       ["Me has comido de nuevo, Brava.", victimOf(CHISPA, BRAVA), AGAIN],
       ["De nuevo me has comido...", victimOf(CHISPA, BRAVA), AGAIN],
+      ["Me la has comido de nuevo, Brava.", victimOf(CHISPA, BRAVA), AGAIN],
+      ["Me lo has comido de nuevo...", victimOf(CHISPA, BRAVA), AGAIN],
       ["Le he comido de nuevo, Abuela Pilar.", capturer(ERNESTO, PILAR), AGAIN],
       ["Se la comí de nuevo, Abuela Pilar.", capturer(ERNESTO, PILAR), AGAIN],
       ["¡He comido otra de Chispa!", capturer(BRAVA, CHISPA), ANOTHER],
@@ -3137,14 +3179,9 @@ describe("«Se lo he comido de nuevo» y «¡He comido otra de {rival}!», prohi
       expect(reject(text, request), text).toEqual(term);
       expect(hasDiscardedExpression(text), text).toBe(true);
     }
-    // Sin dos capturas reales también se rechazan (antes, como captura repetida no respaldada), y con «me la/lo»
-    // también (la comprobación de capturas repetidas las frena antes, con otro motivo).
+    // Sin dos capturas reales también se rechazan (antes, como captura repetida no respaldada).
     const once = say(BRAVA, CHISPA, { kind: "capture_boast", captures: factsOf([cap(10, BRAVA, CHISPA)], BRAVA) });
     for (const text of ["Te he comido de nuevo, Chispa.", "¡He comido otra de Chispa!", "Te he comido otra, Chispa."]) expect(reject(text, once), text).not.toBeNull();
-    for (const text of ["Me la has comido de nuevo, Brava.", "Me lo has comido de nuevo..."]) {
-      expect(reject(text, victimOf(CHISPA, BRAVA)), text).not.toBeNull();
-      expect(hasDiscardedExpression(text), text).toBe(true);
-    }
   });
 
   it("no bloquean las capturas ni los «de nuevo» y «otra» legítimos", () => {
@@ -3188,6 +3225,92 @@ describe("«Se lo he comido de nuevo» y «¡He comido otra de {rival}!», prohi
       ],
     });
     expect(`${system.content}\n${user.content}`).not.toMatch(/comido de nuevo|comido otra/i);
+  });
+});
+
+describe("«Se fue la de {rival}. Me fui yo.», «Ya cerré mi ruta» y «Le he comido la ficha negra», prohibidas", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (name: string) => ({ reason: "expresión poco natural", detail: `termino=${name}` });
+  const ambient = (speaker: string, rival: string) => say(speaker, rival, { kind: "ambient_ahead", trigger: "ambient", important: false });
+  const goal = (speaker: string) => say(speaker, null, { kind: "goal", trigger: "goal", important: false });
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+
+  it("se rechazan con sus variantes de persona, pronombre, género, tiempo, orden y puntuación, y no se citan", () => {
+    const cases: [string, ReturnType<typeof say>, string][] = [
+      ["Se fue la de Chispa. Me fui yo.", ambient(BRAVA, CHISPA), "se fue la de"],
+      ["Se fue la de Chispa.", ambient(BRAVA, CHISPA), "se fue la de"],
+      ["Se ha ido la de Brava.", ambient(PILAR, BRAVA), "se fue la de"],
+      ["Se fueron las de Chispa.", ambient(BRAVA, CHISPA), "se fue la de"],
+      ["Se va la tuya, Brava.", ambient(CHISPA, BRAVA), "se fue la de"],
+      ["La de Brava se fue.", ambient(CHISPA, BRAVA), "se fue la de"],
+      ["La tuya ya se ha ido, Chispa.", ambient(BRAVA, CHISPA), "se fue la de"],
+      ["Se fue a casa la de Chispa.", ambient(BRAVA, CHISPA), "se fue la de"],
+      ["Me fui yo.", ambient(BRAVA, CHISPA), "me fui yo"],
+      ["¡Me he ido yo, Chispa!", ambient(BRAVA, CHISPA), "me fui yo"],
+      ["Me voy yo.", ambient(PILAR, BRAVA), "me fui yo"],
+      ["Te fuiste tú, Chispa.", ambient(BRAVA, CHISPA), "me fui yo"],
+      ["Se fue usted, Don Ernesto.", ambient(PILAR, ERNESTO), "me fui yo"],
+      ["Ya cerré mi ruta.", goal(BRAVA), "ya cerre mi ruta"],
+      ["¡Ya he cerrado mi ruta!", goal(CHISPA), "ya cerre mi ruta"],
+      ["Cierro mi ruta.", goal(PILAR), "ya cerre mi ruta"],
+      ["Mi ruta ya está cerrada.", goal(BRAVA), "ya cerre mi ruta"],
+      ["Ya terminé mi ruta.", goal(BRAVA), "ya cerre mi ruta"],
+      ["Le he comido la ficha negra.", capturer(ERNESTO, PILAR), "ficha negra"],
+      ["¡Te comí la ficha negra, Chispa!", capturer(BRAVA, CHISPA), "ficha negra"],
+      ["Le he comido la negra, Abuela Pilar.", capturer(ERNESTO, PILAR), "ficha negra"],
+      ["¡Te he comido tu negra, Chispa!", capturer(BRAVA, CHISPA), "ficha negra"],
+      ["Me como la ficha de color negro, Chispa.", capturer(BRAVA, CHISPA), "ficha negra"],
+    ];
+    for (const [text, request, name] of cases) {
+      expect(reject(text, request), text).toEqual(term(name));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no bloquean expresiones legítimas parecidas", () => {
+    for (const [text, request] of [
+      ["Me voy a por ti, Chispa.", ambient(BRAVA, CHISPA)],
+      ["Ya llegué a la meta.", goal(BRAVA)],
+      ["¡Otra en la meta! Esto marcha bien.", goal(BRAVA)],
+      ["¡Te comí, Chispa!", capturer(BRAVA, CHISPA)],
+      ["Le he comido su ficha, Abuela Pilar.", capturer(ERNESTO, PILAR)],
+    ] as const) expect(reject(text, request), text).toBeNull();
+    for (const text of [
+      "Me voy a casa, Brava.",
+      "Se fue a casa, Chispa.",
+      "La ficha de Brava vuelve a casa.",
+      "Se fue el turno.",
+      "Te vas tu ficha a casa.",
+      "Cierra la barrera, Chispa.",
+      "Ya terminé.",
+      "Sigo mi camino.",
+      "Vaya racha negra llevo.",
+      "Te comí la ficha morada, Chispa.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo, las réplicas, la demostración y el prompt no las contienen ni las citan", async () => {
+    const rivals = ["Brava", "Don Ernesto", "Abuela Pilar", "Chispa"];
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...Object.values(c.chat.replies).flat(), ...c.catchphrases, c.chat.voice]) {
+        for (const rival of rivals) {
+          const text = line.replaceAll("{rival}", rival).replaceAll("{count}", "tres").replaceAll("{Count}", "Tres").replaceAll("{ritmo}", "seguidas");
+          expect(hasDiscardedExpression(text), `${c.name}: ${text}`).toBe(false);
+        }
+        expect(line, `${c.name}: ${line}`).not.toMatch(/ruta|negr[ao]|me fui yo|se fue la de/iu);
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+    const [system, user] = buildChatPrompt({
+      ...capturer(BRAVA, CHISPA),
+      recent: [
+        { speaker: CHISPA, text: "Se fue la de Brava. Me fui yo." },
+        { speaker: PILAR, text: "Ya cerré mi ruta." },
+        { speaker: ERNESTO, text: "Le he comido la ficha negra." },
+      ],
+    });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/me fui yo|se fue la de|ruta|negra/i);
   });
 });
 

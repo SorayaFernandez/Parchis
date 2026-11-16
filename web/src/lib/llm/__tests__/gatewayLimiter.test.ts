@@ -227,6 +227,18 @@ describe("getGatewayLimiter", () => {
     expect(getGatewayLimiter(env)).toBe(first);
     expect(getGatewayLimiter({ KV_REST_API_URL: "https://otro.upstash.io", KV_REST_API_TOKEN: "otro-token-largo" })).not.toBeNull();
   });
+
+  it("regresión: UPSTASH_REDIS_REST_* vacías (o con espacios) cuentan como ausentes y se usan las KV_REST_API_*", () => {
+    const kv = { KV_REST_API_URL: "https://otro.upstash.io", KV_REST_API_TOKEN: "otro-token-largo" };
+    for (const empty of ["", "   "]) {
+      expect(getGatewayLimiter({ UPSTASH_REDIS_REST_URL: empty, UPSTASH_REDIS_REST_TOKEN: empty, ...kv }), JSON.stringify(empty)).not.toBeNull();
+      // Todas vacías: sin limitador (y, por tanto, sin modelo), como sin variables.
+      expect(getGatewayLimiter({ UPSTASH_REDIS_REST_URL: empty, UPSTASH_REDIS_REST_TOKEN: empty, KV_REST_API_URL: empty, KV_REST_API_TOKEN: empty })).toBeNull();
+    }
+    // Con las UPSTASH_* válidas siguen teniendo prioridad: el mismo limitador que solo con ellas.
+    const upstash = { UPSTASH_REDIS_REST_URL: "https://ejemplo.upstash.io", UPSTASH_REDIS_REST_TOKEN: "token-largo-de-prueba" };
+    expect(getGatewayLimiter({ ...upstash, ...kv })).toBe(getGatewayLimiter(upstash));
+  });
 });
 
 describe("observabilidad: motivo de cada denegación, reloj y resumen agregado", () => {
