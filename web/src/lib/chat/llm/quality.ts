@@ -1214,6 +1214,21 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "jugársela con el dado",
     re: /(?<![\p{L}])(?:(?:me|te|se|nos|os)\s+las?\s+(?:(?:he|has|ha|hemos|habeis|han|voy\s+a|vas\s+a|va\s+a)\s+)?j(?:ug|ueg)\p{L}*|jugar(?:me|te|se|nos|os)las?|jugandos(?:e|ela|elas))\s+con\s+(?:el|los|un)\s+dados?(?![\p{L}])/u,
   },
+  // «Segunda vez en nada» y sus variantes («otra vez en nada», «tres veces en nada», «dos en nada», «dos capturas en
+  // nada de tiempo»). «En nada te alcanzo» o «esto no queda en nada», sin cifra ni ordinal delante, siguen valiendo.
+  {
+    term: "vez en nada",
+    re: /(?<![\p{L}])(?:(?:primera|segunda|tercera|cuarta|quinta|otra)\s+vez|(?:dos|tres|cuatro|cinco|seis|siete|ocho|\d+)(?:\s+(?:veces|capturas|fichas))?)\s+en\s+nada(?![\p{L}])/u,
+  },
+  // «Lleva dos perdidas» y sus variantes de persona y formulación («llevo tres perdidas», «ya van dos perdidas», «dos
+  // fichas perdidas»). «Dos tiradas perdidas» o «he perdido dos fichas» no son esta expresión.
+  { term: "lleva dos perdidas", re: /(?<![\p{L}])(?:dos|tres|cuatro|cinco|seis|siete|ocho|\d+)\s+(?:fichas\s+)?perdid[oa]s(?![\p{L}])/u },
+  // «(Se lleva) la captura y yo sigo sin ella» y sus variantes («yo sigo sin ninguna», «sigo sin capturar», «me quedo
+  // sin comer ninguna», «sigue sin captura»). «Sigo sin sacar un cinco» o «me quedo sin turno» siguen valiendo.
+  {
+    term: "sigo sin captura",
+    re: /(?<![\p{L}])(?:(?:la|una)\s+captura\s+y\s+yo\s+(?:sigo\s+|me\s+quedo\s+)?sin|(?:sigo|seguimos|sigues|sigue|siguen|me\s+quedo|me\s+he\s+quedado)\s+sin\s+(?:ella|ninguna(?:\s+captura)?|capturas?|capturar|comer(?:me)?(?:\s+(?:nada|ninguna|ni\s+una))?))(?![\p{L}])/u,
+  },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,

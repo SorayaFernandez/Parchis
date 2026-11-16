@@ -2974,3 +2974,71 @@ describe("cuatro prohibiciones más: «Me he quedado con la ficha», «No ha sal
     expect(`${system.content}\n${user.content}`).not.toMatch(/salido como esperaba|sin correr nada|jugado con el dado|quedado con la ficha/i);
   });
 });
+
+describe("tres prohibiciones más: «Segunda vez en nada», «lleva dos perdidas» y «la captura y yo sigo sin ella»", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+  const ahead = (speaker: string, rival: string) => say(speaker, rival, { kind: "ambient_ahead", trigger: "ambient", important: false });
+
+  it("cada expresión y sus variantes se rechazan por el flujo completo y no se citan", () => {
+    const cases: [string, ReturnType<typeof say>, string][] = [
+      ["Segunda vez en nada.", victimOf(CHISPA, BRAVA), "vez en nada"],
+      ["¡Otra vez en nada, Brava!", victimOf(CHISPA, BRAVA), "vez en nada"],
+      ["Tercera vez en nada, Chispa.", capturer(BRAVA, CHISPA), "vez en nada"],
+      ["Dos veces en nada, Brava.", victimOf(PILAR, BRAVA), "vez en nada"],
+      ["¡Dos en nada!", capturer(CHISPA, BRAVA), "vez en nada"],
+      ["Chispa lleva dos perdidas.", capturer(BRAVA, CHISPA), "lleva dos perdidas"],
+      ["Llevo tres perdidas, Brava.", victimOf(CHISPA, BRAVA), "lleva dos perdidas"],
+      ["Ya llevas dos perdidas, Chispa.", capturer(BRAVA, CHISPA), "lleva dos perdidas"],
+      ["Van dos fichas perdidas, Brava.", victimOf(PILAR, BRAVA), "lleva dos perdidas"],
+      ["Tú te llevas la captura y yo sigo sin ella.", victimOf(CHISPA, BRAVA), "sigo sin captura"],
+      ["Brava se lleva la captura y yo sin ella.", victimOf(CHISPA, BRAVA), "sigo sin captura"],
+      ["Y yo sigo sin ninguna, Brava.", victimOf(CHISPA, BRAVA), "sigo sin captura"],
+      ["Sigo sin capturar, Chispa.", ahead(BRAVA, CHISPA), "sigo sin captura"],
+      ["Me quedo sin comer ninguna, Brava.", victimOf(PILAR, BRAVA), "sigo sin captura"],
+      ["Chispa sigue sin captura.", ahead(BRAVA, CHISPA), "sigo sin captura"],
+    ];
+    for (const [text, request, expected] of cases) {
+      expect(reject(text, request), text).toEqual(term(expected));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no bloquean frases naturales parecidas", () => {
+    for (const [text, request] of [
+      ["En nada te alcanzo, Brava.", ahead(CHISPA, BRAVA)],
+      ["Esto no queda en nada, Chispa.", ahead(BRAVA, CHISPA)],
+      ["Dos tiradas perdidas, Brava. Qué mala pata.", ahead(CHISPA, BRAVA)],
+      ["Sigo sin sacar un cinco.", ahead(PILAR, CHISPA)],
+      ["Tres seises, Chispa. Te quedas sin turno.", say(BRAVA, CHISPA, { kind: "third_six_tease", trigger: "third_six", important: false })],
+      ["Me comiste, Brava. Ya te pillaré.", victimOf(CHISPA, BRAVA)],
+      ["Me comió usted, Brava. Tomo nota.", victimOf(ERNESTO, BRAVA)],
+    ] as const) expect(reject(text, request), text).toBeNull();
+    for (const text of ["He perdido dos fichas.", "La captura es tuya, Brava.", "Sigo sin prisa.", "Nada en la meta todavía."]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo, las réplicas y la demostración no las contienen", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...Object.values(c.chat.replies).flat(), ...c.catchphrases]) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(hasDiscardedExpression(text), `${c.name}: ${text}`).toBe(false);
+        }
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+  });
+
+  it("el prompt no las sugiere ni las cita desde los textos recientes", () => {
+    const recent = [
+      { speaker: CHISPA, text: "Segunda vez en nada." },
+      { speaker: PILAR, text: "Chispa lleva dos perdidas." },
+      { speaker: CHISPA, text: "Tú te llevas la captura y yo sigo sin ella." },
+    ];
+    const [system, user] = buildChatPrompt({ ...victimOf(BRAVA, CHISPA), recent });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/en nada|perdidas|sigo sin/i);
+  });
+});
