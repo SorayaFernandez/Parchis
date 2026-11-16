@@ -174,8 +174,8 @@ describe("cada regla nueva por separado", () => {
     expect(checkQuality("¡Don Chispa, qué susto!", say("ai-blue", "ai-pink"))).toEqual({ reason: "mezcla nombres de personajes", term: "don chispa" });
     expect(checkQuality("¡Doña Brava, a casa!", say("ai-blue", "ai-pink"))).toEqual({ reason: "mezcla nombres de personajes", term: "doña brava" });
     // Los alias de quien participa sí se pueden usar.
-    expect(reject("Pilar, esa ficha vuelve a su casa, como estaba previsto.", say("ai-purple", "ai-green"))).toBeNull();
-    expect(reject("Abuela Pilar, esa ficha vuelve a su casa.", say("ai-blue", "ai-green"))).toBeNull();
+    expect(reject("Pilar, ha sido una buena jugada.", say("ai-purple", "ai-green"))).toBeNull();
+    expect(reject("Abuela Pilar, te he pillado.", say("ai-blue", "ai-green"))).toBeNull();
   });
 
   it("usted: solo afecta a Don Ernesto", () => {
@@ -2743,5 +2743,67 @@ describe("«Me la he comido», «Ya va siendo hora» y afirmar que un rival gana
     const recent = [{ speaker: BRAVA, text: "¡Abuela, me la he comido y ya va siendo hora!" }, { speaker: CHISPA, text: "¡Ya era hora!" }];
     const [system, user] = buildChatPrompt({ ...victimOf(PILAR, BRAVA), recent });
     expect(`${system.content}\n${user.content}`).not.toMatch(/me la he comido|siendo hora|ya era hora/i);
+  });
+});
+
+describe("comentar la jugada, no narrarla («Le he comido una ficha a Brava y vuelve a su casa»)", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const NARRATION = { reason: "expresión poco natural", detail: "termino=narración de la jugada" };
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+
+  it("el mensaje real de Don Ernesto se rechaza por el flujo completo, y la frase pedida se acepta con cada rival", () => {
+    expect(reject("Le he comido una ficha a Brava y vuelve a su casa.", capturer(ERNESTO, BRAVA))).toEqual(NARRATION);
+    for (const rival of [BRAVA, PILAR, CHISPA]) {
+      const name = CHARACTERS.find((c) => c.id === rival)!.name;
+      expect(reject(`${name}, le he comido una ficha.`, capturer(ERNESTO, rival)), name).toBeNull();
+    }
+  });
+
+  it("variantes que encadenan la captura y su consecuencia: rechazadas y sin citarse", () => {
+    for (const [text, request] of [
+      ["Te comí y vuelves a casa, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Te he pillado y tu ficha vuelve a casa, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Chispa, esa ficha vuelve a su casa.", capturer(BRAVA, CHISPA)],
+      ["Me has comido y vuelvo a casa, Brava.", victimOf(CHISPA, BRAVA)],
+      ["Le he comido una ficha a Chispa y se va a su casa.", capturer(ERNESTO, CHISPA)],
+    ] as const) {
+      expect(reject(text, request), text).toEqual(NARRATION);
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("las reacciones cortas siguen valiendo", () => {
+    for (const [text, request] of [
+      ["¡Te comí, Chispa! A casa.", capturer(BRAVA, CHISPA)],
+      ["¡A casa, Chispa!", capturer(BRAVA, CHISPA)],
+      ["Vuelve a casa, Chispa.", capturer(BRAVA, CHISPA)],
+      ["¡Te he comido, Chispa! Vuelta a empezar.", capturer(BRAVA, CHISPA)],
+      ["Ay, qué pena. A casita, Chispa.", capturer(PILAR, CHISPA)],
+      ["Me has comido, Brava. Qué le vamos a hacer.", victimOf(PILAR, BRAVA)],
+    ] as const) expect(reject(text, request), text).toBeNull();
+  });
+
+  it("el catálogo y la demostración no narran jugadas", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of Object.values(c.chat.lines).flat()) {
+        for (const rival of CHARACTERS.filter((r) => r.id !== c.id)) {
+          const text = line.replaceAll("{rival}", rival.name);
+          expect(hasDiscardedExpression(text), `${c.name}: ${text}`).toBe(false);
+        }
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(m.text, m.text).not.toMatch(/vuelve a su casa|\by vuelves? a casa/i);
+  });
+
+  it("el prompt ya no sugiere la consecuencia y pide comentar sin narrar; tampoco cita frases narradas", () => {
+    const recent = [{ speaker: ERNESTO, text: "Le he comido una ficha a Brava y vuelve a su casa." }];
+    for (const [speaker, rival, kind] of [[ERNESTO, BRAVA, "capture_boast"], [BRAVA, ERNESTO, "capture_lament"]] as const) {
+      const [system, user] = buildChatPrompt({ ...say(speaker, rival, { kind }), recent });
+      const prompt = `${system.content}\n${user.content}`;
+      expect(prompt, kind).not.toMatch(/vuelve a (su|tu) casa/i);
+      expect(user.content, kind).toContain("coméntalo sin narrarlo");
+    }
   });
 });

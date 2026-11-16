@@ -1176,6 +1176,13 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
   },
   // «Ya va siendo hora» y sus variantes («va/iba siendo hora», «ya era hora», «ya es hora»).
   { term: "ya va siendo hora", re: /(?<![\p{L}])(?:(?:ya\s+)?(?:va|iba)\s+siendo\s+hora|ya\s+(?:era|es)\s+hora)(?![\p{L}])/u },
+  // Narrar la jugada y sus consecuencias en lugar de comentarla («Le he comido una ficha a Brava y vuelve a su
+  // casa», «esa ficha vuelve a su casa»). Siguen valiendo las reacciones cortas: «¡Te comí! A casa.», «¡A casa,
+  // Chispa!», «Vuelve a casa, Chispa», «Brava, le he comido una ficha».
+  {
+    term: "narración de la jugada",
+    re: /(?<![\p{L}])(?:(?:vuelve|vuelven|regresa|regresan|volvera|volveran|se\s+va|se\s+van)\s+a\s+su\s+casa|(?:comid[oa]s?|comi|como|comio|comiste|pillad[oa]s?|pille|pillo|capturad[oa]s?|capture|capturo)(?![\p{L}])[^.!?…]*?\s+y\s+(?:(?:su|tu|mi|la|esa)\s+ficha\s+)?(?:vuelve|vuelves|vuelvo|regresa|regresas|se\s+va|te\s+vas|me\s+voy|va|vas|voy|volvera|volveras)\s+a\s+(?:su\s+|tu\s+|mi\s+)?(?:casa|casita|la\s+salida))(?![\p{L}])/u,
+  },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,

@@ -266,3 +266,56 @@ describe("afirmar que un rival gana: solo si ya ha ganado de verdad", () => {
     }
   });
 });
+
+describe("«la partida» no excluye la afirmación (M-a de la auditoría final)", () => {
+  const STANDING = { leader: BRAVA, last: CHISPA } as const;
+
+  it("se reconocen con y sin «la partida», en primera persona y del rival, ganando y perdiendo", () => {
+    const kinds = (text: string, speaker: string = BRAVA) => positionClaims(text, speaker).map((c) => `${c.kind}:${c.subject}`);
+    for (const [text, expected] of [
+      ["Voy ganando.", "lead:self"], ["Voy ganando la partida.", "lead:self"], ["Estoy ganando la partida, Chispa.", "lead:self"],
+      ["Voy perdiendo.", "last:self"], ["Voy perdiendo la partida.", "last:self"], ["Sigo perdiendo la partida.", "last:self"],
+      ["Vas ganando, Chispa.", "lead:rival"], ["Vas ganando la partida, Chispa.", "lead:rival"],
+      ["Vas perdiendo la partida, Chispa.", "last:rival"], ["Chispa va perdiendo la partida.", "last:rival"],
+    ] as const) expect(kinds(text), text).toEqual([expected]);
+  });
+
+  it("líder y último: solo con la clasificación real que los respalda", () => {
+    expect(unbackedPositionClaim("Voy ganando la partida.", say(BRAVA, CHISPA, STANDING))).toBeNull();
+    expect(unbackedPositionClaim("Voy ganando la partida.", say(ERNESTO, CHISPA, STANDING))).toBe("voy ganando");
+    expect(unbackedPositionClaim("Voy perdiendo la partida.", say(CHISPA, BRAVA, STANDING))).toBeNull();
+    expect(unbackedPositionClaim("Voy perdiendo la partida.", say(PILAR, BRAVA, STANDING))).toBe("voy perdiendo");
+    expect(unbackedPositionClaim("Vas ganando la partida, Brava.", say(CHISPA, BRAVA, STANDING))).toBeNull();
+    expect(unbackedPositionClaim("Vas ganando la partida, Pilar.", say(CHISPA, PILAR, STANDING))).toBe("vas ganando");
+    expect(unbackedPositionClaim("Vas perdiendo la partida, Chispa.", say(BRAVA, CHISPA, STANDING))).toBeNull();
+    expect(unbackedPositionClaim("Vas perdiendo la partida, Pilar.", say(BRAVA, PILAR, STANDING))).toBe("vas perdiendo");
+  });
+
+  it("empate y clasificación no disponible: no se puede afirmar, con o sin «la partida»", () => {
+    for (const text of ["Voy ganando.", "Voy ganando la partida."]) {
+      expect(unbackedPositionClaim(text, say(BRAVA, CHISPA, { leader: null, last: CHISPA })), text).toBe("voy ganando");
+      expect(unbackedPositionClaim(text, say(BRAVA, CHISPA, {})), text).toBe("voy ganando");
+    }
+    for (const text of ["Voy perdiendo.", "Voy perdiendo la partida."]) {
+      expect(unbackedPositionClaim(text, say(CHISPA, BRAVA, { leader: BRAVA, last: null })), text).toBe("voy perdiendo");
+      expect(unbackedPositionClaim(text, say(CHISPA, BRAVA, {})), text).toBe("voy perdiendo");
+    }
+  });
+
+  it("siguen sin ser afirmaciones de posición los otros sentidos, también con «la»", () => {
+    for (const text of [
+      "Estoy perdiendo la paciencia.", "Voy perdiendo la cuenta.", "Voy ganando la confianza.", "Estoy ganando tiempo.", "Voy perdiendo fichas.",
+      "Estoy perdiendo la paciencia con esta partida.", "Voy ganando terreno.", "No te quedes atrás.",
+    ]) expect(positionClaims(text, BRAVA), text).toEqual([]);
+  });
+
+  it("por el flujo completo del validador: rechazado sin respaldo, aceptado con él", async () => {
+    const { checkQuality } = await import("../llm/quality");
+    const request = (speaker: string, rival: string, standing: { leader?: string | null; last?: string | null }) =>
+      ({ utterance: { speaker, kind: "ambient_ahead", rival, trigger: "ambient", replyTo: null, important: false }, recent: [], replyToText: null, ...standing }) as Parameters<typeof checkQuality>[1];
+    expect(checkQuality("Voy ganando la partida.", request(ERNESTO, CHISPA, STANDING))).toEqual({ reason: "afirmación no respaldada", term: "voy ganando" });
+    expect(checkQuality("Voy ganando la partida.", request(BRAVA, CHISPA, STANDING))).toBeNull();
+    expect(checkQuality("Voy perdiendo la partida.", request(PILAR, BRAVA, STANDING))).toEqual({ reason: "afirmación no respaldada", term: "voy perdiendo" });
+    expect(checkQuality("Estoy perdiendo la paciencia.", request(PILAR, BRAVA, STANDING))).toBeNull();
+  });
+});

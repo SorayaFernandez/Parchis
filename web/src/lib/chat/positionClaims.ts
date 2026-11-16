@@ -38,8 +38,11 @@ export interface PositionClaim {
 
 const PILAR = "ai-green";
 const ADVERB = String.raw`(?:(?:ya|todavia|aun|de\s+momento|claramente)\s+)?`;
-/** Objeto que cambia el sentido: «estoy perdiendo la paciencia», «voy ganando tiempo». */
-const NOT_OBJECT = String.raw`(?!\s+(?:la|el|los|las|lo|mi|mis|tu|tus|su|sus|un|una|tiempo|turnos?|fichas?|paciencia|terreno|confianza)(?![\p{L}]))`;
+/**
+ * Objeto que cambia el sentido: «estoy perdiendo la paciencia», «voy ganando tiempo». «la partida» no cuenta
+ * como tal objeto: «voy ganando la partida» y «vas perdiendo la partida» son afirmaciones de posición.
+ */
+const NOT_OBJECT = String.raw`(?!\s+(?:la(?!\s+partida(?![\p{L}]))|el|los|las|lo|mi|mis|tu|tus|su|sus|un|una|tiempo|turnos?|fichas?|paciencia|terreno|confianza)(?![\p{L}]))`;
 
 const VERBS: Readonly<Record<Subject | "third", string>> = {
   self: "voy|estoy|sigo",
