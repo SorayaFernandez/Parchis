@@ -1,7 +1,8 @@
 // Posiciones y barreras.
-// Portado de backend/game/utils/{getRealBoardPosition,getDistanceToHomeEntry,
-// isEnteringHomeStretch}.js y backend/game/rules/{getBlockades,isPositionBlocked,
-// isDestinationBlocked}.js. isBlockade.js e isEnemyBlockade.js no se usaban.
+// Portado del backend del proyecto original (ft_transcendence, ya no está en el repositorio):
+// game/utils/{getRealBoardPosition,getDistanceToHomeEntry,isEnteringHomeStretch}.js y
+// game/rules/{getBlockades,isPositionBlocked,isDestinationBlocked}.js. isBlockade.js e
+// isEnemyBlockade.js no se usaban.
 
 import {
   HOME_ENTRIES,

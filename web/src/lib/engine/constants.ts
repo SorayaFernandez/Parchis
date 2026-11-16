@@ -1,4 +1,4 @@
-// Constantes del Parchís. Portadas de backend/game/constants.js.
+// Constantes del Parchís. Portadas de game/constants.js del backend del proyecto original (ft_transcendence, ya no está en el repositorio).
 
 import type { Color } from "./types";
 

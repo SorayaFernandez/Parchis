@@ -17,6 +17,7 @@ import { logLlmTrace } from "@/lib/llm/trace";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
 import { guardAdvance } from "@/lib/security/guards";
+import { checkSameOriginJsonPost } from "@/lib/security/sameOrigin";
 
 const BodySchema = z.strictObject({
   expectedVersion: z.number().int().min(1),
@@ -68,6 +69,10 @@ async function readBody(request: Request) {
 
 export async function POST(request: Request, ctx: RouteContext<"/api/games/[id]/advance">) {
   const { id } = await ctx.params;
+
+  // Solo desde la propia aplicación y con cuerpo JSON (403/415); antes de los límites y sin tocar la BD.
+  const rejected = checkSameOriginJsonPost(request);
+  if (rejected) return rejected;
 
   // Límites por IP + partida y por IP (si el proveedor falla, se deja pasar: el servidor ya limita a
   // un avance por versión). Va antes de leer el cuerpo y de tocar la BD.

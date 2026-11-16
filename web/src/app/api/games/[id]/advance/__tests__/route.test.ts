@@ -26,13 +26,37 @@ const { GameRepositoryError } = await import("@/lib/game/repository");
 
 const ID = "751bb3b5-52dc-4e00-86eb-3085d4357dad";
 const post = (body: string | undefined, id = ID) =>
-  POST(new Request(`http://localhost/api/games/${id}/advance`, { method: "POST", body }), { params: Promise.resolve({ id }) });
+  POST(new Request(`http://localhost/api/games/${id}/advance`, { method: "POST", body, headers: { "Content-Type": "application/json" } }), { params: Promise.resolve({ id }) });
 
 describe("POST /api/games/[id]/advance", () => {
   beforeEach(() => {
     advanceGame.mockReset();
     scheduleDrain.mockReset();
     vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("CSRF: acepta la propia aplicación; 403 con un origen externo o cross-site y 415 sin JSON, sin avanzar", async () => {
+    advanceGame.mockResolvedValue({ kind: "not_found" });
+    const send = (headers: Record<string, string>) =>
+      POST(new Request(`http://localhost/api/games/${ID}/advance`, { method: "POST", body: '{"expectedVersion":1}', headers }), { params: Promise.resolve({ id: ID }) });
+    expect((await send({ "Content-Type": "application/json", Origin: "http://localhost", "Sec-Fetch-Site": "same-origin" })).status).toBe(404);
+    expect((await send({ "Content-Type": "application/json" })).status).toBe(404); // sin Origin ni Sec-Fetch-Site
+    expect(advanceGame).toHaveBeenCalledTimes(2);
+    advanceGame.mockClear();
+    const cases: [Record<string, string>, number, string][] = [
+      [{ "Content-Type": "application/json", Origin: "https://evil.example" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "application/json", Origin: "null" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site", Origin: "http://localhost" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "text/plain;charset=UTF-8", Origin: "http://localhost" }, 415, "unsupported_media_type"],
+      [{}, 415, "unsupported_media_type"],
+    ];
+    for (const [headers, status, code] of cases) {
+      const response = await send(headers);
+      expect(response.status, JSON.stringify(headers)).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).error.code).toBe(code);
+    }
+    expect(advanceGame).not.toHaveBeenCalled();
   });
 
   it("400 si el cuerpo no es { expectedVersion: entero ≥ 1 }", async () => {
