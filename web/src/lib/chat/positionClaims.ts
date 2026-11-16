@@ -21,6 +21,7 @@
 // rechazadas siempre por `STATE_CLAIMS`.
 
 import type { PlayerId } from "@/lib/engine";
+import { CHARACTER_NAMES } from "@/lib/game/characters";
 import { normalizeText } from "./catchphrases";
 import type { ChatWriteRequest } from "./writer";
 
@@ -96,7 +97,7 @@ export function positionClaims(text: string, speaker: string): PositionClaim[] {
 }
 
 /** Datos de la clasificación que necesita la comprobación (los de `ChatWriteRequest`). */
-type StandingRequest = Pick<ChatWriteRequest, "utterance" | "leader" | "last">;
+type StandingRequest = Pick<ChatWriteRequest, "utterance" | "leader" | "last" | "winner">;
 
 /**
  * La primera afirmación de posición que la clasificación real no respalda (con su texto), o `null` si no
@@ -109,6 +110,64 @@ export function unbackedPositionClaim(text: string, request: StandingRequest): s
     const who: PlayerId | null = claim.subject === "self" ? speaker : rival;
     const holder = claim.kind === "lead" ? request.leader : request.last;
     if (!who || !holder || holder !== who) return claim.term;
+  }
+  return null;
+}
+
+// ── Afirmar que un rival gana la partida ─────────────────────────────────────────────────────────────
+//
+// «No me extraña que Brava gane», «no me extraña que ganes», «Brava va a ganar», «eres la ganadora»: solo son
+// ciertas si ese rival ya ha ganado (`winner`, de `state.ranking[0]`) o en la réplica a su victoria
+// (`victory_reply`, cuyo rival es siempre el ganador). Si todavía no ha ganado nadie, o ganó otro, se rechazan.
+// No cuentan los deseos ni las hipótesis («ojalá gane», «si ganas», «a ver si gana»), «que gane el mejor» (sin
+// el rival como sujeto), ni «ganar» con otro objeto («gana terreno», «gana una ficha», «me da la gana»).
+// La victoria propia («he ganado») la sigue comprobando `RESULT_CLAIM` (solo en la victoria).
+
+/** Nombres y alias de cada personaje, sin tildes y en minúsculas. */
+const NAME_FORMS: Readonly<Record<string, readonly string[]>> = {
+  "ai-pink": ["brava"],
+  "ai-purple": ["don ernesto", "ernesto"],
+  "ai-green": ["abuela pilar", "pilar", "la abuela", "abuela"],
+  "ai-blue": ["chispa"],
+};
+const WIN_OBJECT = String.raw`(?!\s+(?:terreno|tiempo|ventaja|confianza|casillas?|fichas?|turnos?|un|una|uno|el|los|las|mi|mis|tu|tus|su|sus|algo|nada|la(?!\s+partida)))`;
+/** Segunda persona: el sujeto es el rival al que se habla. */
+const WIN_YOU = new RegExp(String.raw`(?<![\p{L}])(ganes|ganaras|ganarias|vas\s+a\s+ganar|vayas\s+a\s+ganar|eres\s+(?:el|la)\s+ganador(?:a)?)(?![\p{L}])${WIN_OBJECT}`, "gu");
+/** Tercera persona tras «(no) me extraña que…», «normal que…», «lógico que…»: el sujeto es el rival. */
+const WIN_FACTIVE = new RegExp(
+  String.raw`(?<![\p{L}])(?:extra[ñn]a|extra[ñn]o|sorprende|normal|logico|claro)\s+que\s+(?:(?:\p{L}+\s+){0,2})?(gane|gana|ganara|vaya\s+a\s+ganar)(?![\p{L}])${WIN_OBJECT}`,
+  "gu",
+);
+const WIN_THIRD = String.raw`(gane|gana|ganara|ganaria|va\s+a\s+ganar|vaya\s+a\s+ganar|es\s+(?:el|la)\s+ganador(?:a)?)`;
+const HYPOTHESIS_BEFORE = /(?<![\p{L}])(?:ojala|a\s+ver\s+si|si|cuando|como|quiza|quizas|tal\s+vez|puede\s+que|que\s+no)\s+(?:\p{L}+\s+)?$/u;
+
+/** Quién ha ganado de verdad, según la petición: `winner` o, en la réplica a una victoria, su rival. */
+function realWinner(request: StandingRequest): PlayerId | null {
+  if (request.utterance.trigger === "victory" && request.utterance.kind === "victory_reply") return request.utterance.rival;
+  return request.winner ?? null;
+}
+
+/**
+ * La primera afirmación de que un rival gana la partida que los datos reales no respaldan, o `null`. Solo
+ * se refiere al rival de la intervención (los demás nombres ya los rechaza el validador).
+ */
+export function unbackedWinClaim(text: string, request: StandingRequest): string | null {
+  const t = normalizeText(text);
+  const { rival } = request.utterance;
+  const claims: { index: number; term: string }[] = [];
+  for (const m of t.matchAll(WIN_YOU)) claims.push({ index: m.index ?? 0, term: m[0] });
+  for (const m of t.matchAll(WIN_FACTIVE)) claims.push({ index: m.index ?? 0, term: m[0] });
+  if (rival) {
+    for (const name of NAME_FORMS[rival] ?? [normalizeText(CHARACTER_NAMES[rival] ?? "")]) {
+      const words = name.split(/\s+/).join("\\s+");
+      const re = new RegExp(String.raw`(?<![\p{L}])${words}\s+(?:(?:ya|seguro|claro|tambien|siempre)\s+)?${WIN_THIRD}(?![\p{L}])${WIN_OBJECT}`, "gu");
+      for (const m of t.matchAll(re)) claims.push({ index: m.index ?? 0, term: m[0] });
+    }
+  }
+  const winner = realWinner(request);
+  for (const claim of claims.sort((a, b) => a.index - b.index)) {
+    if (HYPOTHESIS_BEFORE.test(t.slice(0, claim.index))) continue;
+    if (!rival || winner !== rival) return claim.term.replace(/\s+/g, " ");
   }
   return null;
 }

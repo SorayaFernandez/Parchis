@@ -4,7 +4,7 @@ import { createSeededRandom } from "@/lib/game/ai";
 import { CHARACTERS, CHARACTER_IDS } from "@/lib/game/characters";
 import { getPlayerSummaries } from "@/lib/hud/summary";
 import { ambientCandidates, gameLast, gameLeader, type Utterance } from "../director";
-import { positionClaims, unbackedPositionClaim } from "../positionClaims";
+import { positionClaims, unbackedPositionClaim, unbackedWinClaim } from "../positionClaims";
 import { createLocalWriter, renderLine } from "../writer";
 
 const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"] as const;
@@ -237,5 +237,32 @@ describe("demostración", () => {
     expect(match.version).toBe(final.version);
     // La v110 decía «Voy perdiendo, sí. Por ahora.» (Brava, tercera); ahora Brava dice otra frase suya.
     expect(byVersion.get("110:0")?.text).not.toMatch(/perdiendo/i);
+  });
+});
+
+describe("afirmar que un rival gana: solo si ya ha ganado de verdad", () => {
+  const u = (speaker: string, rival: string | null, kind = "capture_lament", trigger = "capture") => ({ speaker, kind, rival, trigger, replyTo: null, important: true }) as Utterance;
+  it("sin ganador, con otro ganador, con el rival como ganador y en la réplica a su victoria", () => {
+    expect(unbackedWinClaim("No me extraña que Brava gane.", { utterance: u(PILAR, BRAVA), winner: null })).toBe("extraña que brava gane");
+    expect(unbackedWinClaim("No me extraña que Brava gane.", { utterance: u(PILAR, BRAVA) })).toBe("extraña que brava gane");
+    expect(unbackedWinClaim("No me extraña que Brava gane.", { utterance: u(PILAR, BRAVA), winner: CHISPA })).toBe("extraña que brava gane");
+    expect(unbackedWinClaim("No me extraña que Brava gane.", { utterance: u(PILAR, BRAVA), winner: BRAVA })).toBeNull();
+    expect(unbackedWinClaim("No me extraña que ganes.", { utterance: u(PILAR, BRAVA, "victory_reply", "victory") })).toBeNull();
+    expect(unbackedWinClaim("Abuela, vas a ganar.", { utterance: u(CHISPA, PILAR), winner: null })).toBe("vas a ganar");
+    expect(unbackedWinClaim("La abuela va a ganar.", { utterance: u(CHISPA, PILAR), winner: null })).toBe("la abuela va a ganar");
+  });
+  it("el escritor local nunca lo dice sin respaldo: ninguna frase del catálogo lo afirma fuera de la réplica a una victoria", () => {
+    for (const c of CHARACTERS) {
+      for (const [kind, kindLines] of Object.entries(c.chat.lines)) {
+        if (kind === "victory_reply") continue;
+        for (const rival of CHARACTER_IDS.filter((id) => id !== c.id)) {
+          const utterance = u(c.id, rival, kind);
+          for (const line of kindLines) {
+            const text = renderLine(line, utterance);
+            if (text) expect(unbackedWinClaim(text, { utterance, winner: null }), `${c.name}/${kind}: ${text}`).toBeNull();
+          }
+        }
+      }
+    }
   });
 });

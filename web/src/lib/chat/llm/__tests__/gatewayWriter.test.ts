@@ -1043,6 +1043,43 @@ describe("clasificación real: el servicio pasa `leader` y `last`, y una posici�
   });
 });
 
+describe("afirmar que un rival gana: el servicio pasa el ganador real (`winner`) y una afirmación falsa usa la frase local", () => {
+  const run = async (events: GameEvent[], ranking: string[], content: string) => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const local = { write: vi.fn(createLocalWriter(createSeededRandom(1)).write) };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    const state = createGame([...CHARACTER_IDS]);
+    state.ranking = [...ranking];
+    memory.enqueue(GAME, 4, events, state);
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    return { memory, f, failures, local };
+  };
+
+  it("sin ganador: «No me extraña que ganes» se rechaza en cada intervención y se publica la frase local una vez", async () => {
+    const { memory, f, failures, local } = await run([{ type: "piece_captured", playerId: "ai-green", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 }], [], "No me extraña que ganes.");
+    expect(memory.rows.length).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    for (const failure of failures) expect(failure).toMatchObject({ message: "afirmación no respaldada", detail: expect.stringMatching(/^termino=ganes /) });
+    expect(f.calls).toHaveLength(memory.rows.length);
+    expect(local.write).toHaveBeenCalledTimes(memory.rows.length);
+    expect(local.write.mock.calls[0][0]).toMatchObject({ winner: null });
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("con la victoria real de Chispa: la réplica «¡No me extraña que ganes!» se publica; en su propia victoria (sin rival), no", async () => {
+    const { memory } = await run([{ type: "player_finished", playerId: "ai-blue", place: 1 }], ["ai-blue"], "¡No me extraña que ganes!");
+    const win = memory.rows.find((r) => r.seq === 0)!;
+    expect(win).toMatchObject({ character_id: "ai-blue", source: "local" });
+    const reply = memory.rows.find((r) => r.seq === 1);
+    expect(reply).toBeDefined();
+    expect(reply).toMatchObject({ source: "llm", text: "¡No me extraña que ganes!" });
+  });
+});
+
 describe("final de la partida: el servicio pasa el estado real al validador", () => {
   it("victoria con la partida en juego: «se acabó la partida» se rechaza y se usa la frase local una vez; el escritor recibe gameStatus", async () => {
     const memory = createMemoryChatStore();
