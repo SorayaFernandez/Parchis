@@ -45,7 +45,7 @@ No hay registro, cuentas de usuario ni jugadores humanos. La partida la juegan s
 | Personaje | Carácter | Cómo juega |
 |---|---|---|
 | **Brava** | Agresiva y competitiva | Busca capturar y persigue las fichas rivales. |
-| **Don Ernesto** | Estratega y formal; siempre trata de usted | Forma barreras y evita dejar fichas amenazadas. |
+| **Don Ernesto** | Estratega y formal (siempre trata de usted) | Forma barreras y evita dejar fichas amenazadas. |
 | **Abuela Pilar** | Prudente y cariñosa | Prefiere las casillas seguras, el pasillo y la meta. |
 | **Chispa** | Espontáneo e imprevisible | Prioriza avanzar y varía entre jugadas de valor parecido. |
 
@@ -55,8 +55,8 @@ Cada personalidad se define con pesos sobre una puntuación común de las jugada
 
 | Tecnología | Papel en el proyecto |
 |---|---|
-| **Next.js 16** (App Router) y **React 19** | Páginas con App Router, Server Components, Server-Side Rendering (SSR), prerenderizado, Route Handlers de la API y procesamiento posterior a la respuesta (`after()`). |
-| **TypeScript** | Todo el código: motor, servidor e interfaz. **Zod** valida datos de entrada, de la base de datos y de los modelos. |
+| **Next.js 16** (App Router) y **React 19** | Páginas con App Router, Server Components, **Server-Side Rendering** (SSR), prerenderizado, Route Handlers de la API y procesamiento posterior a la respuesta (`after()`). |
+| **TypeScript** | Todo el código: motor, servidor e interfaz. Zod valida datos de entrada, de la base de datos y de los modelos. |
 | **Tailwind CSS 4** | Estilos de toda la interfaz. |
 | **shadcn/ui** sobre **Base UI** | Componentes de interfaz (botón y barra de progreso). |
 | **Supabase** (PostgreSQL) | Persistencia de partidas y chat, reglas de integridad con *triggers*, funciones SQL y seguridad por filas (RLS). |
