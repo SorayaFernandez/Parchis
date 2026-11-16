@@ -75,7 +75,12 @@ export interface LiveView {
   log: TurnLogEntry[];
 }
 
-const LOG_SIZE = 8;
+/**
+ * Entradas de «Últimas jugadas» que se conservan en el navegador (solo para mostrarlas; no cambia qué se
+ * genera ni se guarda). Desde xl, el panel enseña las que quepan en su alto y deja el resto en su scroll;
+ * por debajo, solo las 8 más recientes, como antes (ver `LOG_LIST` en `components/game/layout.ts`).
+ */
+export const LOG_SIZE = 60;
 
 export class LiveGameController {
   private model: LiveModel;

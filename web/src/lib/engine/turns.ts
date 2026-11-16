@@ -1,4 +1,4 @@
-// Cambio de turno. Portado de backend/game/rules/nextTurn.js.
+// Cambio de turno. Portado de game/rules/nextTurn.js del backend del proyecto original (ft_transcendence, ya no está en el repositorio).
 
 import { TURN_ORDER } from "./constants";
 import type { GameEvent, GameState, PlayerId } from "./types";

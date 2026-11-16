@@ -3,6 +3,8 @@ import { createSeededRandom } from "@/lib/game/ai";
 import { CHARACTERS, CHARACTER_NAMES, CHAT_LINE_KINDS, LINE_KINDS_WITH_RIVAL, LINE_KINDS_WITH_STREAK } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "../config";
 import type { Utterance } from "../director";
+import { detectCatchphrases } from "../catchphrases";
+import { checkQuality } from "../llm/quality";
 import { countWord, createLocalWriter, isRepeated, renderLine, similarity, validateChatText, type RecentText } from "../writer";
 
 const [BRAVA, ERNESTO, PILAR, CHISPA] = CHARACTERS;
@@ -69,6 +71,19 @@ describe("personalidades y frases locales", () => {
     // Brava: frases cortas.
     const avg = (c: (typeof CHARACTERS)[number]) => allLines(c).reduce((s, l) => s + l.length, 0) / allLines(c).length;
     expect(avg(BRAVA)).toBeLessThan(avg(ERNESTO));
+  });
+});
+
+describe("concordancia de la frase de ambiente de Chispa (C)", () => {
+  it("«{rival} va muy rápido» funciona con los cuatro nombres y ya no hay «va lanzado» ni «a toda máquina»", () => {
+    const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
+    const template = "{rival} va muy rápido. Pero esto no ha acabado.";
+    expect(chispa.chat.lines.ambient_behind).toContain(template);
+    expect(CHARACTERS.flatMap((c) => Object.values(c.chat.lines).flat()).some((l) => /lanzad[oa]|toda máquina/.test(l))).toBe(false);
+    for (const rival of CHARACTERS) {
+      const u = { speaker: "ai-blue", kind: "ambient_behind", rival: rival.id, trigger: "ambient", replyTo: null, important: false } as Utterance;
+      expect(renderLine(template, u)).toBe(`${CHARACTER_NAMES[rival.id]} va muy rápido. Pero esto no ha acabado.`);
+    }
   });
 });
 
@@ -180,3 +195,156 @@ describe("coherencia de las frases con lo que pasa (B3 y M1)", () => {
   });
 });
 
+describe("escritor local y coletillas ya publicadas", () => {
+  const brava = (extra: Partial<Utterance> = {}): Utterance =>
+    ({ speaker: "ai-pink", kind: "capture_boast", rival: "ai-blue", trigger: "capture", replyTo: null, important: true, ...extra }) as Utterance;
+
+  it("prefiere frases sin las coletillas que el personaje ya ha publicado en la partida", async () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      const written = await createLocalWriter(createSeededRandom(seed)).write({ utterance: brava(), recent: [], replyToText: null, usedCatchphrases: [0, 1] });
+      expect(written).not.toBeNull();
+      expect(detectCatchphrases("ai-pink", written!.text), written!.text).toEqual([]);
+    }
+  });
+
+  it("si todas las frases válidas tienen una coletilla ya usada, responde igualmente (nunca se queda sin frase)", async () => {
+    // Las frases sin coletilla «se parecen» a textos recientes y quedan descartadas por la antirrepetición.
+    const lines = CHARACTERS.find((c) => c.id === "ai-pink")!.chat.lines.capture_boast.map((l) => renderLine(l, brava())!);
+    const recent = lines.filter((t) => detectCatchphrases("ai-pink", t).length === 0).map((text) => ({ speaker: "ai-blue", text }));
+    const written = await createLocalWriter(createSeededRandom(1)).write({ utterance: brava(), recent, replyToText: null, usedCatchphrases: [0, 1] });
+    expect(written).not.toBeNull();
+    expect(detectCatchphrases("ai-pink", written!.text).length).toBeGreaterThan(0);
+  });
+});
+
+describe("frases de ambiente: ninguna afirma una posición que no le corresponde", () => {
+  // Afirmaciones de liderazgo propio (no las que hablan de la ventaja del rival, como «no confunda ventaja con victoria»).
+  const LEADERSHIP = /voy ganando|^ganando|en cabeza|mantengo la ventaja|encabezo|la primera|primero en|delante de todos|aquí arriba|control del tablero|voy primer/iu;
+  const SELF_BEHIND = /voy perdiendo|voy por detrás|voy atrás|voy el último|voy la última/i;
+  const ambient = (kind: "ambient_lead" | "ambient_ahead" | "ambient_behind") => CHARACTERS.map((c) => ({ name: c.name, lines: c.chat.lines[kind] }));
+
+  it("solo `ambient_lead` (primero en solitario) afirma ir ganando o en cabeza", () => {
+    for (const { name, lines } of ambient("ambient_lead")) expect(lines.some((l) => LEADERSHIP.test(l)), name).toBe(true);
+    for (const kind of ["ambient_ahead", "ambient_behind"] as const) {
+      for (const { name, lines } of ambient(kind)) for (const l of lines) expect(LEADERSHIP.test(l), `${name}/${kind}: ${l}`).toBe(false);
+    }
+  });
+
+  it("las frases neutrales (`ambient_ahead`) no dicen que el personaje va por detrás, y las de liderazgo tampoco", () => {
+    for (const kind of ["ambient_lead", "ambient_ahead"] as const) {
+      for (const { name, lines } of ambient(kind)) for (const l of lines) expect(SELF_BEHIND.test(l), `${name}/${kind}: ${l}`).toBe(false);
+    }
+  });
+
+  it("cada tipo de ambiente tiene frases sin rival (para empates); las neutrales, al menos tres", () => {
+    for (const kind of ["ambient_lead", "ambient_ahead", "ambient_behind"] as const) {
+      for (const { name, lines } of ambient(kind)) {
+        const withoutRival = lines.filter((l) => !l.includes("{rival}")).length;
+        expect(withoutRival, `${name}/${kind}`).toBeGreaterThanOrEqual(kind === "ambient_ahead" ? 3 : 1);
+        expect(lines.length, `${name}/${kind}`).toBeGreaterThanOrEqual(4);
+      }
+    }
+  });
+});
+
+describe("frases neutrales y «por detrás»: ninguna afirma una buena posición propia", () => {
+  /**
+   * Afirmaciones de posición favorable del propio personaje (liderazgo, ventaja o buena posición). Solo
+   * caben en `ambient_lead`. No incluye la ventaja de un rival («no confunda ventaja con victoria»).
+   */
+  const GOOD_POSITION =
+    /posici[oó]n es s[oó]lida|buena posici[oó]n|voy bien|voy delante|voy por delante|llevo (la )?ventaja|mantengo la ventaja|tengo ventaja|estoy liderando|lidero|encabezo|voy ganando|^ganando|en cabeza|voy primer[oa]|la primera|primero en|delante de todos|aquí arriba|control del tablero/iu;
+
+  it("el patrón detecta afirmaciones de posición, también las que hoy no existen en el catálogo", () => {
+    for (const text of [
+      "La posición es sólida. Sigamos así.",
+      "Voy bien. Sin correr, pero sin parar.",
+      "Voy delante, cariño.",
+      "Llevo ventaja y lo sabéis.",
+      "Estoy liderando, señores.",
+      "Encabezo la partida, tal como había calculado.",
+      "Voy ganando. ¡Que se note!",
+      "Mantengo la ventaja. Paciencia y método.",
+    ]) {
+      expect(GOOD_POSITION.test(text), text).toBe(true);
+    }
+  });
+
+  it("y deja pasar frases neutrales legítimas y la ventaja de un rival", () => {
+    for (const text of [
+      "Analizo cada tirada. El plan sigue en marcha.",
+      "Sin correr, pero sin parar, cariño.",
+      "Al primero que se me ponga a tiro, lo mando a casa.",
+      "Poquito a poco voy llegando.",
+      "El dado me guiña un ojo. Buena señal.",
+      "{rival}, no confunda ventaja con victoria.",
+      "Una desventaja temporal. Nada que un buen plan no corrija.",
+    ]) {
+      expect(GOOD_POSITION.test(text), text).toBe(false);
+    }
+  });
+
+  it("ninguna frase de `ambient_ahead` ni de `ambient_behind` de los cuatro personajes la contiene", () => {
+    for (const c of CHARACTERS) {
+      for (const kind of ["ambient_ahead", "ambient_behind"] as const) {
+        for (const line of c.chat.lines[kind]) expect(GOOD_POSITION.test(line), `${c.name}/${kind}: ${line}`).toBe(false);
+      }
+    }
+  });
+
+  it("las de liderazgo siguen disponibles para el primero en solitario, con el último en solitario o sin rival", async () => {
+    for (const c of CHARACTERS) {
+      expect(c.chat.lines.ambient_lead.some((l) => GOOD_POSITION.test(l)), c.name).toBe(true);
+      const last = CHARACTERS.find((o) => o.id !== c.id)!.id;
+      for (const rival of [last, null]) {
+        const u = { speaker: c.id, kind: "ambient_lead", rival, trigger: "ambient", replyTo: null, important: false } as Utterance;
+        // La clasificación real que describe la prueba: quien habla va primero en solitario y el rival, último.
+        const written = await createLocalWriter(createSeededRandom(1)).write({ utterance: u, recent: [], replyToText: null, leader: c.id, last: rival });
+        expect(written, `${c.name} con rival ${rival}`).not.toBeNull();
+        expect(c.chat.lines.ambient_lead.map((l) => renderLine(l, u))).toContain(written!.text);
+      }
+    }
+  });
+});
+
+describe("frases locales: comentarios de cuatro personas en la mesa, sin jerga ni elementos ajenos (P3)", () => {
+  const JARGON =
+    /señores|en directo|a cámara|cámara lenta|narrador|abracadabra|autógrafo|gato negro|guion|\bvar\b|go+l\b|golazo|escuadra|público|prensa|récord|podio|ovación|confeti|palomitas|aperturas|\bfase\b|retaguardia|retrovisor|caldito|repetición|sentencia|momento histórico|astros/iu;
+
+  it("ninguna frase local usa jerga de televisión, deportes o elementos ajenos al parchís", () => {
+    for (const c of CHARACTERS) {
+      for (const [kind, lines] of Object.entries(c.chat.lines)) {
+        for (const line of lines) expect(JARGON.test(line), `${c.name}/${kind}: ${line}`).toBe(false);
+      }
+    }
+  });
+
+  it("Chispa sigue siendo espontáneo (no un comentarista), con algo de suerte y sin supersticiones gratuitas", () => {
+    const chispa = CHARACTERS.find((c) => c.id === "ai-blue")!;
+    const all = Object.values(chispa.chat.lines).flat();
+    expect(all.filter((l) => /¡/.test(l)).length / all.length).toBeGreaterThan(0.5);
+    expect(all.filter((l) => /suerte|gafe|mala pata/i.test(l)).length).toBeGreaterThanOrEqual(4);
+    for (const l of all) expect(l).not.toMatch(/amuleto|mal de ojo|horóscopo|calcetines|madera/i);
+    expect(`${chispa.personality} ${chispa.chat.register} ${chispa.chat.voice}`).not.toMatch(/comentarista|racha|teatral/i);
+  });
+});
+
+describe("P4: historial incompleto (sin `streak` ni hechos fiables) con las frases locales", () => {
+  it("cada personaje tiene frases sin datos en cada tipo de captura y racha, y ninguna afirma cifras ni rachas", async () => {
+    const kinds = ["capture_boast", "capture_lament", "streak_boast", "streak_lament"] as const;
+    for (const c of CHARACTERS) {
+      const rival = CHARACTERS.find((x) => x.id !== c.id)!.id;
+      for (const kind of kinds) {
+        const selfRole = kind.endsWith("boast") ? "by" : "victim";
+        const trigger = kind === "streak_boast" ? "capture_streak" : kind === "streak_lament" ? "bad_streak" : "capture";
+        const u: Utterance = { speaker: c.id, kind, trigger, rival, replyTo: null, important: true, captures: { history: "incomplete", selfRole } };
+        const usable = c.chat.lines[kind].map((line) => renderLine(line, u)).filter((t): t is string => t !== null);
+        expect(usable.length, `${c.name} ${kind}`).toBeGreaterThan(0);
+        for (const text of usable) expect(checkQuality(text, { utterance: u, recent: [], replyToText: null }), `${c.name} ${kind}: ${text}`).toBeNull();
+        // El escritor local responde con una de ellas (nunca con una que necesite `{count}` o `{ritmo}`).
+        const written = await createLocalWriter(createSeededRandom(7)).write({ utterance: u, recent: [], replyToText: null });
+        expect(usable).toContain(written?.text);
+      }
+    }
+  });
+});

@@ -10,7 +10,7 @@ interface DiceFaceProps {
   className?: string;
 }
 
-/** Cara del dado con los SVG del original (frontend/public/ui/dice-N.svg). */
+/** Cara del dado con los SVG de la interfaz del proyecto original (ft_transcendence, ya eliminada del repositorio). */
 export function DiceFace({ value, rollKey = 0, dimmed = false, className }: DiceFaceProps) {
   if (value === null) {
     return (

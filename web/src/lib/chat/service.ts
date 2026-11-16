@@ -9,7 +9,7 @@
 import type { GameEvent, GameState, PlayerId } from "@/lib/engine";
 import { GameEventSchema, GameStateSchema } from "@/lib/game/schemas";
 import { CHAT_LIMITS, CHAT_STORAGE } from "./config";
-import { initialDirectorState, planChat, recordPublished, trackCaptures, type Random, type Utterance } from "./director";
+import { gameLast, gameLeader, initialDirectorState, planChat, recordPublished, trackCaptures, type Random, type Utterance } from "./director";
 import { DirectorStateSchema, type DirectorState } from "./schemas";
 import type { ChatStore, ClaimedBatch, QueueItem, QueuedMessage } from "./store";
 import { validateChatText, type ChatWriteRequest, type ChatWriter, type RecentText, type WrittenText } from "./writer";
@@ -187,11 +187,21 @@ async function processItem(
     utterances = plan.utterances;
   }
 
-  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective);
+  const gameStatus = state.success ? state.data.status : undefined;
+  const leader = state.success ? gameLeader(state.data as GameState) : undefined;
+  const last = state.success ? gameLast(state.data as GameState) : undefined;
+  const winner = state.success ? ((state.data as GameState).ranking[0] ?? null) : undefined;
+  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective, gameStatus, leader, last, winner);
   next = recordPublished(
     next,
     item.version,
-    written.map(({ message, lineId }) => ({ speaker: message.character_id, text: message.text, lineId })),
+    written.map(({ message, lineId }) => ({
+      speaker: message.character_id,
+      text: message.text,
+      lineId,
+      // Espontánea: el mensaje principal de la versión, salvo la victoria (que siempre dice el ganador).
+      spontaneous: message.seq === 0 && message.trigger !== "victory",
+    })),
   );
   return { director: next, messages: written.map((w) => w.message) };
 }
@@ -207,6 +217,10 @@ async function writeUtterances(
   deps: ChatDeps,
   lease: LeaseClock,
   minimal: boolean,
+  gameStatus: GameState["status"] | undefined,
+  leader: PlayerId | null | undefined,
+  last: PlayerId | null | undefined,
+  winner: PlayerId | null | undefined,
 ): Promise<{ message: QueuedMessage; lineId?: string }[]> {
   const recent: RecentText[] = [...director.recent];
   const messages: QueuedMessage[] = [];
@@ -220,6 +234,11 @@ async function writeUtterances(
       recent,
       replyToText: replyToSeq === null ? null : messages[replyToSeq].text,
       usedLines: director.usedLines[utterance.speaker] ?? [],
+      usedCatchphrases: director.usedCatchphrases[utterance.speaker] ?? [],
+      ...(gameStatus ? { gameStatus } : {}),
+      ...(leader !== undefined ? { leader } : {}),
+      ...(last !== undefined ? { last } : {}),
+      ...(winner !== undefined ? { winner } : {}),
     };
     let written = minimal ? await deps.fallbackWriter.write(request) : await writeWithFallback(request, deps, lease);
     let text = written ? validateChatText(written.text, recent) : null;

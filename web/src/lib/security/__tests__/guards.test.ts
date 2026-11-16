@@ -55,7 +55,7 @@ const { createFakeLimiter } = await import("./fakeLimiter");
 const GAME_A = "11111111-1111-4111-8111-111111111111";
 const GAME_B = "22222222-2222-4222-8222-222222222222";
 const req = (url: string, ip: string, body?: string) =>
-  new Request(`http://localhost${url}`, { method: body === undefined ? "GET" : "POST", body, headers: { "x-vercel-forwarded-for": ip } });
+  new Request(`http://localhost${url}`, { method: body === undefined ? "GET" : "POST", body, headers: { "x-vercel-forwarded-for": ip, ...(body === undefined ? {} : { "Content-Type": "application/json" }) } });
 const create1 = (ip: string) => createGameRoute(req("/api/games", ip, "{}"));
 const advance1 = (ip: string, id: string) =>
   advanceRoute(req(`/api/games/${id}/advance`, ip, '{"expectedVersion":1}'), { params: Promise.resolve({ id }) });

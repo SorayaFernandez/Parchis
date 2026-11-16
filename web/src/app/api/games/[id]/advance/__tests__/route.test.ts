@@ -26,13 +26,37 @@ const { GameRepositoryError } = await import("@/lib/game/repository");
 
 const ID = "751bb3b5-52dc-4e00-86eb-3085d4357dad";
 const post = (body: string | undefined, id = ID) =>
-  POST(new Request(`http://localhost/api/games/${id}/advance`, { method: "POST", body }), { params: Promise.resolve({ id }) });
+  POST(new Request(`http://localhost/api/games/${id}/advance`, { method: "POST", body, headers: { "Content-Type": "application/json" } }), { params: Promise.resolve({ id }) });
 
 describe("POST /api/games/[id]/advance", () => {
   beforeEach(() => {
     advanceGame.mockReset();
     scheduleDrain.mockReset();
     vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("CSRF: acepta la propia aplicación; 403 con un origen externo o cross-site y 415 sin JSON, sin avanzar", async () => {
+    advanceGame.mockResolvedValue({ kind: "not_found" });
+    const send = (headers: Record<string, string>) =>
+      POST(new Request(`http://localhost/api/games/${ID}/advance`, { method: "POST", body: '{"expectedVersion":1}', headers }), { params: Promise.resolve({ id: ID }) });
+    expect((await send({ "Content-Type": "application/json", Origin: "http://localhost", "Sec-Fetch-Site": "same-origin" })).status).toBe(404);
+    expect((await send({ "Content-Type": "application/json" })).status).toBe(404); // sin Origin ni Sec-Fetch-Site
+    expect(advanceGame).toHaveBeenCalledTimes(2);
+    advanceGame.mockClear();
+    const cases: [Record<string, string>, number, string][] = [
+      [{ "Content-Type": "application/json", Origin: "https://evil.example" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "application/json", Origin: "null" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site", Origin: "http://localhost" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "text/plain;charset=UTF-8", Origin: "http://localhost" }, 415, "unsupported_media_type"],
+      [{}, 415, "unsupported_media_type"],
+    ];
+    for (const [headers, status, code] of cases) {
+      const response = await send(headers);
+      expect(response.status, JSON.stringify(headers)).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).error.code).toBe(code);
+    }
+    expect(advanceGame).not.toHaveBeenCalled();
   });
 
   it("400 si el cuerpo no es { expectedVersion: entero ≥ 1 }", async () => {
@@ -128,5 +152,91 @@ describe("POST /api/games/[id]/advance", () => {
     advanceGame.mockResolvedValueOnce({ kind: "version_conflict", currentVersion: 8 });
     expect((await post('{"expectedVersion":6}')).status).toBe(409);
     expect(scheduleDrain).toHaveBeenCalledTimes(1);
+  });
+
+  describe("selector estratégico de movimientos (fase 8.3)", () => {
+    const PREVIEW = {
+      VERCEL: "1",
+      VERCEL_ENV: "preview",
+      MOVES_LLM_ENABLED: "true",
+      AI_GATEWAY_API_KEY: "clave-de-prueba",
+      MOVES_LLM_MODEL: "nvidia/nemotron-3.5-lightning-free",
+      // Upstash para el cupo de 20 consultas (F4). Credenciales falsas: aquí no se llama a Redis.
+      UPSTASH_REDIS_REST_URL: "https://ejemplo.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token-falso-de-upstash",
+    };
+    const conflict = { kind: "version_conflict", currentVersion: 8 } as const;
+    const stub = (env: Record<string, string | undefined>) => {
+      for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    };
+
+    it("sin configurar (local, pruebas): no se pasa selector; se usa la estrategia local", async () => {
+      advanceGame.mockResolvedValueOnce(conflict);
+      await post('{"expectedVersion":7}');
+      expect(advanceGame.mock.calls[0][2].moveSelector).toBeUndefined();
+    });
+
+    it("en Vercel Preview con la configuración válida: se pasa el selector, la señal de la petición y el aviso de reserva local", async () => {
+      stub(PREVIEW);
+      try {
+        advanceGame.mockResolvedValueOnce(conflict);
+        await post('{"expectedVersion":7}');
+        const deps = advanceGame.mock.calls[0][2];
+        expect(typeof deps.moveSelector?.select).toBe("function");
+        expect(typeof deps.moveQuota?.tryConsume).toBe("function");
+        expect(deps.signal).toBeInstanceOf(AbortSignal);
+        expect(typeof deps.onMoveFallback).toBe("function");
+        // Trazabilidad: una línea con el modelo configurado, sin la clave.
+        const info = vi.spyOn(console, "info").mockImplementation(() => {});
+        deps.onMoveTrace?.({ source: "llm", durationMs: 812, saved: true });
+        expect(info).toHaveBeenCalledExactlyOnceWith("[llm-trace] operacion=movimiento origen=llm modelo=nvidia/nemotron-3.5-lightning-free duracion=812ms guardado=si");
+        expect(String(info.mock.calls[0][0])).not.toContain("clave-de-prueba");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("en Production (o con el modelo distinto): sin selector, y la configuración incorrecta se registra sin valores", async () => {
+      for (const env of [{ ...PREVIEW, VERCEL_ENV: "production" }, { ...PREVIEW, MOVES_LLM_MODEL: "otro/modelo" }]) {
+        stub(env);
+        try {
+          advanceGame.mockReset();
+          advanceGame.mockResolvedValueOnce(conflict);
+          await post('{"expectedVersion":7}');
+          expect(advanceGame.mock.calls[0][2].moveSelector, JSON.stringify(env)).toBeUndefined();
+        } finally {
+          vi.unstubAllEnvs();
+        }
+      }
+      const logged = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(([l]) => String(l));
+      expect(logged.some((l) => l.includes("[move-llm] configuración"))).toBe(true);
+      expect(logged.every((l) => !l.includes("clave-de-prueba"))).toBe(true);
+    });
+
+    it("en Preview sin Upstash (sin cupo verificable): sin selector ni cupo, y se registra sin valores", async () => {
+      stub({ ...PREVIEW, UPSTASH_REDIS_REST_URL: undefined, UPSTASH_REDIS_REST_TOKEN: undefined, KV_REST_API_URL: undefined, KV_REST_API_TOKEN: undefined });
+      try {
+        advanceGame.mockResolvedValueOnce(conflict);
+        await post('{"expectedVersion":7}');
+        expect(advanceGame.mock.calls[0][2].moveSelector).toBeUndefined();
+        expect(advanceGame.mock.calls[0][2].moveQuota).toBeUndefined();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      const logged = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(([l]) => String(l));
+      expect(logged.some((l) => l.includes("[move-llm] configuración: configuración sin_upstash"))).toBe(true);
+      expect(logged.every((l) => !l.includes("clave-de-prueba") && !l.includes("token-falso"))).toBe(true);
+    });
+
+    it("activar el chat no activa el selector de movimientos", async () => {
+      stub({ VERCEL: "1", VERCEL_ENV: "preview", CHAT_LLM_ENABLED: "true", AI_GATEWAY_API_KEY: "clave-de-prueba", CHAT_LLM_MODEL: "nvidia/nemotron-3.5-lightning-free" });
+      try {
+        advanceGame.mockResolvedValueOnce(conflict);
+        await post('{"expectedVersion":7}');
+        expect(advanceGame.mock.calls[0][2].moveSelector).toBeUndefined();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
   });
 });
