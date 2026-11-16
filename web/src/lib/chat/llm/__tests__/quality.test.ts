@@ -1086,7 +1086,6 @@ describe("«racha» y «seguidos» coloquiales: suerte y dado frente a afirmacio
       "¡Qué racha de suerte con el dado!!",
       "qué racha de suerte con el dado",
       "Qué racha de buena suerte.",
-      "¿Qué racha de suerte con el dado, eh?",
       "Menuda racha con el dado.",
       "Dos seises seguidos.",
       "¡Dos seises seguidos!",
@@ -1261,7 +1260,7 @@ describe("naturalidad: expresiones artificiales de la partida de Preview (frases
       ["Me comiste, Brava. Ya te pillaré.", chispaLament],
       ["Le comí la ficha, Brava. Era de esperar.", ernestoBoast],
       ["Golpe de suerte con el dado, Chispa.", pilarReply],
-      ["Me he quedado sin ficha de golpe, Brava.", chispaLament],
+      ["Me has comido de golpe, Brava.", chispaLament],
       ["Venga, a ver si sale un seis.", chispaLament],
       ["Por favor, Brava, no corras tanto.", chispaLament],
     ] as const) {
@@ -1297,7 +1296,7 @@ describe("hasDiscardedExpression: expresiones descartadas que no se citan en el 
   });
 
   it("no descarta las expresiones naturales ni ninguna frase actual del catálogo", () => {
-    for (const text of ["¡Te comí, Chispa!", "Me comiste, Brava.", "Golpe de suerte con el dado.", "Me he quedado sin ficha de golpe.", "Por favor, Brava, no corras tanto."]) {
+    for (const text of ["¡Te comí, Chispa!", "Me comiste, Brava.", "Golpe de suerte con el dado.", "Me has comido de golpe.", "Por favor, Brava, no corras tanto."]) {
       expect(hasDiscardedExpression(text), text).toBe(false);
     }
     for (const c of CHARACTERS) {
@@ -1506,7 +1505,7 @@ describe("expresiones retiradas, «Voy ganando» con respaldo y capturas repetid
     }
     expect(reject("¡Me la he quedado, Chispa!", capture("ai-pink", "ai-blue"))).toEqual({ reason: UNNATURAL, detail: "termino=me la he quedado" });
     // Frases naturales parecidas.
-    for (const text of ["Me he quedado sin ficha, Brava.", "Me quedo con las ganas, Brava.", "Me quedo tranquila, Brava."]) {
+    for (const text of ["Me he quedado sin turno, Brava.", "Me quedo con las ganas, Brava.", "Me quedo tranquila, Brava."]) {
       expect(checkQuality(text, lament("ai-blue", "ai-pink")), text).toBeNull();
     }
   });
@@ -2254,5 +2253,52 @@ describe("refranes retirados: «La avaricia rompe el saco» y «Quien mucho corr
     for (const c of CHARACTERS) {
       for (const text of [...Object.values(c.chat.lines).flat(), ...c.catchphrases, c.chat.voice]) expect(text, c.name).not.toMatch(/avaricia|quien mucho corre|pronto para/i);
     }
+  });
+});
+
+describe("expresiones retiradas tras la prueba real en Preview", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+
+  it("cada una se rechaza por el flujo completo del escritor LLM", () => {
+    expect(checkQuality("Abuela Pilar, la distancia ya es considerable.", { ...say(ERNESTO, PILAR, { kind: "ambient_lead", trigger: "ambient", important: false }), leader: ERNESTO })).toEqual({ reason: "expresión poco natural", term: "distancia considerable" });
+    expect(reject("Abuela Pilar, la distancia ya es considerable.", say(ERNESTO, PILAR))).toEqual(term("distancia considerable"));
+    expect(reject("Chispa, a la abuela se la respeta.", say(PILAR, CHISPA, { kind: "capture_lament" }))).toEqual(term("a la abuela se la respeta"));
+    expect(reject("Bien hecho, Chispa. Pero no te lo creas mucho, ¿eh?", say(PILAR, CHISPA, { kind: "victory_reply", trigger: "victory" }))).toEqual(term("¿eh?"));
+    expect(reject("Me he quedado con la ficha perdida, Brava.", say(CHISPA, BRAVA, { kind: "capture_lament" }))).toEqual(term("ficha perdida"));
+    expect(reject("¡Ahora sí que te quedas atrás, Chispa!", say(BRAVA, CHISPA))).toEqual(term("te quedas atrás"));
+    expect(reject("¡Qué mal te lo pasas, Chispa!", say(BRAVA, CHISPA))).toEqual(term("qué mal te lo pasas"));
+    expect(reject("Me he quedado sin ficha, Brava.", say(CHISPA, BRAVA, { kind: "capture_lament" }))).toEqual(term("me he quedado sin ficha"));
+  });
+
+  it("también sus variantes equivalentes, que tampoco se citan en el prompt", () => {
+    for (const text of [
+      "La distancia es considerable, Chispa.", "Hay una considerable distancia.", "A la abuela se le respeta, Brava.", "Hay que respetar a la abuela.",
+      "Muy bien, eh?", "¿Eh?", "Me quedo con la ficha perdida.", "Ya te quedas atrás.", "Te quedas atrás, Brava.", "Que mal te lo pasas.",
+      "Lo estás pasando fatal, Chispa.", "Me quedo sin fichas, Brava.", "Me he quedado sin mi ficha.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(true);
+  });
+
+  it("las frases naturales parecidas siguen valiendo", () => {
+    for (const text of [
+      "Voy ganando. Así me gusta.", "Brava, le saco ventaja. Debería reaccionar.", "Bien hecho, Brava. Pero no te lo creas mucho.", "Me has comido, Brava. Qué le vamos a hacer.",
+      "¡Eh, Brava, que te veo!", "Brava, ¿te espero? Te has quedado muy atrás.", "Brava, cariño, no te quedes atrás.", "La abuela también sabe.", "Me he quedado sin turno.", "Lo he pasado bien.",
+    ]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo no las contiene; «Voy delante» pasa a «Voy ganando» y las sustitutas están en su sitio", () => {
+    const RETIRED = /distancia (ya )?es considerable|abuela se la respeta|¿eh\?|ficha perdida|te quedas atrás|mal te lo pasas|quedado sin ficha|voy delante/i;
+    for (const c of CHARACTERS) for (const line of [...Object.values(c.chat.lines).flat(), ...c.catchphrases, c.chat.voice]) expect(line, `${c.name}: ${line}`).not.toMatch(RETIRED);
+    const lines = (id: string) => CHARACTERS.find((c) => c.id === id)!.chat.lines;
+    expect(lines(BRAVA).ambient_lead).toContain("Voy ganando. Así me gusta.");
+    expect(lines(ERNESTO).ambient_lead).toContain("{rival}, le saco ventaja. Debería reaccionar.");
+    expect(lines(PILAR).victory_reply).toContain("Bien hecho, {rival}. Pero no te lo creas mucho.");
+    expect(lines(PILAR).capture_lament).toContain("Me has comido, {rival}. Qué le vamos a hacer.");
+  });
+
+  it("la demostración no contiene ninguna", async () => {
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    const match = await createDemoMatch();
+    for (const m of match.messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
   });
 });

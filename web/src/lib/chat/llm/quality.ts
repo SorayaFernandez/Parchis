@@ -278,7 +278,7 @@ function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | 
 /**
  * Nombres y alias con los que un personaje podría nombrarse a sí mismo. «la abuela» no está para Pilar:
  * hablar de sí misma como «la abuela» es parte de su personaje (sus frases locales lo usan: «La abuela
- * también sabe», «a la abuela se la respeta»).
+ * también sabe»).
  */
 const SELF_NAMES: Readonly<Record<string, readonly string[]>> = {
   "ai-pink": ["brava"],
@@ -1093,6 +1093,16 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "disculpa de broma",
     re: /(?<![\p{L}])(?:lo\s+siento|perdon)(?:\s*,\s*\p{L}+(?:\s+\p{L}+)?)?[\s,.…]*(?:bueno[\s,.…]*)?(?:de\s+verdad[\s,.…]*)?(?:un\s+poco|no\s+mucho|no\s+tanto)(?![\p{L}])/u,
   },
+  // Expresiones retiradas tras la prueba real en Preview (frases locales o de Nemotron), con sus variantes:
+  // «la distancia ya es considerable», «a la abuela se la respeta», la coletilla «¿eh?», «me he quedado con la
+  // ficha perdida», «ahora sí que te quedas atrás», «qué mal te lo pasas» y «me he quedado sin ficha».
+  { term: "distancia considerable", re: /(?<![\p{L}])(?:(?:la\s+)?distancia\s+(?:ya\s+)?(?:es\s+)?(?:bastante\s+|muy\s+)?(?:considerable|notable)|(?:una\s+)?considerable\s+distancia)(?![\p{L}])/u },
+  { term: "a la abuela se la respeta", re: /(?<![\p{L}])(?:a\s+la\s+abuela\s+se\s+(?:la|le)\s+respeta|(?:hay\s+que\s+)?respet\p{L}*\s+a\s+la\s+abuela)(?![\p{L}])/u },
+  { term: "¿eh?", re: /(?:¿\s*eh\s*\?|(?<![\p{L}])eh\s*\?)/u },
+  { term: "ficha perdida", re: /(?<![\p{L}])qued\p{L}*\s+con\s+(?:la|tu|su|mi|una|esa)\s+ficha\s+perdida(?![\p{L}])/u },
+  { term: "te quedas atrás", re: /(?<![\p{L}])(?:(?:ahora|ya)\s+(?:si\s+)?(?:que\s+)?)?te\s+quedas\s+atras(?![\p{L}])/u },
+  { term: "qué mal te lo pasas", re: /(?<![\p{L}])(?:que\s+mal\s+te\s+lo\s+pas\p{L}*|te\s+lo\s+(?:estas\s+)?pas\p{L}*\s+(?:muy\s+)?(?:mal|fatal)|lo\s+estas\s+pasando\s+(?:muy\s+)?(?:mal|fatal))(?![\p{L}])/u },
+  { term: "me he quedado sin ficha", re: /(?<![\p{L}])(?:me\s+)?(?:he\s+)?qued(?:ado|o|e|ando)\s+sin\s+(?:(?:mi|esa|la|una)\s+)?fichas?(?![\p{L}])/u },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,

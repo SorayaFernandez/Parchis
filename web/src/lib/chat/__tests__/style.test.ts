@@ -230,7 +230,7 @@ describe("frases locales: sin las expresiones artificiales de la partida de Prev
   });
 
   it("las frases corregidas: Brava sin preguntas retóricas de liderazgo y Don Ernesto sin solemnidad", () => {
-    expect(BRAVA.chat.lines.ambient_lead).toContain("Voy delante. Así me gusta.");
+    expect(BRAVA.chat.lines.ambient_lead).toContain("Voy ganando. Así me gusta.");
     expect(BRAVA.chat.lines.ambient_lead).toContain("Voy ganando. Hoy me salen las tiradas.");
     expect(BRAVA.chat.lines.ambient_ahead).toContain("Todavía no he terminado. ¡Queda partida!");
     expect(ERNESTO.chat.lines.streak_boast).toContain("Le he comido, {rival}. Era de esperar.");

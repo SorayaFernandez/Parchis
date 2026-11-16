@@ -258,7 +258,7 @@ describe("frases neutrales y «por detrás»: ninguna afirma una buena posición
   it("el patrón detecta afirmaciones de posición, también las que hoy no existen en el catálogo", () => {
     for (const text of [
       "La posición es sólida. Sigamos así.",
-      "Voy bien, ¿eh? Sin correr, pero sin parar.",
+      "Voy bien. Sin correr, pero sin parar.",
       "Voy delante, cariño.",
       "Llevo ventaja y lo sabéis.",
       "Estoy liderando, señores.",
