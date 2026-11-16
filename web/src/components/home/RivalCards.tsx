@@ -8,13 +8,14 @@ import { inDisplayOrder } from "@/lib/hud/displayOrder";
 /**
  * Presentación de cada personaje en la portada. El carácter es el de su perfil; la forma de jugar
  * resume su estrategia real (`strategy` en characters.ts: multiplicadores de captura, barrera, casilla
- * segura y avance); la frase es una de sus expresiones del catálogo (`catchphrases`).
+ * segura y avance); la frase es un texto de presentación propio de la portada (no depende del registro de
+ * coletillas del chat, que puede cambiar sin tocar la portada).
  */
-const RIVALS: Readonly<Record<PlayerId, { tagline: string; plays: string; quote: number }>> = {
-  "ai-pink": { tagline: "Agresiva y competitiva", plays: "Va a por tus fichas: caza y captura siempre que puede.", quote: 0 },
-  "ai-purple": { tagline: "Estratega y calculador", plays: "Levanta barreras y mide cada riesgo antes de mover.", quote: 1 },
-  "ai-green": { tagline: "Prudente y entrañable", plays: "Busca las casillas seguras y no arriesga sin motivo.", quote: 0 },
-  "ai-blue": { tagline: "Imprevisible y divertido", plays: "Corre sin mirar atrás y, de vez en cuando, sorprende.", quote: 2 },
+const RIVALS: Readonly<Record<PlayerId, { tagline: string; plays: string; quote: string }>> = {
+  "ai-pink": { tagline: "Agresiva y competitiva", plays: "Va a por tus fichas: caza y captura siempre que puede.", quote: "¡A casa!" },
+  "ai-purple": { tagline: "Estratega y calculador", plays: "Levanta barreras y mide cada riesgo antes de mover.", quote: "Todo según lo previsto" },
+  "ai-green": { tagline: "Prudente y entrañable", plays: "Busca las casillas seguras y no arriesga sin motivo.", quote: "Despacito y buena letra" },
+  "ai-blue": { tagline: "Imprevisible y divertido", plays: "Corre sin mirar atrás y, de vez en cuando, sorprende.", quote: "¡Toma ya!" },
 };
 
 /** Los cuatro personajes, en el mismo orden visual que en la partida (Chispa, Don Ernesto, Abuela Pilar, Brava). */
@@ -52,7 +53,7 @@ export function RivalCards() {
             </div>
             <p className="text-sm leading-relaxed text-slate-400">{rival.plays}</p>
             <blockquote className="mt-auto rounded-2xl border-l-2 bg-black/30 px-4 py-3 text-sm text-slate-100" style={{ borderLeftColor: color }}>
-              «{character.catchphrases[rival.quote]}»
+              «{rival.quote}»
             </blockquote>
           </li>
         );

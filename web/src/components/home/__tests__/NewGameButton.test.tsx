@@ -72,6 +72,21 @@ describe("portada: comentario de ejemplo de Abuela Pilar", () => {
   });
 });
 
+describe("portada: las dos burbujas del chat", () => {
+  it("son Abuela Pilar y Brava, en ese orden, con sus frases; Chispa ya no aparece", async () => {
+    const html = renderToStaticMarkup(await Home());
+    // Cada burbuja: <p …><span …>Nombre</span>Texto</p> (el nombre en su color).
+    const bubbles = [...html.matchAll(/<p class="rounded-2xl[^"]*"[^>]*><span class="block text-xs font-semibold"[^>]*>([^<]+)<\/span>([^<]+)<\/p>/g)].map((m) => [m[1], m[2]]);
+    expect(bubbles).toEqual([
+      ["Abuela Pilar", "Ay, Chispa, me has comido la ficha."],
+      ["Brava", "¡Una dentro! Las demás van detrás."],
+    ]);
+    expect(html).not.toContain("Ya queda menos");
+    expect(html).not.toContain("No hay mal que por bien no venga");
+    expect(html).not.toContain("¡Otra en la meta! Esto marcha.");
+  });
+});
+
 describe("portada: textos", () => {
   it("quedan exactamente como se pidió", async () => {
     const html = renderToStaticMarkup(await Home());
