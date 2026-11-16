@@ -11,6 +11,8 @@ interface ChatPanelProps {
   /** Color de cada personaje en esta partida. */
   colors: Readonly<Record<PlayerId, Color>>;
   className?: string;
+  /** Clases extra del contenedor con scroll (p. ej., para que ocupe el alto disponible). */
+  scrollClassName?: string;
 }
 
 const AVATAR = 28;
@@ -20,7 +22,7 @@ const AVATAR = 28;
  * Sin hooks: el scroll (abajo por defecto y sin saltos al leer arriba, también en Safari) lo lleva
  * `ChatScroll`.
  */
-export function ChatPanel({ messages, names, colors, className }: ChatPanelProps) {
+export function ChatPanel({ messages, names, colors, className, scrollClassName }: ChatPanelProps) {
   const nameOf = (id: PlayerId) => names[id] ?? id;
   const bySeq = (m: ChatMessage, seq: number) => messages.find((o) => o.version === m.version && o.seq === seq);
 
@@ -30,7 +32,7 @@ export function ChatPanel({ messages, names, colors, className }: ChatPanelProps
       {messages.length === 0 ? (
         <p className="mt-2 text-sm text-slate-500">Los personajes todavía no han dicho nada.</p>
       ) : (
-        <ChatScroll count={messages.length} className="mt-2 max-h-72 pr-1 lg:max-h-80">
+        <ChatScroll count={messages.length} className={cn("mt-2 max-h-72 pr-1 lg:max-h-80", scrollClassName)}>
           <ol role="log" aria-live="polite" aria-relevant="additions" className="space-y-2">
             {messages.map((m) => {
               const color = colors[m.characterId];

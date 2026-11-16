@@ -1,13 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyAction, createGame, type GameEvent } from "@/lib/engine";
 import { createSeededRandom, decideAction } from "@/lib/game/ai";
-import { CHARACTER_IDS } from "@/lib/game/characters";
+import { CHARACTERS, CHARACTER_IDS } from "@/lib/game/characters";
 import { CHAT_LIMITS, CHAT_LLM } from "../../config";
 import type { Utterance } from "../../director";
 import { drainChat, type ChatDeps } from "../../service";
 import { createLocalWriter, type ChatWriteRequest } from "../../writer";
 import { createMemoryChatStore } from "../../__tests__/memoryChatStore";
-import { ChatLlmError, cleanLlmText, createGatewayWriter, createImportantOnlyWriter, createLlmBreaker, type LlmBreaker } from "../gatewayWriter";
+import { detectCatchphrases } from "../../catchphrases";
+import { logChatError } from "../../log";
+import { buildChatPrompt } from "../prompt";
+import { hasDiscardedExpression } from "../quality";
+import {
+  ChatLlmError,
+  cleanLlmText,
+  createGatewayWriter,
+  createImportantOnlyWriter,
+  createLlmBreaker,
+  describeCompletion,
+  describeHttpError,
+  INVALID_RESPONSE_REASONS,
+  redactSecrets,
+  type ChatAcquireOutcome,
+  type LlmBreaker,
+} from "../gatewayWriter";
+
+// `log.ts` importa el almacén del chat (solo servidor).
+vi.mock("server-only", () => ({}));
 
 const KEY = "clave-secreta-de-prueba-123";
 const MODEL = "nvidia/nemotron-3.5-lightning-free";
@@ -70,6 +89,31 @@ describe("petición a AI Gateway", () => {
     const writer = createGatewayWriter({ config: { ...config, provider: "nvidia" }, fetch: f.fetch, breaker: createLlmBreaker() });
     await writer.write(request());
     expect(f.calls[0].body.providerOptions).toEqual({ gateway: { only: ["nvidia"] } });
+  });
+
+  it("desactiva el razonamiento con reasoning_effort = none en la raíz del JSON enviado, sin chat_template_kwargs; el resto no cambia", async () => {
+    for (const provider of [null, "nvidia"]) {
+      const f = fakeFetch(() => completion("Una frase cualquiera de prueba."));
+      const writer = createGatewayWriter({ config: { ...config, provider }, fetch: f.fetch, breaker: createLlmBreaker() });
+      await writer.write(request());
+      expect(f.calls).toHaveLength(1);
+      // Lo que se comprueba es el JSON tal y como se pasa a fetch (init.body).
+      const sent = JSON.parse(String(f.calls[0].init.body)) as Record<string, unknown>;
+      expect(sent.reasoning_effort).toBe("none");
+      expect(sent).not.toHaveProperty("chat_template_kwargs");
+      expect(Object.keys(sent).sort()).toEqual(
+        ["max_tokens", "messages", "model", "reasoning_effort", "stream", "temperature", ...(provider ? ["providerOptions"] : [])].sort(),
+      );
+      expect(sent).toMatchObject({ model: MODEL, max_tokens: 60, temperature: CHAT_LLM.temperature, stream: false });
+      expect(CHAT_LLM.maxTokens).toBe(60);
+      expect(sent.messages).toEqual(buildChatPrompt(request()));
+      // No queda anidado en otro objeto (ni en providerOptions ni en los mensajes).
+      expect(provider ? sent.providerOptions : undefined).toEqual(provider ? { gateway: { only: ["nvidia"] } } : undefined);
+      expect(JSON.stringify(sent.providerOptions ?? {})).not.toContain("reasoning_effort");
+      expect(JSON.stringify(sent.messages)).not.toContain("reasoning_effort");
+      expect(String(f.calls[0].init.body).match(/reasoning_effort/g)).toHaveLength(1);
+      expect(String(f.calls[0].init.body)).not.toMatch(/chat_template_kwargs|enable_thinking/);
+    }
   });
 
   it("una sola petición por intervención: ningún error provoca reintentos", async () => {
@@ -155,6 +199,221 @@ describe("errores HTTP y corte temporal", () => {
   });
 });
 
+describe("diagnóstico de errores HTTP (resumen saneado)", () => {
+  const VERCEL_ID = "cdg1::iad1::abcde-1731400000000-0123456789ab";
+  const TOKEN = "vck_1A2b3C4d5E6f7G8h9I0jKlMnOp";
+  const jsonError = (status: number, error: unknown, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json; charset=utf-8", "x-vercel-id": VERCEL_ID, ...headers } });
+  const failWith = async (response: Response) => {
+    const t = writerWith(() => response);
+    const error = await t.writer.write(request()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ChatLlmError);
+    return { error: error as ChatLlmError, t };
+  };
+
+  it("JSON con `error`: content-type, x-vercel-id, type, code y message", async () => {
+    const { error, t } = await failWith(jsonError(403, { type: "forbidden", code: "customer_verification_required", message: "Access denied for this team." }));
+    expect(error).toMatchObject({ kind: "http", status: 403, message: "AI Gateway respondió 403" }); // el mensaje no cambia
+    expect(error.detail).toBe(
+      `content-type=application/json x-vercel-id=${VERCEL_ID} error.type=forbidden error.code=customer_verification_required error.message=Access denied for this team.`,
+    );
+    expect(t.failures[0].detail).toBe(error.detail);
+  });
+
+  it("JSON con `error` de texto, sin `error` o con campos que no son texto", async () => {
+    expect((await failWith(jsonError(403, "No autorizado"))).error.detail).toContain("error.message=No autorizado");
+    expect((await failWith(new Response('{"ok":false}', { status: 403, headers: { "content-type": "application/json" } }))).error.detail).toBe(
+      "content-type=application/json cuerpo=json-sin-error",
+    );
+    const odd = (await failWith(jsonError(403, { type: { a: 1 }, code: 42, message: ["x"] }))).error.detail;
+    expect(odd).toBe(`content-type=application/json x-vercel-id=${VERCEL_ID} error.code=42`);
+  });
+
+  it("HTML u otro texto: solo el tipo de contenido, nunca el cuerpo", async () => {
+    const html = `<html><body>Forbidden. Bearer ${KEY} ${TOKEN}</body></html>`;
+    const { error } = await failWith(new Response(html, { status: 403, headers: { "content-type": "text/html; charset=utf-8" } }));
+    expect(error.detail).toBe("content-type=text/html cuerpo=no-json");
+    const plain = await failWith(new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain" } }));
+    expect(plain.error.detail).toBe("content-type=text/plain cuerpo=no-json");
+  });
+
+  it("cuerpo vacío, ilegible o enorme (lee como mucho 2 KB) y cabeceras con formato no válido", async () => {
+    expect((await failWith(new Response(null, { status: 403 }))).error.detail).toBe("content-type=? cuerpo=vacío");
+    const broken = new ReadableStream<Uint8Array>({ pull: (c) => c.error(new Error("roto")) });
+    expect((await failWith(new Response(broken, { status: 403 }))).error.detail).toBe("content-type=? cuerpo=ilegible");
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({ pull: (c) => { pulls++; c.enqueue(new TextEncoder().encode(`{"error":"${"x".repeat(1000)}`)); } });
+    expect((await failWith(new Response(endless, { status: 403 }))).error.detail).toBe("content-type=? cuerpo=no-json");
+    expect(pulls).toBeLessThanOrEqual(4);
+    const weird = await failWith(jsonError(403, { type: "x" }, { "content-type": "<script>", "x-vercel-id": `Bearer ${KEY}` }));
+    expect(weird.error.detail).toBe("content-type=? x-vercel-id=[no válido] error.type=x");
+  });
+
+  it("enmascara Bearer, la clave y cadenas con aspecto de token; recorta y deja una línea", async () => {
+    const message = `Invalid key ${KEY}. Header: Bearer abc.def-ghi\nToken ${TOKEN} code customer_verification_required`;
+    const { error } = await failWith(jsonError(401, { type: "authentication_error", message }));
+    expect(error.detail).toContain("error.message=Invalid key [oculto]. Header: Bearer [oculto] Token [oculto] code customer_verification_required");
+    expect(error.detail).not.toContain(KEY);
+    expect(error.detail).not.toContain(TOKEN);
+    expect(error.detail).not.toContain("abc.def");
+    expect(redactSecrets("ABCDEFGHIJKLMNOPQRSTUVWXyz", 100)).toBe("[oculto]"); // mayúsculas y minúsculas
+    expect(redactSecrets("model_not_found_for_this_team", 100)).toBe("model_not_found_for_this_team");
+    expect(redactSecrets("a".repeat(300), 200)).toBe(`${"a".repeat(200)}…`);
+    expect(redactSecrets("short-secret-1", 100, "short-secret-1")).toBe("[oculto]");
+    expect(await describeHttpError(jsonError(403, { message: `x ${TOKEN}` }))).not.toContain(TOKEN);
+  });
+
+  it("el registro incluye el resumen sin secretos ni prompt, y sigue limitado a uno por minuto por tipo", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stage = "escritor LLM (prueba de diagnóstico)";
+      const first = (await failWith(jsonError(403, { type: "forbidden", message: `Bearer ${KEY} ${TOKEN}` }))).error;
+      logChatError(stage, first, 5_000_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const line = String(spy.mock.calls[0][0]);
+      expect(line).toBe(`[chat] ${stage}: LLM http (403) content-type=application/json x-vercel-id=${VERCEL_ID} error.type=forbidden error.message=Bearer [oculto] [oculto]`);
+      expect(line).not.toContain(KEY);
+      expect(line).not.toContain(TOKEN);
+      expect(line).not.toMatch(/Eres|Situación|Authorization/);
+      // Otro identificador de petición dentro del mismo minuto: no se registra otra vez.
+      const second = (await failWith(jsonError(403, { type: "forbidden" }, { "x-vercel-id": "cdg1::iad1::otro-1731400000001-ffff" }))).error;
+      logChatError(stage, second, 5_030_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      logChatError(stage, second, 5_061_000);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("se mantiene el corte temporal y la reserva local aunque el cuerpo no se pueda leer", async () => {
+    let now = 1_000_000;
+    const broken = () => new Response(new ReadableStream<Uint8Array>({ pull: (c) => c.error(new Error("roto")) }), { status: 403 });
+    const t = writerWith(broken, { now: () => now });
+    await expect(t.writer.write(request())).rejects.toMatchObject({ kind: "http", status: 403, detail: "content-type=? cuerpo=ilegible" });
+    expect(t.breaker.blockedUntil).toBe(1_000_000 + CHAT_LLM.configErrorCooldownMs);
+    now += 1;
+    await expect(t.writer.write(request())).rejects.toMatchObject({ kind: "cooldown" });
+    expect(t.calls).toHaveLength(1);
+    const html = writerWith(() => new Response("<html>x</html>", { status: 500, headers: { "content-type": "text/html" } }), { now: () => 0 });
+    await expect(html.writer.write(request())).rejects.toMatchObject({ kind: "http", status: 500 });
+    expect(html.breaker.blockedUntil).toBe(CHAT_LLM.serverErrorCooldownMs);
+  });
+});
+
+describe("diagnóstico de respuestas rechazadas (invalid_response)", () => {
+  const SECRET_TEXT = "Texto secreto generado por el modelo que nunca debe aparecer";
+  const REASONING = "Razonamiento interno del modelo que tampoco debe aparecer en el registro";
+  const body = (message: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    Response.json({ id: "x", model: MODEL, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", ...message } }], ...extra });
+  const rejectWith = async (response: Response) => {
+    const t = writerWith(() => response);
+    const error = await t.writer.write(request()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ChatLlmError);
+    expect(error).toMatchObject({ kind: "invalid_response" });
+    expect(t.breaker.blockedUntil).toBe(0); // sin corte temporal, como antes
+    expect(t.calls).toHaveLength(1);
+    return error as ChatLlmError;
+  };
+  const noLeaks = (text: string | undefined) => {
+    expect(text).toBeDefined();
+    for (const secret of [SECRET_TEXT, REASONING, "Secreto", "Razonamiento", KEY, "Eres", "Situación"]) expect(text).not.toContain(secret);
+  };
+
+  it("content null por agotar max_tokens razonando: finish_reason, razonamiento y usage, sin su texto", async () => {
+    const response = Response.json({
+      model: MODEL,
+      choices: [{ index: 0, finish_reason: "length", message: { role: "assistant", content: null, reasoning: REASONING, reasoning_content: REASONING } }],
+      usage: { prompt_tokens: 300, completion_tokens: 60, completion_tokens_details: { reasoning_tokens: 60 } },
+    });
+    const error = await rejectWith(response);
+    expect(error.message).toBe("respuesta sin texto");
+    expect(error.detail).toBe(
+      `choices=1 finish_reason=length content=null razonamiento=reasoning:string(${REASONING.length}),reasoning_content:string(${REASONING.length}) usage=completion_tokens=60 reasoning_tokens=60 model=${MODEL}`,
+    );
+    noLeaks(error.detail);
+  });
+
+  it("content en array de partes: se sigue rechazando (respuesta sin texto) y se anotan los tipos", async () => {
+    const error = await rejectWith(body({ content: [{ type: "text", text: SECRET_TEXT }, { type: "reasoning", text: REASONING }, { type: "Raro tipo" }] }));
+    expect(error.message).toBe("respuesta sin texto");
+    expect(error.detail).toContain("content=array(3:text,reasoning,?)");
+    noLeaks(error.detail);
+  });
+
+  it("textos rechazados: motivo correcto y solo longitud, líneas y <think>", async () => {
+    const long = await rejectWith(body({ content: `${SECRET_TEXT} ${"y".repeat(140)}` }));
+    expect(long.message).toBe("texto demasiado largo");
+    expect(long.detail).toContain(`content=string(${SECRET_TEXT.length + 141}) lineas=1 think=no`);
+    noLeaks(long.detail);
+    const think = await rejectWith(body({ content: `<think>\n${REASONING}\n</think>\n${SECRET_TEXT}` }));
+    expect(think.message).toBe("texto repetido o no válido");
+    expect(think.detail).toContain("lineas=4 think=sí");
+    noLeaks(think.detail);
+    const markdown = await rejectWith(body({ content: `**${SECRET_TEXT}**` }));
+    expect(markdown.message).toBe("formato no permitido");
+    noLeaks(markdown.detail);
+  });
+
+  it("valores no válidos de finish_reason, model, usage o tipos de parte → ? (nunca su contenido)", async () => {
+    const error = await rejectWith(
+      Response.json({
+        model: `Bearer ${KEY}`,
+        choices: [{ finish_reason: `stop ${SECRET_TEXT}`, message: { content: "" } }],
+        usage: { completion_tokens: "60 tokens", completion_tokens_details: { reasoning_tokens: -1 } },
+      }),
+    );
+    expect(error.message).toBe("texto vacío");
+    expect(error.detail).toBe("choices=1 finish_reason=? content=string(0) lineas=1 think=no razonamiento=ausente usage=completion_tokens=? reasoning_tokens=? model=?");
+    noLeaks(error.detail);
+    expect(describeCompletion(null)).toBe("choices=ausente finish_reason=ausente content=ausente razonamiento=ausente usage=ausente model=ausente");
+    expect(describeCompletion({ choices: "x" })).toContain("choices=string(1)");
+    expect(describeCompletion({ choices: [] })).toContain("choices=0 finish_reason=ausente content=ausente");
+  });
+
+  it("cada motivo de cleanLlmText es uno de los textos fijos que se registran", () => {
+    const reasons = new Set<string>();
+    for (const raw of [null, "Don Ernesto: hola", '""', "a".repeat(141), "**hola**", "Saluda a Abuela Pilar", "hola {rival}"]) {
+      try {
+        cleanLlmText(raw, request());
+      } catch (error) {
+        reasons.add((error as ChatLlmError).message);
+      }
+    }
+    expect(reasons.size).toBe(7);
+    for (const reason of reasons) expect(INVALID_RESPONSE_REASONS).toContain(reason);
+  });
+
+  it("el registro incluye el motivo y el resumen, sin texto del modelo, prompt ni clave; uno por minuto por motivo", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stage = "escritor LLM (prueba de invalid_response)";
+      const first = await rejectWith(body({ content: null, reasoning: REASONING }, { usage: { completion_tokens: 60 } }));
+      logChatError(stage, first, 7_000_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const line = String(spy.mock.calls[0][0]);
+      expect(line).toBe(
+        `[chat] ${stage}: LLM invalid_response: respuesta sin texto choices=1 finish_reason=stop content=null razonamiento=reasoning:string(${REASONING.length}) usage=completion_tokens=60 model=${MODEL}`,
+      );
+      noLeaks(line);
+      // Mismo motivo con otro resumen dentro del minuto: no se repite.
+      logChatError(stage, await rejectWith(body({ content: [] })), 7_010_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      // Otro motivo: sí se registra (conjunto cerrado de motivos).
+      const long = await rejectWith(body({ content: `${SECRET_TEXT} ${"y".repeat(140)}` }));
+      logChatError(stage, long, 7_020_000);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(String(spy.mock.calls[1][0])).toContain("LLM invalid_response: texto demasiado largo");
+      noLeaks(String(spy.mock.calls[1][0]));
+      // Un mensaje que no es un motivo conocido nunca se registra tal cual.
+      logChatError(stage, new ChatLlmError("invalid_response", SECRET_TEXT), 7_030_000);
+      expect(String(spy.mock.calls[2][0])).toBe(`[chat] ${stage}: LLM invalid_response: motivo desconocido`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("respuestas del modelo", () => {
   it.each([
     ["JSON ilegible", () => new Response("<html>", { status: 200 })],
@@ -183,8 +442,54 @@ describe("respuestas del modelo", () => {
   it("rechaza hablar como otro personaje o nombrar a personajes ajenos a la intervención", () => {
     expect(() => cleanLlmText("Don Ernesto: Previsible.", request())).toThrow(/otro personaje/);
     expect(() => cleanLlmText("¡A casa, Chispa! Y tú, Abuela Pilar, la siguiente.", request())).toThrow(/ajeno/);
-    // Quien habla y su rival sí se pueden nombrar.
-    expect(cleanLlmText("Brava nunca falla, Chispa.", request())).toBe("Brava nunca falla, Chispa.");
+    // El rival sí se puede nombrar; el propio nombre, no (tampoco para presentarse: ver quality.ts).
+    expect(cleanLlmText("Hoy no fallo, Chispa.", request())).toBe("Hoy no fallo, Chispa.");
+    expect(() => cleanLlmText("Soy Brava y nunca fallo, Chispa.", request())).toThrow(/se nombra a sí mismo/);
+  });
+
+  // Habla Don Ernesto y su rival es Abuela Pilar: Brava y Chispa son ajenas a la intervención.
+  const ernesto = () => request({ utterance: utterance({ speaker: "ai-purple", rival: "ai-green" }) });
+  const rejection = (text: string, req = ernesto()) => {
+    try {
+      cleanLlmText(text, req);
+    } catch (error) {
+      return error as ChatLlmError;
+    }
+    return null;
+  };
+
+  it("palabras comunes que contienen un nombre (bravata, chispazo, bravas) no son menciones", () => {
+    for (const text of ["Menuda bravata la tuya, Pilar.", "¡Vaya chispazo de suerte!", "Esto pide unas bravas y un buen café.", "Chispeante jugada, lo admito.", "Bravamente defendido, no lo niego."]) {
+      expect(cleanLlmText(text, ernesto())).toBe(text);
+    }
+  });
+
+  it("menciones reales a personajes ajenos: palabra completa, sin distinguir mayúsculas, con signos o espacios", () => {
+    for (const [text, name, form] of [
+      ["¡Chispa, prepárate!", "Chispa", "capitalizada"],
+      ["Hoy la chispa me acompaña.", "Chispa", "minúsculas"],
+      ["Ni BRAVA podría con esto.", "Brava", "mayúsculas"],
+      ["«Brava» se va a enterar.", "Brava", "capitalizada"],
+      ["Brava2 no, Brava sí.", "Brava", "capitalizada"],
+    ] as const) {
+      const error = rejection(text);
+      expect(error, text).toMatchObject({ kind: "invalid_response", message: "nombra a un personaje ajeno a la intervención" });
+      expect(error!.detail).toBe(`nombre=${name} coincidencia=palabra forma=${form}`);
+    }
+    // Nombres compuestos, también en minúsculas o con varios espacios (habla Brava contra Chispa).
+    expect(rejection("Ojo, don ernesto acecha.", request())!.detail).toBe("nombre=Don Ernesto coincidencia=palabra forma=minúsculas");
+    expect(rejection("Ojo, Don  Ernesto acecha.", request())!.detail).toBe("nombre=Don Ernesto coincidencia=palabra forma=capitalizada");
+    expect(rejection("Ya verás, (Abuela Pilar).", request())!.detail).toBe("nombre=Abuela Pilar coincidencia=palabra forma=capitalizada");
+    expect(rejection("Ya verás, ABUELA pilar.", request())!.detail).toBe("nombre=Abuela Pilar coincidencia=palabra forma=mixta");
+  });
+
+  it("se puede nombrar al rival, nunca a uno mismo; en la victoria (sin rival), a nadie", () => {
+    expect(cleanLlmText("Abuela Pilar, era previsible.", ernesto())).toBe("Abuela Pilar, era previsible.");
+    expect(() => cleanLlmText("Le habla Don Ernesto, Abuela Pilar: era previsible.", ernesto())).toThrow(/se nombra a sí mismo/);
+    const win = request({ utterance: utterance({ speaker: "ai-blue", kind: "victory_win", trigger: "victory", rival: null }) });
+    expect(cleanLlmText("¡Victoria, a toda velocidad!", win)).toBe("¡Victoria, a toda velocidad!");
+    expect(() => cleanLlmText("¡Victoria para Chispa, a toda velocidad!", win)).toThrow(/se nombra a sí mismo/);
+    expect(rejection("¡Gané! Brava, toma nota.", win)!.detail).toBe("nombre=Brava coincidencia=palabra forma=capitalizada");
   });
 });
 
@@ -231,6 +536,24 @@ describe("integración con drainChat", () => {
     expect(t.calls).toHaveLength(2);
   });
 
+  it("P4: con un hueco en el historial, la misma respuesta con cifras y «seguidas» se rechaza (frase local); sin hueco, se publica", async () => {
+    // Brava captura a Chispa en v4, v8 y v12 (tres seguidas): en v12 hay `capture_streak` y Brava habla.
+    const run = async (skip: number | null) => {
+      const t = setup(() => completion("¡Tres capturas seguidas!"));
+      for (let v = 2; v <= 12; v++) {
+        if (v === skip) continue;
+        t.memory.enqueue(GAME, v, v % 4 === 0 ? [capture("ai-pink", "ai-blue")] : [], createGame([...CHARACTER_IDS]));
+      }
+      while ((await drainChat(GAME, t.deps)).kind === "more");
+      return t.memory.rows.filter((r) => r.version === 12 && r.seq === 0);
+    };
+    const complete = await run(null);
+    expect(complete.map((r) => [r.trigger, r.character_id, r.source, r.text])).toEqual([["capture_streak", "ai-pink", "llm", "¡Tres capturas seguidas!"]]);
+    const gapped = await run(3);
+    expect(gapped.map((r) => [r.trigger, r.character_id, r.source])).toEqual([["capture_streak", "ai-pink", "local"]]);
+    expect(gapped[0].text).not.toMatch(/\d|racha|seguid|\b(dos|tres|cuatro)\b/i);
+  });
+
   it("si el LLM falla (cuota, 500, red o respuesta inválida), se usa la frase local y la cola sigue intacta", async () => {
     for (const respond of [() => new Response("{}", { status: 402 }), () => new Response("{}", { status: 500 }), () => "network" as const, () => completion("Abuela Pilar: hola")]) {
       const t = setup(respond as () => Response);
@@ -240,6 +563,213 @@ describe("integración con drainChat", () => {
       expect(t.memory.queue).toEqual([]);
       expect(t.memory.chats.get(GAME)).toMatchObject({ lastVersion: 4, lockToken: null });
     }
+  });
+
+  it("nombre ajeno: el diagnóstico lleva el nombre y la forma (sin el texto) y se usa la frase local una sola vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Hoy la chispa me acompaña, secreto";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-purple", "ai-green")], createGame([...CHARACTER_IDS]));
+    const result = await drainChat(GAME, deps);
+    expect(result).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    // Una llamada al LLM y un uso del local por cada intervención; sin corte temporal.
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures).toHaveLength(published);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ kind: "invalid_response", message: "nombra a un personaje ajeno a la intervención" });
+      expect(failure.detail).toMatch(/^nombre=Chispa coincidencia=palabra forma=minúsculas choices=1 /);
+      expect(failure.detail).not.toContain("acompaña");
+      expect(failure.detail).not.toContain("secreto");
+    }
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("regla de calidad (inglés): el diagnóstico lleva el término del catálogo y se usa la frase local una sola vez", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Despacito y buena letra. Who laughs last laughs best, secreto";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-purple", "ai-green")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ kind: "invalid_response", message: "idioma no permitido" });
+      expect(failure.detail).toMatch(/^termino=who laughs last choices=1 /);
+      expect(failure.detail).not.toContain("laughs best");
+      expect(failure.detail).not.toContain("secreto");
+      expect(failure.detail).not.toContain("Despacito");
+    }
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("frases retiradas: si el LLM las genera, se rechazan y se publica una frase local válida, una vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    // Don Ernesto come una ficha de Abuela Pilar. El modelo contesta, para cada uno, con una frase retirada.
+    const RETIRED_BY = { "Abuela Pilar": "¿Te comes a la abuela, Don Ernesto? Qué poca vergüenza.", "Don Ernesto": "Eso no se ve todos los días, Abuela Pilar." };
+    const f: ReturnType<typeof fakeFetch> = fakeFetch((call) => {
+      const system = String((f.calls[call - 1].body.messages as { content: string }[])[0].content);
+      return completion(system.startsWith("Eres Abuela Pilar") ? RETIRED_BY["Abuela Pilar"] : RETIRED_BY["Don Ernesto"]);
+    });
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-purple", "ai-green")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    // Nada de lo que dijo el modelo se publica: cada intervención lleva una frase local, válida y sin frases retiradas.
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    for (const row of memory.rows) {
+      expect(Object.values(RETIRED_BY)).not.toContain(row.text);
+      expect(hasDiscardedExpression(row.text), row.text).toBe(false);
+      expect(CHARACTERS.find((c) => c.id === row.character_id)!.chat.lines[row.trigger === "capture" ? (row.seq === 0 ? "capture_boast" : "capture_lament") : "capture_boast"].length).toBeGreaterThan(0);
+    }
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures).toHaveLength(published);
+    for (const failure of failures) {
+      expect(failure).toMatchObject({ kind: "invalid_response", message: "expresión poco natural" });
+      expect(failure.detail).toMatch(/^termino=(te comes a la abuela|no se ve todos los días) choices=1 /);
+      expect(failure.detail).not.toContain("vergüenza");
+    }
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("«Tengo que sacar otro seis»: si el LLM lo genera, se rechaza y se publica una frase local válida, una vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Tengo que sacar otro seis.";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-blue", "ai-pink")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && r.text !== MODEL_TEXT && !hasDiscardedExpression(r.text))).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures.map((e) => [e.message, e.detail?.split(" ")[0]])).toEqual(Array(published).fill(["expresión poco natural", "termino=necesito"]));
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("«Que no cunda el pánico»: si el LLM lo genera, se rechaza y se publica una frase local válida, una vez por intervención", async () => {
+    const memory = createMemoryChatStore();
+    const MODEL_TEXT = "Me has comido, pero que no cunda el pánico.";
+    const f = fakeFetch(() => completion(MODEL_TEXT));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [capture("ai-pink", "ai-blue")], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && !/p[aá]nico/i.test(r.text) && !hasDiscardedExpression(r.text))).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures.map((e) => [e.message, e.detail?.match(/^termino=que no cunda el pánico /) !== null])).toEqual(Array(published).fill(["expresión poco natural", true]));
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("norma de lenguaje: amuletos, el dado con vida propia o soplar al dado se rechazan y se publica una frase local válida", async () => {
+    for (const MODEL_TEXT of ["¡A casa, Brava! Será el amuleto.", "¡Ay, Brava! El dado te ha mirado mal.", "Le soplo al dado, a ver si cambia la cosa."]) {
+      const memory = createMemoryChatStore();
+      const f = fakeFetch(() => completion(MODEL_TEXT));
+      const failures: ChatLlmError[] = [];
+      const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+      const baseLocal = createLocalWriter(createSeededRandom(1));
+      const localWrite = vi.fn(baseLocal.write);
+      const local = { write: localWrite };
+      let tokens = 0;
+      const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+      memory.enqueue(GAME, 4, [capture("ai-blue", "ai-pink")], createGame([...CHARACTER_IDS]));
+      expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+      const published = memory.rows.length;
+      expect(published, MODEL_TEXT).toBeGreaterThanOrEqual(1);
+      expect(memory.rows.every((r) => r.source === "local" && r.text !== MODEL_TEXT && !hasDiscardedExpression(r.text)), MODEL_TEXT).toBe(true);
+      expect(f.calls).toHaveLength(published);
+      expect(localWrite).toHaveBeenCalledTimes(published);
+      // Cada intervención se rechaza (por la norma o, en la réplica, por otra regla) y pasa a la frase local.
+      expect(failures).toHaveLength(published);
+      expect(failures.every((e) => e.kind === "invalid_response"), MODEL_TEXT).toBe(true);
+      expect(failures.some((e) => e.message === "expresión poco natural"), MODEL_TEXT).toBe(true);
+      expect(memory.queue).toEqual([]);
+    }
+  });
+
+  it("registro de coletillas: cientos de versiones después, la coletilla de Pilar se rechaza y el rechazo no entra en el registro", async () => {
+    const memory = createMemoryChatStore();
+    const replies = [
+      "Despacito y buena letra, cariño: esa ficha, a su casita.", // v10, Pilar (LLM, aceptada)
+      "¡Vaya, qué mala pata la mía!", // v10, réplica de Chispa
+      "Despacito y buena letra, hijo. Quien ríe el último…", // v600, Pilar (repite la coletilla 0)
+      "Era cuestión de tiempo, señora.", // v600, réplica de Ernesto
+    ];
+    let call = 0;
+    const f = fakeFetch(() => completion(replies[call++] ?? "Sin más."));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const local = createLocalWriter(createSeededRandom(1));
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    const state = () => memory.chats.get(GAME)!.directorState as { recent: { speaker: string; text: string }[]; usedCatchphrases: Record<string, number[]> };
+
+    memory.enqueue(GAME, 10, [capture("ai-green", "ai-blue")], createGame([...CHARACTER_IDS]));
+    await drainChat(GAME, deps);
+    expect(memory.rows[0]).toMatchObject({ character_id: "ai-green", source: "llm" });
+    expect(state().usedCatchphrases["ai-green"]).toEqual([0]);
+    // Más de 12 mensajes locales (metas) entre medias: el texto de Pilar sale de la ventana de recientes.
+    // (Se procesan una a una: encoladas de golpe, las antiguas quedarían desfasadas y no hablarían.)
+    for (let i = 0; i < 14; i++) {
+      memory.enqueue(GAME, 20 + i * 4, [goal(CHARACTER_IDS[i % 4])], createGame([...CHARACTER_IDS]));
+      await drainChat(GAME, deps);
+    }
+    expect(memory.rows.filter((r) => r.trigger === "goal").length).toBeGreaterThan(12);
+    expect(state().recent.some((r) => r.text.startsWith("Despacito y buena letra, cariño"))).toBe(false);
+
+    memory.enqueue(GAME, 600, [capture("ai-green", "ai-purple")], createGame([...CHARACTER_IDS]));
+    await drainChat(GAME, deps);
+    const pilar600 = memory.rows.find((r) => r.version === 600 && r.character_id === "ai-green")!;
+    expect(pilar600.source).toBe("local"); // rechazada por el registro → frase local
+    expect(failures.some((e) => e.message === "expresión característica repetida" && e.detail?.startsWith("termino=Despacito y buena letra"))).toBe(true);
+    // El registro de Pilar solo refleja lo publicado: el texto rechazado (que también traía la coletilla 2) no cuenta.
+    const published = memory.rows.filter((r) => r.character_id === "ai-green").flatMap((r) => detectCatchphrases("ai-green", r.text));
+    expect(state().usedCatchphrases["ai-green"]).toEqual([...new Set(published)]);
+    expect(published.includes(2)).toBe(false);
+    expect(state().usedCatchphrases["ai-green"]).not.toContain(2);
   });
 
   it("si el LLM no responde, el tiempo máximo del servicio lo aborta y se usa el local, dentro de la reserva", async () => {
@@ -305,5 +835,467 @@ describe("integración con drainChat", () => {
       expect(unstable.mock.calls.length).toBe(writes); // exactamente una petición HTTP por texto pedido, sin reintentos
       expect(rows.every((r) => r.text.length <= CHAT_LIMITS.maxTextLength)).toBe(true);
     }
+  });
+});
+
+describe("etiquetas, comillas y respuestas truncadas (auditoría de la v382)", () => {
+  // Habla Abuela Pilar y su rival es Chispa (como en el mensaje de la v382).
+  const pilar = (extra: Partial<ChatWriteRequest> = {}) => request({ utterance: utterance({ speaker: "ai-green", rival: "ai-blue" }), ...extra });
+  const ernesto = (extra: Partial<ChatWriteRequest> = {}) => request({ utterance: utterance({ speaker: "ai-purple", rival: "ai-pink" }), ...extra });
+  const reason = (raw: string, req: ChatWriteRequest) => {
+    try {
+      cleanLlmText(raw, req);
+    } catch (error) {
+      return (error as ChatLlmError).message;
+    }
+    return null;
+  };
+  const FRASE = "Qué pena, Chispa; ya tenía la tuya en casa.";
+
+  it("regresión v382: «Pilar: \"…\"» se publica sin la etiqueta ni comillas sobrantes", () => {
+    expect(cleanLlmText(`Pilar: "${FRASE}"`, pilar())).toBe(FRASE);
+    // Con la comilla sin cerrar ya no se publica a medias: se rechaza.
+    expect(reason(`Pilar: "${FRASE}`, pilar())).toBe("comillas descompensadas");
+  });
+
+  it("etiquetas del propio personaje: nombre completo y alias, con dos puntos, raya o paréntesis", () => {
+    for (const raw of [
+      `Pilar: ${FRASE}`,
+      `Abuela Pilar: ${FRASE}`,
+      `pilar : ${FRASE}`,
+      `Pilar — ${FRASE}`,
+      `Abuela Pilar - ${FRASE}`,
+      `(Pilar) ${FRASE}`,
+      `(Abuela Pilar): ${FRASE}`,
+      `"Pilar: ${FRASE}"`,
+      `Pilar: «${FRASE}»`,
+    ]) {
+      expect(cleanLlmText(raw, pilar()), raw).toBe(FRASE);
+    }
+    expect(cleanLlmText("Ernesto: Lo siento, Brava. Su ficha vuelve a casa.", ernesto())).toBe("Lo siento, Brava. Su ficha vuelve a casa.");
+    expect(cleanLlmText("(Don Ernesto) Lo siento, Brava. Su ficha vuelve a casa.", ernesto())).toBe("Lo siento, Brava. Su ficha vuelve a casa.");
+  });
+
+  it("etiquetas de otro personaje (nombre o alias, también del rival): habla como otro personaje", () => {
+    for (const raw of [`Chispa: ${FRASE}`, `Don Ernesto: ${FRASE}`, `Ernesto — ${FRASE}`, `(Brava) ${FRASE}`, `"Brava: ${FRASE}"`]) {
+      expect(reason(raw, pilar()), raw).toBe("habla como otro personaje");
+    }
+    expect(reason("Pilar: Lo siento, Brava.", ernesto())).toBe("habla como otro personaje");
+  });
+
+  it("etiqueta vacía: sola, sin contenido tras las comillas o seguida solo de espacios", () => {
+    for (const raw of ["Pilar:", "Abuela Pilar —", "(Pilar)", 'Pilar: ""', "  Pilar:   \n  \n"]) {
+      expect(reason(raw, pilar()), JSON.stringify(raw)).toBe("texto vacío");
+    }
+  });
+
+  it("etiqueta en la primera línea y la frase en la segunda: se conserva la frase (y solo ella)", () => {
+    expect(cleanLlmText(`Pilar:\n${FRASE}`, pilar())).toBe(FRASE);
+    expect(cleanLlmText(`(Abuela Pilar)\r\n\n"${FRASE}"\nOtra línea que sobra`, pilar())).toBe(FRASE);
+    // La segunda línea también se comprueba: si es de otro personaje, se rechaza.
+    expect(reason(`Pilar:\nChispa: ${FRASE}`, pilar())).toBe("habla como otro personaje");
+    // Una primera línea con contenido sigue siendo la única que cuenta.
+    expect(cleanLlmText(`${FRASE}\nPilar: otra cosa`, pilar())).toBe(FRASE);
+  });
+
+  it("comillas: se quitan solo emparejadas; las descompensadas se rechazan y nunca quedan sobrantes", () => {
+    for (const [raw, clean] of [
+      [`"${FRASE}"`, FRASE],
+      [`«${FRASE}»`, FRASE],
+      [`“${FRASE}”`, FRASE],
+      [`'${FRASE}'`, FRASE],
+      [`‘${FRASE}’`, FRASE],
+      [`"${FRASE}”`, FRASE],
+      // Comillas equilibradas dentro de la frase: se conservan.
+      ["Ay, «Chispa», a casita.", "Ay, «Chispa», a casita."],
+      ['Ay, "Chispa", a casita.', 'Ay, "Chispa", a casita.'],
+    ] as const) {
+      expect(cleanLlmText(raw, pilar()), raw).toBe(clean);
+    }
+    for (const raw of [`"${FRASE}`, `${FRASE}"`, `«${FRASE}`, `${FRASE}»`, `“${FRASE}`, 'Ay, "Chispa, a casita.', "Ay, «Chispa», a «casita.", `'${FRASE}`]) {
+      expect(reason(raw, pilar()), raw).toBe("comillas descompensadas");
+    }
+  });
+
+  it("los dos puntos de una frase natural no son una etiqueta", () => {
+    for (const text of ["Ojo: esa ficha, a casita, Chispa.", "Lo dicho: sin prisa, Chispa.", "Cariño, una cosa: a casa, Chispa."]) {
+      expect(cleanLlmText(text, pilar()), text).toBe(text);
+    }
+    // Ni las palabras que solo empiezan por un nombre («Pilares», «Bravata»).
+    expect(cleanLlmText("Pilares de la casa: paciencia, Chispa.", pilar())).toBe("Pilares de la casa: paciencia, Chispa.");
+  });
+
+  it("narración en tercera persona de quien habla: se rechaza", () => {
+    expect(reason(`"Ay, Chispa, a casita," dijo Pilar.`, pilar())).toBe("habla de sí mismo en tercera persona");
+    expect(reason("Ay, Chispa, a casita, dice Abuela Pilar.", pilar())).toBe("habla de sí mismo en tercera persona");
+  });
+
+  it("coletillas: se detectan sobre el texto limpio, con y sin etiqueta", () => {
+    // «Previsible» es la coletilla 0 de Don Ernesto: ya publicada, se rechaza con y sin etiqueta.
+    const used = ernesto({ usedCatchphrases: [0] });
+    for (const raw of ["Previsible, Brava.", "Ernesto: Previsible, Brava.", "Don Ernesto: «Previsible, Brava.»", "(Ernesto) Previsible, Brava."]) {
+      expect(reason(raw, used), raw).toBe("expresión característica repetida");
+    }
+    // Sin haberla usado, se publica limpia.
+    expect(cleanLlmText("Ernesto: Previsible, Brava.", ernesto())).toBe("Previsible, Brava.");
+    // Y la repetición de un texto reciente tampoco se elude con una etiqueta.
+    const recent = pilar({ recent: [{ speaker: "ai-green", text: FRASE }] });
+    expect(reason(FRASE, recent)).toBe("texto repetido o no válido");
+    expect(reason(`Pilar: "${FRASE}"`, recent)).toBe("texto repetido o no válido");
+  });
+
+  it("finish_reason «length» con texto: respuesta truncada (sin corte temporal); «stop» con el mismo texto se acepta", async () => {
+    const truncated = (content: string, finish: string) =>
+      Response.json({ model: MODEL, choices: [{ index: 0, finish_reason: finish, message: { role: "assistant", content } }] });
+    const t = writerWith(() => truncated("Ay, Chispa, a ca", "length"));
+    const error = await t.writer.write(pilar()).catch((e: unknown) => e);
+    expect(error).toMatchObject({ kind: "invalid_response", message: "respuesta truncada" });
+    expect((error as ChatLlmError).detail).toMatch(/^choices=1 finish_reason=length content=string\(16\) /);
+    expect((error as ChatLlmError).detail).not.toContain("Chispa");
+    expect(t.breaker.blockedUntil).toBe(0);
+    expect(t.calls).toHaveLength(1);
+    const ok = writerWith(() => truncated(FRASE, "stop"));
+    expect(await ok.writer.write(pilar())).toEqual({ text: FRASE, source: "llm" });
+  });
+
+  it("los motivos nuevos están en la lista que se registra", () => {
+    expect(INVALID_RESPONSE_REASONS).toContain("comillas descompensadas");
+    expect(INVALID_RESPONSE_REASONS).toContain("respuesta truncada");
+  });
+
+  it.each([
+    ["etiqueta sola", { content: "Abuela Pilar:", finish: "stop" }, "texto vacío"],
+    ["comillas descompensadas", { content: `Pilar: "${FRASE}`, finish: "stop" }, "comillas descompensadas"],
+    // Brava no participa: su etiqueta es ajena tanto para Pilar como para la réplica de Chispa.
+    ["etiqueta de otro personaje", { content: `Brava: ${FRASE}`, finish: "stop" }, "habla como otro personaje"],
+    ["respuesta truncada", { content: "Ay, mi fichita, qué pena me da", finish: "length" }, "respuesta truncada"],
+  ])("integración (%s): el LLM se rechaza y la frase local se usa exactamente una vez por intervención", async (_, answer, message) => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() =>
+      Response.json({ choices: [{ finish_reason: answer.finish, message: { role: "assistant", content: answer.content } }] }),
+    );
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Pilar captura a Chispa: Pilar habla (y, si hay réplica, Chispa).
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-green", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    // Ningún mensaje publicado sale de la respuesta rechazada (ni entera ni limpiada a medias).
+    expect(memory.rows.every((r) => r.text !== answer.content && !r.text.includes(FRASE) && !r.text.includes("qué pena me da"))).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    expect(failures).toHaveLength(published);
+    // Pilar recibe la respuesta tal cual; la réplica de Chispa, si la hay, también (con su propio motivo).
+    expect(failures[0]).toMatchObject({ kind: "invalid_response", message });
+    expect(memory.queue).toEqual([]);
+  });
+});
+
+describe("clasificación real: el servicio pasa `leader` y `last`, y una posición falsa usa la frase local", () => {
+  /** Partida en juego en la que Abuela Pilar va primera (o, con `pilarFirst: false`, tercera). */
+  const stateWith = (pilarFirst: boolean) => {
+    const state = createGame([...CHARACTER_IDS]);
+    const steps: Record<string, number> = pilarFirst ? { "ai-green": 40, "ai-pink": 20, "ai-purple": 10, "ai-blue": 5 } : { "ai-pink": 40, "ai-purple": 20, "ai-green": 10, "ai-blue": 5 };
+    for (const player of state.players) Object.assign(player.pieces[0], { state: "track", steps: steps[player.id] });
+    return state;
+  };
+  const run = async (pilarFirst: boolean) => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "¡Te comí! Voy ganando." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const local = { write: vi.fn(createLocalWriter(createSeededRandom(1)).write) };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-green", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], stateWith(pilarFirst));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    return { memory, f, failures, local };
+  };
+
+  it("Pilar no va primera: «Voy ganando» se rechaza y se publica la frase local una sola vez", async () => {
+    const { memory, f, failures, local } = await run(false);
+    const pilar = memory.rows.find((r) => r.character_id === "ai-green")!;
+    expect(pilar).toMatchObject({ source: "local" });
+    expect(pilar.text).not.toMatch(/ganando/i);
+    expect(failures[0]).toMatchObject({ kind: "invalid_response", message: "afirmación no respaldada", detail: expect.stringMatching(/^termino=voy ganando /) });
+    // Una llamada al modelo y una frase local por cada intervención publicada, sin reintentos.
+    expect(f.calls).toHaveLength(memory.rows.length);
+    expect(local.write).toHaveBeenCalledTimes(memory.rows.length);
+    // El escritor recibe la clasificación real calculada en el servidor (Brava primera, Chispa última).
+    expect(local.write.mock.calls[0][0]).toMatchObject({ leader: "ai-pink", last: "ai-blue" });
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("Pilar va primera de verdad: la misma frase del modelo se publica", async () => {
+    const { memory, failures } = await run(true);
+    const pilar = memory.rows.find((r) => r.character_id === "ai-green")!;
+    expect(pilar).toMatchObject({ source: "llm", text: "¡Te comí! Voy ganando." });
+    expect(failures.filter((e) => e.message === "afirmación no respaldada")).toHaveLength(0);
+  });
+});
+
+describe("afirmar que un rival gana: el servicio pasa el ganador real (`winner`) y una afirmación falsa usa la frase local", () => {
+  const run = async (events: GameEvent[], ranking: string[], content: string) => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const local = { write: vi.fn(createLocalWriter(createSeededRandom(1)).write) };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    const state = createGame([...CHARACTER_IDS]);
+    state.ranking = [...ranking];
+    memory.enqueue(GAME, 4, events, state);
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    return { memory, f, failures, local };
+  };
+
+  it("sin ganador: «No me extraña que ganes» se rechaza en cada intervención y se publica la frase local una vez", async () => {
+    const { memory, f, failures, local } = await run([{ type: "piece_captured", playerId: "ai-green", victimId: "ai-blue", victimPieceIndex: 0, cell: 30 }], [], "No me extraña que ganes.");
+    expect(memory.rows.length).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local")).toBe(true);
+    for (const failure of failures) expect(failure).toMatchObject({ message: "afirmación no respaldada", detail: expect.stringMatching(/^termino=ganes /) });
+    expect(f.calls).toHaveLength(memory.rows.length);
+    expect(local.write).toHaveBeenCalledTimes(memory.rows.length);
+    expect(local.write.mock.calls[0][0]).toMatchObject({ winner: null });
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("con la victoria real de Chispa: la réplica «¡No me extraña que ganes!» se publica; en su propia victoria (sin rival), no", async () => {
+    const { memory } = await run([{ type: "player_finished", playerId: "ai-blue", place: 1 }], ["ai-blue"], "¡No me extraña que ganes!");
+    const win = memory.rows.find((r) => r.seq === 0)!;
+    expect(win).toMatchObject({ character_id: "ai-blue", source: "local" });
+    const reply = memory.rows.find((r) => r.seq === 1);
+    expect(reply).toBeDefined();
+    expect(reply).toMatchObject({ source: "llm", text: "¡No me extraña que ganes!" });
+  });
+});
+
+describe("final de la partida: el servicio pasa el estado real al validador", () => {
+  it("victoria con la partida en juego: «se acabó la partida» se rechaza y se usa la frase local una vez; el escritor recibe gameStatus", async () => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Se acabó la partida, qué jugada más dura." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const baseLocal = createLocalWriter(createSeededRandom(1));
+    const localWrite = vi.fn(baseLocal.write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Chispa termina el primero; el estado sigue en juego (los demás juegan por los otros puestos).
+    const state = createGame([...CHARACTER_IDS]);
+    expect(state.status).toBe("playing");
+    memory.enqueue(GAME, 4, [{ type: "player_finished", playerId: "ai-blue", place: 1 } satisfies GameEvent], state);
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && r.trigger === "victory")).toBe(true);
+    expect(f.calls).toHaveLength(published);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    for (const failure of failures) expect(failure).toMatchObject({ kind: "invalid_response", message: "afirmación no respaldada", detail: expect.stringMatching(/^termino=fin de la partida /) });
+    for (const [req] of localWrite.mock.calls) expect(req.gameStatus).toBe("playing");
+    expect(memory.queue).toEqual([]);
+  });
+
+  it("con un estado no válido (victoria en modo mínimo) no hay gameStatus: no se inventa el estado", async () => {
+    const memory = createMemoryChatStore();
+    const local = { write: vi.fn(createLocalWriter(createSeededRandom(1)).write) };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: local, fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    memory.enqueue(GAME, 4, [{ type: "player_finished", playerId: "ai-blue", place: 1 }], { roto: true });
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    expect(memory.rows).toHaveLength(1);
+    expect(local.write).toHaveBeenCalledTimes(1);
+    expect(local.write.mock.calls[0][0]).not.toHaveProperty("gameStatus");
+  });
+});
+
+describe("limitador global de AI Gateway (compartido con el selector de movimientos)", () => {
+  const ok = () => completion("¡A casa, Chispa! Hoy no se me escapa nadie.");
+
+  it("pide permiso justo antes de enviar: concedido → se llama; denegado → no se llama y falla con cooldown", async () => {
+    const allowed = vi.fn(async (): Promise<ChatAcquireOutcome> => "allowed");
+    const f1 = fakeFetch(ok);
+    const w1 = createGatewayWriter({ config, fetch: f1.fetch, breaker: createLlmBreaker(), acquire: allowed });
+    expect(await w1.write(request())).toMatchObject({ source: "llm" });
+    expect(allowed).toHaveBeenCalledTimes(1);
+    expect(f1.calls).toHaveLength(1);
+
+    // Cada denegación con su motivo fijo; un acquire que lanza cuenta como limitador no disponible.
+    for (const [acquire, message] of [
+      [async (): Promise<ChatAcquireOutcome> => "global", "límite global"],
+      [async (): Promise<ChatAcquireOutcome> => "consumer", "límite del chat"],
+      [async (): Promise<ChatAcquireOutcome> => "blocked", "bloqueo global"],
+      [async (): Promise<ChatAcquireOutcome> => "unavailable", "limitador no disponible"],
+      [async (): Promise<ChatAcquireOutcome> => { throw new Error("redis"); }, "limitador no disponible"],
+    ] as const) {
+      const f = fakeFetch(ok);
+      const w = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), acquire });
+      await expect(w.write(request())).rejects.toMatchObject({ kind: "cooldown", message });
+      expect(f.calls).toHaveLength(0);
+    }
+  });
+
+  it("con la petición ya cancelada no pide permiso (no gasta hueco); con el corte local activo, tampoco", async () => {
+    const acquire = vi.fn(async (): Promise<ChatAcquireOutcome> => "allowed");
+    const f = fakeFetch(ok);
+    const w = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), acquire });
+    await expect(w.write(request({ signal: AbortSignal.abort() }))).rejects.toMatchObject({ kind: "aborted" });
+    const blocked = createGatewayWriter({ config, fetch: f.fetch, breaker: { blockedUntil: Number.MAX_SAFE_INTEGER }, acquire });
+    await expect(blocked.write(request())).rejects.toMatchObject({ kind: "cooldown", message: "corte temporal local" });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it("429: avisa del bloqueo global con su Retry-After (o 60 s); otros errores no", async () => {
+    for (const [response, expected] of [
+      [() => new Response("{}", { status: 429, headers: { "Retry-After": "40" } }), [40_000]],
+      [() => new Response("{}", { status: 429 }), [CHAT_LLM.rateLimitCooldownMs]],
+      [() => new Response("{}", { status: 503 }), []],
+      [() => new Response("{}", { status: 400 }), []],
+    ] as const) {
+      const onRateLimited = vi.fn(async (_ms: number) => {});
+      const w = createGatewayWriter({ config, fetch: fakeFetch(response).fetch, breaker: createLlmBreaker(), acquire: async () => "allowed", onRateLimited });
+      await expect(w.write(request())).rejects.toMatchObject({ kind: "http" });
+      expect(onRateLimited.mock.calls.map(([ms]) => ms)).toEqual(expected);
+    }
+  });
+});
+
+describe("registro de los motivos de cooldown del chat", () => {
+  it("cada motivo fijo se distingue en el registro; un texto desconocido, no", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stage = "escritor LLM (prueba de cooldown)";
+      let t = 9_000_000;
+      for (const message of ["corte temporal local", "límite global", "límite del chat", "bloqueo global", "limitador no disponible", "otro texto"]) {
+        logChatError(stage, new ChatLlmError("cooldown", message), (t += 1));
+      }
+      expect(spy.mock.calls.map(([line]) => String(line))).toEqual([
+        `[chat] ${stage}: LLM cooldown: corte temporal local`,
+        `[chat] ${stage}: LLM cooldown: límite global`,
+        `[chat] ${stage}: LLM cooldown: límite del chat`,
+        `[chat] ${stage}: LLM cooldown: bloqueo global`,
+        `[chat] ${stage}: LLM cooldown: limitador no disponible`,
+        `[chat] ${stage}: LLM cooldown: motivo desconocido`,
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("integración: dirección de la captura y el propio nombre (conversación real)", () => {
+  it("si el LLM responde «He comido su ficha, Don Ernesto.», se rechaza y se publica la frase local de cada uno", async () => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "He comido su ficha, Don Ernesto." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const localWrite = vi.fn(createLocalWriter(createSeededRandom(1)).write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Don Ernesto le come una ficha a Abuela Pilar.
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-purple", victimId: "ai-green", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    const published = memory.rows.length;
+    expect(published).toBeGreaterThanOrEqual(1);
+    expect(memory.rows.every((r) => r.source === "local" && r.text !== "He comido su ficha, Don Ernesto.")).toBe(true);
+    expect(localWrite).toHaveBeenCalledTimes(published);
+    // Don Ernesto se habla a sí mismo; si replica Abuela Pilar, la misma frase cuenta la captura al revés.
+    expect(failures[0]).toMatchObject({ kind: "invalid_response", message: "se dirige a sí mismo" });
+    for (const failure of failures.slice(1)) expect(failure).toMatchObject({ kind: "invalid_response", message: "contradice quién captura" });
+    // Cada frase local es del personaje que habla y nombra al otro, nunca a sí mismo.
+    for (const row of memory.rows) {
+      const own = row.character_id === "ai-purple" ? "Don Ernesto" : "Abuela Pilar";
+      expect(row.text, row.text).not.toContain(own);
+    }
+    expect(memory.queue).toEqual([]);
+  });
+});
+
+describe("integración: una respuesta a una captura que habla de otra cosa (partida real)", () => {
+  it("si el LLM responde «Tengo otra en meta, qué suerte.», se publican las frases locales de captura, con la réplica enlazada a su mensaje", async () => {
+    const memory = createMemoryChatStore();
+    const f = fakeFetch(() => Response.json({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "Tengo otra en meta, qué suerte." } }] }));
+    const failures: ChatLlmError[] = [];
+    const llm = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), onFailure: (e) => failures.push(e) });
+    const localWrite = vi.fn(createLocalWriter(createSeededRandom(1)).write);
+    const local = { write: localWrite };
+    let tokens = 0;
+    // Azar 0: hablan los dos (mensaje de Brava y réplica de Abuela Pilar).
+    const deps: ChatDeps = { store: memory.store, writer: createImportantOnlyWriter(llm, local), fallbackWriter: local, random: () => 0, newToken: () => `t${++tokens}` };
+    // Brava le come una ficha a Abuela Pilar.
+    const event: GameEvent = { type: "piece_captured", playerId: "ai-pink", victimId: "ai-green", victimPieceIndex: 0, cell: 30 };
+    memory.enqueue(GAME, 4, [event], createGame([...CHARACTER_IDS]));
+    expect(await drainChat(GAME, deps)).toMatchObject({ kind: "done" });
+    expect(memory.rows).toHaveLength(2);
+    const [main, reply] = memory.rows;
+    for (const failure of failures) expect(failure).toMatchObject({ kind: "invalid_response", message: "no responde a la captura" });
+    // Mensaje de Brava (quien captura) y réplica de Pilar (quien pierde la ficha), enlazada al mensaje.
+    expect(main).toMatchObject({ character_id: "ai-pink", trigger: "capture", seq: 0, reply_to_seq: null, source: "local" });
+    expect(reply).toMatchObject({ character_id: "ai-green", trigger: "capture", seq: 1, reply_to_seq: 0, source: "local" });
+    // Las frases locales son de captura (de su tipo y su papel), nunca de la meta.
+    // La réplica usa las frases de réplica de su tipo (contesta, no repite el mensaje).
+    const rendered = (id: string, kind: "capture_boast" | "capture_lament", rival: string, asReply = false) => {
+      const chat = CHARACTERS.find((c) => c.id === id)!.chat;
+      return (asReply ? (chat.replies[kind] ?? []) : chat.lines[kind]).map((l) => l.replaceAll("{rival}", rival));
+    };
+    expect(rendered("ai-pink", "capture_boast", "Abuela Pilar")).toContain(main.text);
+    expect(rendered("ai-green", "capture_lament", "Brava", true)).toContain(reply.text);
+    for (const row of memory.rows) expect(row.text).not.toMatch(/meta/i);
+    expect(memory.queue).toEqual([]);
+  });
+});
+
+describe("trazabilidad del chat (onTrace)", () => {
+  type Trace = Parameters<NonNullable<Parameters<typeof createGatewayWriter>[0]["onTrace"]>>[0];
+  const writerWith = (respond: () => Response, extra: Partial<Parameters<typeof createGatewayWriter>[0]> = {}) => {
+    const traces: Trace[] = [];
+    let t = 1_000;
+    const f = fakeFetch(() => {
+      t += 640; // la llamada tarda 640 ms
+      return respond();
+    });
+    const writer = createGatewayWriter({ config, fetch: f.fetch, breaker: createLlmBreaker(), now: () => t, onTrace: (x) => traces.push(x), ...extra });
+    return { writer, traces, f };
+  };
+
+  it("una respuesta válida: origen llm con su duración; el texto devuelto no cambia", async () => {
+    const { writer, traces } = writerWith(() => completion("¡A casa, Chispa!"));
+    expect(await writer.write(request())).toEqual({ text: "¡A casa, Chispa!", source: "llm" });
+    expect(traces).toEqual([{ source: "llm", durationMs: 640 }]);
+  });
+
+  it("una respuesta rechazada o un error: origen local con el motivo fijo, sin el texto del modelo", async () => {
+    const rejected = writerWith(() => completion("¡Ay, Chispa! El dado te ha mirado mal. secreto"));
+    await expect(rejected.writer.write(request())).rejects.toBeInstanceOf(ChatLlmError);
+    expect(rejected.traces).toEqual([{ source: "local", durationMs: 640, reason: "expresión poco natural" }]);
+    expect(JSON.stringify(rejected.traces)).not.toContain("secreto");
+    const failing = writerWith(() => new Response("", { status: 500 }));
+    await expect(failing.writer.write(request())).rejects.toBeInstanceOf(ChatLlmError);
+    expect(failing.traces).toEqual([{ source: "local", durationMs: 640, reason: "AI Gateway respondió 500" }]);
+  });
+
+  it("sin petición al modelo (limitador sin permiso o corte temporal), no hay traza", async () => {
+    const denied = writerWith(() => completion("¡A casa!"), { acquire: async () => "global" });
+    await expect(denied.writer.write(request())).rejects.toBeInstanceOf(ChatLlmError);
+    expect(denied.f.calls).toHaveLength(0);
+    expect(denied.traces).toEqual([]);
+  });
+
+  it("una traza que lanza no cambia lo que devuelve el escritor", async () => {
+    const { writer } = writerWith(() => completion("¡A casa, Chispa!"), { onTrace: () => { throw new Error("traza rota"); } });
+    expect(await writer.write(request())).toEqual({ text: "¡A casa, Chispa!", source: "llm" });
   });
 });

@@ -136,9 +136,16 @@ describe("fotogramas de la animación", () => {
   });
 
   it("captura al salir de casa: salto a la salida y la rival a su casa", () => {
+    // Dos azules en la casilla 39 (salida de pink): no cabe la tercera, se captura la última llegada (azul:1).
+    const state = place(createGame(IDS), 3, [51, 51, -1, -1]);
+    const { frames } = rollAndMove(state, "rosa", 5, 0);
+    expect(frames.map((f) => f.movingKey)).toEqual(["rosa:0", "azul:1", null]);
+  });
+
+  it("salida de casa con una sola rival: solo el salto a la salida, sin captura", () => {
     const state = place(createGame(IDS), 3, [51, -1, -1, -1]); // azul en la casilla 39 (salida de pink)
     const { frames } = rollAndMove(state, "rosa", 5, 0);
-    expect(frames.map((f) => f.movingKey)).toEqual(["rosa:0", "azul:0", null]);
+    expect(frames.map((f) => f.movingKey)).toEqual(["rosa:0", null]);
   });
 
   it("bonus de 20: 20 saltos con la duración total acotada", () => {

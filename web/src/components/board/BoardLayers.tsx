@@ -1,8 +1,8 @@
 import { BOARD_SIZE } from "@/lib/board/geometry";
 
 /**
- * Capas gráficas del tablero original (frontend/public/board/), en el mismo orden y
- * con la misma opacidad que frontend/src/game/board/GameBoard.tsx. Todas son cuadradas,
+ * Capas gráficas del tablero de la interfaz del proyecto original (ft_transcendence, ya eliminada
+ * del repositorio), en el mismo orden y con la misma opacidad que su GameBoard. Todas son cuadradas,
  * así que se superponen sobre el mismo viewBox.
  */
 const LAYERS = [

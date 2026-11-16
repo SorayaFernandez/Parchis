@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Pruebas del SQL del chat (fase 8.2a) sobre un PostgreSQL 17 DESECHABLE en Docker.
 # NO se conecta a Supabase. Uso (desde web/): bash supabase/tests/run-chat-sql-tests.sh
-# Crea el contenedor, aplica supabase-stub.sql y 8.2a-chat.sql (dos veces: idempotencia), ejecuta
-# 8.2a-chat.test.sql, comprueba los WARNING del trigger tolerante y la concurrencia entre sesiones
-# (reservas simultáneas y un avance que no espera al chat). Borra el contenedor al terminar.
+# Crea el contenedor, aplica supabase-stub.sql, 6.1-games.sql y 8.2a-chat.sql (las dos migraciones dos
+# veces: idempotencia), ejecuta
+# 8.2a-chat.test.sql, comprueba los WARNING del trigger tolerante, ejecuta 8.2a-chat-commit-state.test.sql
+# (director_state guardado por chat_commit sin mensajes) y la concurrencia entre sesiones (reservas
+# simultáneas y un avance que no espera al chat). Borra el contenedor al terminar.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 NAME="parchis-chat-sql-test-$$"
 IMAGE="postgres:17-alpine"
 OUT="$(mktemp)"
-trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -f "$OUT" "$OUT.a" "$OUT.many"' EXIT
+trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -f "$OUT" "$OUT.a" "$OUT.many" "$OUT.state"' EXIT
 
 docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD=test "$IMAGE" >/dev/null
 ready=0
@@ -46,9 +48,11 @@ apply() {
 }
 
 apply "$DIR/supabase-stub.sql"
+apply "$DIR/../6.1-games.sql"    # 1.ª aplicación
+apply "$DIR/../6.1-games.sql"    # 2.ª aplicación: idempotencia
 apply "$DIR/../8.2a-chat.sql"   # 1.ª aplicación
 apply "$DIR/../8.2a-chat.sql"   # 2.ª aplicación: idempotencia
-echo "SQL aplicado dos veces sin errores"
+echo "6.1-games.sql y 8.2a-chat.sql aplicados dos veces sin errores"
 
 # stdout + stderr juntos: NOTICE (OK: …), WARNING del trigger y el resultado final.
 psql_file "$DIR/8.2a-chat.test.sql" >"$OUT" 2>&1 || { cat "$OUT"; echo "FALLAN LAS PRUEBAS SQL"; exit 1; }
@@ -65,13 +69,19 @@ done
 warnings=$(awk '/WARNING: +chat:/ { n++ } END { print n + 0 }' "$OUT")
 if [ "$warnings" -ne 3 ]; then echo "FALLA: se esperaban 3 WARNING del chat y hubo $warnings"; fail=1; fi
 
+# chat_commit sin mensajes: guarda director_state y el cursor en la misma operación (archivo aparte).
+psql_file "$DIR/8.2a-chat-commit-state.test.sql" >"$OUT.state" 2>&1 || { cat "$OUT.state"; echo "FALLAN LAS PRUEBAS SQL DE chat_commit"; exit 1; }
+grep -E "OK: |COMPLETADAS" "$OUT.state" | sed -E 's/^.*NOTICE: +//'
+if grep -E "WARNING: +chat:" "$OUT.state" >/dev/null; then echo "FALLA: WARNING inesperado del trigger en las pruebas de chat_commit"; fail=1; fi
+
 # ─── Concurrencia entre sesiones (una sola sesión de psql no puede reproducirla) ───────────────
 G="'aaaaaaaa-1111-4000-8000-000000000001'"
 q() { docker exec "$NAME" psql -U postgres -v ON_ERROR_STOP=1 -qAt -c "$1"; }
 check() { if [ "$2" = "$3" ]; then echo "OK: $1"; else echo "FALLA: $1 (esperado $3, obtenido $2)"; fail=1; fi; }
 
-q "insert into public.games (id, state) values ($G, '{}');" >/dev/null
-q "do \$\$ begin for i in 1..5 loop update public.games set version = version + 1, last_events = '[]' where id = $G; end loop; end \$\$;" >/dev/null
+# Partida en juego, versión 1 y sin reserva; cada avance reserva y confirma como la aplicación.
+q "insert into public.games (id, state) values ($G, '{\"status\":\"playing\"}');" >/dev/null
+q "do \$\$ begin for i in 1..5 loop update public.games set lock_token = '99999999-0000-4000-8000-000000000002' where id = $G; update public.games set version = version + 1, last_action = '{}', last_events = '[]', lock_token = '99999999-0000-4000-8000-000000000002' where id = $G; end loop; end \$\$;" >/dev/null
 
 # C1. A reserva y mantiene su transacción abierta 3 s; B lo intenta a la vez: espera y no obtiene nada.
 docker exec "$NAME" psql -U postgres -qAt -c "begin; set local role service_role; select count(*) from public.chat_claim($G, 'cccccccc-0000-4000-8000-00000000000a', 10, 25); select pg_sleep(3); commit;" >"$OUT.a" 2>&1 &
@@ -97,7 +107,7 @@ q "update public.game_chat set lock_token = null, locked_until = null, locked_th
 docker exec "$NAME" psql -U postgres -qAt -c "begin; set local role service_role; select count(*) from public.chat_claim($G, 'cccccccc-0000-4000-8000-00000000000c', 10, 25); select count(*) from public.chat_commit($G, 'cccccccc-0000-4000-8000-00000000000c', 6, '{}', '[]', 60); select pg_sleep(3); commit;" >/dev/null 2>&1 &
 sleep 1
 start=$(date +%s%N)
-q "set role service_role; update public.games set version = version + 1, last_events = '[]' where id = $G;" >/dev/null
+q "set role service_role; update public.games set lock_token = '99999999-0000-4000-8000-000000000002' where id = $G; update public.games set version = version + 1, last_action = '{}', last_events = '[]', lock_token = '99999999-0000-4000-8000-000000000002' where id = $G;" >/dev/null
 took=$(( ($(date +%s%N) - start) / 1000000 ))
 wait
 if [ "$took" -lt 1000 ]; then echo "OK: C3a. avance confirmado en ${took} ms con el chat confirmando en paralelo"; else echo "FALLA: C3a. el avance esperó al chat (${took} ms)"; fail=1; fi

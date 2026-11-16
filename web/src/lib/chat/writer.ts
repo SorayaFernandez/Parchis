@@ -2,11 +2,13 @@
 // `ChatWriter` es el punto de extensión de la fase 8.2b: un escritor con LLM implementará la misma
 // interfaz (y usará `createLocalWriter` como reserva). El director y la persistencia no cambian.
 
-import type { PlayerId } from "@/lib/engine";
+import type { GameState, PlayerId } from "@/lib/engine";
 import { CHARACTER_NAMES, getCharacter } from "@/lib/game/characters";
 import { CHAT_LIMITS } from "./config";
 import type { Random, Utterance } from "./director";
 import type { ChatSource } from "./schemas";
+import { detectCatchphrases } from "./catchphrases";
+import { unbackedPositionClaim, unbackedWinClaim } from "./positionClaims";
 
 export interface RecentText {
   speaker: PlayerId;
@@ -25,12 +27,40 @@ export interface ChatWriteRequest {
    */
   usedLines?: readonly string[];
   /**
+   * Coletillas que este personaje ya ha publicado en la partida (índices en `character.catchphrases`,
+   * del registro del director). El validador del LLM las rechaza; el escritor local las evita si puede.
+   */
+  usedCatchphrases?: readonly number[];
+  /**
    * Se aborta cuando vence el tiempo de la llamada: un escritor con red (LLM) debe pasarlo a su
    * petición HTTP para cancelarla. Su resultado tardío se ignora.
    */
   signal?: AbortSignal;
   /** Tiempo máximo de esta llamada (ms), ya ajustado a lo que queda de reserva. */
   timeoutMs?: number;
+  /**
+   * Estado real de la partida en esta versión (`state.status` de la cola, validado). Sin él (estado no
+   * válido, victoria en modo mínimo) no se sabe si la partida sigue: el validador no concluye nada.
+   */
+  gameStatus?: GameState["status"];
+  /**
+   * Quién va ganando según los datos reales (`gameLeader`: el primero en solitario por progreso mientras
+   * nadie ha terminado), o `null` si nadie. Sin él (estado no válido) no se sabe. Solo con él puede el
+   * validador aceptar un «voy ganando».
+   */
+  leader?: PlayerId | null;
+  /**
+   * Quién va perdiendo según los datos reales (`gameLast`: el último en solitario por progreso entre
+   * quienes siguen jugando), o `null` si no se puede saber. Sin él (estado no válido) no se sabe. Solo con
+   * él puede afirmarse «voy perdiendo» (ver `positionClaims.ts`).
+   */
+  last?: PlayerId | null;
+  /**
+   * Quién ha ganado la partida según los datos reales (`state.ranking[0]`), o `null` si todavía no ha ganado
+   * nadie. Sin él (estado no válido) no se sabe. Solo con él puede decirse que un rival gana fuera de la
+   * réplica a su victoria (ver `unbackedWinClaim` en `positionClaims.ts`).
+   */
+  winner?: PlayerId | null;
 }
 
 export interface WrittenText {
@@ -137,16 +167,34 @@ export function validateChatText(text: string, recent: readonly RecentText[]): s
 /**
  * Escritor con las frases locales de cada personaje (sin coste ni red).
  * Entre las frases válidas (con sus datos y sin parecerse a los textos recientes de la partida),
- * elige al azar una que el personaje aún no haya usado; si ya las usó todas, la usada hace más tiempo.
+ * prefiere las que no contienen coletillas ya publicadas por el personaje y, entre ellas, elige al azar
+ * una que aún no haya usado; si ya las usó todas, la usada hace más tiempo.
  */
 export function createLocalWriter(random: Random): ChatWriter {
   return {
-    async write({ utterance, recent, usedLines = [] }) {
-      const lines = getCharacter(utterance.speaker)?.chat.lines[utterance.kind] ?? [];
-      const options = lines
-        .map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) }))
-        .filter((o): o is { id: string; text: string } => o.text !== null && validateChatText(o.text, recent) === o.text);
-      if (options.length === 0) return null;
+    async write(request) {
+      const { utterance, recent, usedLines = [], usedCatchphrases = [] } = request;
+      // Una réplica contesta con las frases de réplica de su tipo, si las hay («Sí, te comí la ficha»), en
+      // lugar de repetir lo que acaba de decir el otro con otras palabras. Si ninguna vale, las de siempre.
+      const chat = getCharacter(utterance.speaker)?.chat;
+      const replyLines = utterance.replyTo !== null ? (chat?.replies[utterance.kind] ?? []) : [];
+      const lines = chat?.lines[utterance.kind] ?? [];
+      // Además de tener sus datos y no repetirse, la frase no puede afirmar una posición que la clasificación
+      // real no respalda («Voy perdiendo» solo si quien habla va el último; ver `positionClaims.ts`).
+      const usable = (o: { id: string; text: string | null }): o is { id: string; text: string } =>
+        o.text !== null &&
+        validateChatText(o.text, recent) === o.text &&
+        unbackedPositionClaim(o.text, request) === null &&
+        unbackedWinClaim(o.text, request) === null;
+      const replies = replyLines.map((line, index) => ({ id: `reply:${utterance.kind}:${index}`, text: renderLine(line, utterance) })).filter(usable);
+      const valid =
+        replies.length > 0 ? replies : lines.map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) })).filter(usable);
+      if (valid.length === 0) return null;
+      // Preferencia (no prohibición): frases sin coletillas que este personaje ya haya publicado. Si
+      // todas las válidas las tienen, se usan igualmente: el escritor local nunca se queda sin frase
+      // por esto (es la reserva del LLM y la garantía de la victoria).
+      const withoutUsed = valid.filter((o) => !detectCatchphrases(utterance.speaker, o.text).some((i) => usedCatchphrases.includes(i)));
+      const options = withoutUsed.length > 0 ? withoutUsed : valid;
 
       const fresh = options.filter((o) => !usedLines.includes(o.id));
       let pool = fresh;

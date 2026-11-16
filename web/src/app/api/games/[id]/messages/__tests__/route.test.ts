@@ -76,4 +76,35 @@ describe("GET /api/games/[id]/messages", () => {
     await call("?after=5");
     expect(scheduleDrain).toHaveBeenCalledTimes(1);
   });
+
+  it("un lote confirmado entre las dos lecturas no hace perder el último mensaje (pendientes antes que mensajes)", async () => {
+    // Almacén con la semántica de `chat_commit`: inserta el mensaje y vacía la cola a la vez. Cada lectura
+    // ve el estado del momento en que se hace, y el lote se confirma justo después de la primera lectura.
+    for (const query of ["", "?after=1"]) {
+      const db = { messages: [message(1)], queued: 1, committed: false };
+      const commitOnce = () => {
+        if (db.committed) return;
+        db.committed = true;
+        db.messages = [...db.messages, message(2)];
+        db.queued = 0;
+      };
+      const read = <T,>(snapshot: T) => {
+        commitOnce();
+        return Promise.resolve(snapshot);
+      };
+      latest.mockReset().mockImplementation(() => read([...db.messages]));
+      after.mockReset().mockImplementation((_id: string, afterId: number) => read(db.messages.filter((m) => m.id > afterId)));
+      pending.mockReset().mockImplementation(() => read(db.queued > 0));
+
+      const body = ChatPageSchema.parse(await (await call(query)).json());
+      // Nunca "sin el mensaje 2 y sin pendientes": o lo trae, o avisa de que quedan pendientes.
+      expect(body.pending || body.messages.some((m) => m.id === 2), query).toBe(true);
+      // Con el orden correcto se lee primero la cola (pendiente) y después los mensajes (ya con el 2).
+      expect(body, query).toMatchObject({ pending: true });
+      expect(body.messages.at(-1)?.id, query).toBe(2);
+      expect(pending.mock.invocationCallOrder[0], query).toBeLessThan(
+        (query ? after : latest).mock.invocationCallOrder[0],
+      );
+    }
+  });
 });

@@ -61,6 +61,29 @@ describe("página /partida/[id]: partida en curso", () => {
     expect(html).not.toContain("Lanzar dado");
   });
 
+  it("disposición: jugadores en orden visual (Chispa, Don Ernesto, Abuela Pilar, Brava) sin tocar el estado, y jugadas y datos en su propio panel", () => {
+    const state = createGame([...CHARACTER_IDS]);
+    const before = JSON.stringify(state);
+    const html = render(game(state));
+    const players = html.slice(html.indexOf('aria-label="Jugadores"'));
+    const names = [...players.matchAll(/<p class="truncate font-semibold">([^<]+)/g)].map((m) => m[1]);
+    expect(names).toEqual(["Chispa", "Don Ernesto", "Abuela Pilar", "Brava"]);
+    // Solo presentación: el estado (orden interno y turno) no cambia.
+    expect(JSON.stringify(state)).toBe(before);
+    expect(state.players.map((p) => p.id)).toEqual([...CHARACTER_IDS]);
+    expect(html).toContain("Brava puede lanzar el dado");
+    // Dado, jugadores y últimas jugadas a un lado; chat y datos de la partida al otro (zonas de la rejilla).
+    const right = html.indexOf('aria-label="Turno, jugadores y jugadas"');
+    const left = html.indexOf('aria-label="Chat y datos de la partida"');
+    expect(right).toBeGreaterThan(html.indexOf('aria-label="Tablero"'));
+    expect(left).toBeGreaterThan(right);
+    const log = html.search(/aria-label="Últimas? jugadas?"/);
+    expect(log).toBeGreaterThan(right);
+    expect(log).toBeLessThan(left);
+    expect(html.indexOf('aria-label="Chat de los personajes"')).toBeGreaterThan(left);
+    expect(html.indexOf('aria-label="Datos de la partida"')).toBeGreaterThan(html.indexOf('aria-label="Chat de los personajes"'));
+  });
+
   it("muestra las posiciones reales, el dado y la última jugada (acción + eventos)", () => {
     const start = createGame([...CHARACTER_IDS]);
     const rolled = applyAction(start, { type: "roll", playerId: "ai-pink", value: 5 });
@@ -75,7 +98,7 @@ describe("página /partida/[id]: partida en curso", () => {
     expect(html).toContain("Brava saca una ficha de casa");
     expect(html).toContain("Chispa puede lanzar el dado"); // turno siguiente
     expect(html).toContain("Dado: 5"); // último valor del dado
-    expect(html).toContain(">3<"); // versión
+    expect(html).not.toContain("Versión"); // el panel «Partida» ya no muestra la versión
   });
 
   it("con dado pendiente resalta las fichas que se pueden mover", () => {

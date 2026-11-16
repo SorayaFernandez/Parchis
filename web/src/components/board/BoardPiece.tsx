@@ -1,5 +1,5 @@
 import { COLOR_HEX, COLOR_LABEL, PIECE_IMAGES, PIECE_IMAGE_SCALE } from "@/lib/board/geometry";
-import type { BoardSlot, PieceLayout } from "@/lib/board/layout";
+import { PIECE_HALO_RATIO, PIECE_RING_RATIO, type BoardSlot, type PieceLayout } from "@/lib/board/layout";
 
 function describeSlot(slot: BoardSlot): string {
   switch (slot.kind) {
@@ -42,14 +42,14 @@ export function BoardPiece({ piece, highlighted = false, moving = false, transit
       <title>{`Ficha ${piece.pieceIndex + 1} ${COLOR_LABEL[piece.color]}, ${describeSlot(piece.slot)}`}</title>
       {highlighted && (
         <circle
-          r={half + 10}
+          r={half * PIECE_RING_RATIO}
           fill="none"
           stroke="white"
-          strokeWidth={4}
+          strokeWidth={3}
           className="animate-pulse"
         />
       )}
-      <circle r={half + 6} fill={color} opacity={0.18} />
+      <circle r={half * PIECE_HALO_RATIO} fill={color} opacity={0.18} />
       <image
         href={PIECE_IMAGES[piece.color]}
         x={-imageSize / 2}

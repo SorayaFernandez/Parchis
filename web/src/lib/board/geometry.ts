@@ -20,7 +20,8 @@ const scaleBase = (x: number, y: number): Point => ({ x: x * BASE_SCALE, y: y * 
 
 /**
  * Centro de cada casilla global del recorrido (índice = casilla 0..67).
- * Portado de backend/game/utils/boardMap.js; verificado sobre board-path.svg.
+ * Portado de game/utils/boardMap.js del backend del proyecto original (ft_transcendence, ya no está
+ * en el repositorio); verificado sobre board-path.svg.
  */
 const TRACK_732: ReadonlyArray<readonly [number, number]> = [
   [366, 711], // 0 (impresa como 68)
@@ -41,7 +42,7 @@ export const TRACK_CELLS: readonly Point[] = TRACK_732.map(([x, y]) => scalePath
 
 /**
  * Centros de las 7 casillas del pasillo final de cada color, desde la entrada hacia el centro.
- * Portado de backend/game/utils/homeStretchMap.js. Corrección: en el original blue y
+ * Portado de game/utils/homeStretchMap.js del backend del proyecto original. Corrección: en el original blue y
  * green estaban desplazados una casilla hacia el centro. Ahora coinciden con los
  * rectángulos de board-path.svg.
  */
@@ -77,7 +78,8 @@ export const BASE_SLOTS: Readonly<Record<Color, readonly Point[]>> = {
 
 /**
  * Posiciones en la meta (triángulos centrales).
- * Portado de finishedPositions en frontend/src/game/boardPositions.ts.
+ * Portado de finishedPositions (game/boardPositions.ts) de la interfaz del proyecto original
+ * (ft_transcendence, ya eliminada del repositorio).
  */
 export const GOAL_SLOTS: Readonly<Record<Color, readonly Point[]>> = {
   pink: [{ x: 730, y: 670 }, { x: 870, y: 670 }, { x: 800, y: 670 }, { x: 800, y: 740 }],
@@ -113,7 +115,7 @@ export const CELL_WIDTH = 36 * PATH_SCALE;
  */
 export const PIECE_IMAGE_SCALE = 512 / 343;
 
-/** Imágenes de las fichas (copiadas de frontend/public/pieces/). */
+/** Imágenes de las fichas (copiadas de la interfaz del proyecto original, ya eliminada del repositorio). */
 export const PIECE_IMAGES: Readonly<Record<Color, string>> = {
   pink: "/pieces/pink-piece.png",
   purple: "/pieces/purple-piece.png",

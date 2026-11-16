@@ -109,5 +109,29 @@ export const DirectorStateSchema = z.object({
   usedLines: z
     .record(z.string(), z.array(z.string()).max(CHAT_LIMITS.usedLinesPerCharacter))
     .default({}),
+  /**
+   * Coletillas que cada personaje ya ha publicado en la partida (índices de `character.catchphrases`,
+   * sin repetir), de mensajes del LLM o locales. Un estado guardado sin este campo se lee como vacío.
+   */
+  usedCatchphrases: z
+    .record(z.string(), z.array(z.number().int().min(0)).max(CHAT_LIMITS.usedCatchphrasesPerCharacter))
+    .default({}),
+  /**
+   * Continuidad del historial de capturas (ver `trackCaptures` en director.ts). Última versión observada
+   * por el director (nunca retrocede). Un estado guardado sin este campo se lee como `null`: si la
+   * siguiente versión no es la primera de la cola (v2), el historial se marca incompleto.
+   */
+  observedThrough: z.number().int().min(1).nullable().default(null),
+  /**
+   * Última versión NO observada (hueco, anomalía o captura descartada por el límite), o `null` si no ha
+   * habido ninguna. Nunca retrocede. El historial es completo cuando ya no puede afectar a la ventana.
+   */
+  historyGapThrough: z.number().int().min(1).nullable().default(null),
+  /**
+   * Intervenciones espontáneas publicadas por cada personaje (mensajes principales, sin réplicas ni
+   * victoria). El director las usa para repartir la palabra según `chat.share` (ver `balanceFactor`). Un
+   * estado guardado sin este campo se lee como vacío.
+   */
+  spoken: z.record(z.string(), z.number().int().min(0)).default({}),
 });
 export type DirectorState = z.infer<typeof DirectorStateSchema>;

@@ -7,14 +7,57 @@ import { randomInt, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { isChatCandidate } from "@/lib/chat/director";
 import { scheduleDrain } from "@/lib/chat/schedule";
-import { EngineRejectedActionError, advanceGame } from "@/lib/game/advance";
+import { EngineRejectedActionError, advanceGame, type AdvanceDeps } from "@/lib/game/advance";
+import { readMoveLlmConfig } from "@/lib/game/moveSelector/env";
+import { createMoveBreaker, createMoveSelector, type MoveSelector } from "@/lib/game/moveSelector/gateway";
+import { logMoveError } from "@/lib/game/moveSelector/log";
+import { createLimitedMoveQuota, type MoveQuota } from "@/lib/game/moveSelector/quota";
+import { getGatewayLimiter } from "@/lib/llm/gatewayLimiter";
+import { logLlmTrace } from "@/lib/llm/trace";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
 import { guardAdvance } from "@/lib/security/guards";
+import { checkSameOriginJsonPost } from "@/lib/security/sameOrigin";
 
 const BodySchema = z.strictObject({
   expectedVersion: z.number().int().min(1),
 });
+
+/** Corte temporal del selector de movimientos, compartido por las peticiones de este proceso (no es el del chat). */
+const moveBreaker = createMoveBreaker();
+
+/**
+ * Selector estratégico con LLM y su cupo por partida, solo si su configuración lo activa (Vercel Preview,
+ * `MOVES_LLM_ENABLED`, clave y modelo exacto) **y** hay Upstash para el limitador global compartido con el
+ * chat y el cupo de 20 consultas por partida. Si no,
+ * sin selector: se usa la estrategia local como siempre. Un error de configuración se registra sin
+ * valores (como mucho una vez por minuto); `off` es lo normal.
+ */
+function moveSelectorFromEnv(): { moveSelector?: MoveSelector; moveQuota?: MoveQuota; onMoveTrace?: AdvanceDeps["onMoveTrace"] } {
+  const config = readMoveLlmConfig(process.env);
+  if (!config.enabled) {
+    if (config.reason !== "off") logMoveError("configuración", Object.assign(new Error(config.reason), { name: `configuración ${config.reason}` }));
+    return {};
+  }
+  // Sin limitador global (sin Upstash) no se consulta al modelo (falla cerrado).
+  const limiter = getGatewayLimiter(process.env);
+  if (!limiter) {
+    logMoveError("configuración", Object.assign(new Error("sin_upstash"), { name: "configuración sin_upstash" }));
+    return {};
+  }
+  const moveQuota = createLimitedMoveQuota(limiter);
+  const moveSelector = createMoveSelector({
+    config,
+    fetch: (...args) => fetch(...args),
+    breaker: moveBreaker,
+    onFailure: (error) => logMoveError("selector", error),
+    // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
+    onRateLimited: (durationMs) => limiter.reportRateLimited(durationMs),
+  });
+  // Una línea por consulta real al modelo (origen, modelo, duración, motivo y si se guardó). Sin contenido.
+  const onMoveTrace: AdvanceDeps["onMoveTrace"] = (trace) => logLlmTrace({ operation: "movimiento", model: config.model, ...trace });
+  return { moveSelector, moveQuota, onMoveTrace };
+}
 
 async function readBody(request: Request) {
   try {
@@ -26,6 +69,10 @@ async function readBody(request: Request) {
 
 export async function POST(request: Request, ctx: RouteContext<"/api/games/[id]/advance">) {
   const { id } = await ctx.params;
+
+  // Solo desde la propia aplicación y con cuerpo JSON (403/415); antes de los límites y sin tocar la BD.
+  const rejected = checkSameOriginJsonPost(request);
+  if (rejected) return rejected;
 
   // Límites por IP + partida y por IP (si el proveedor falla, se deja pasar: el servidor ya limita a
   // un avance por versión). Va antes de leer el cuerpo y de tocar la BD.
@@ -43,6 +90,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/games/[id]/
       rollDie: () => randomInt(1, 7), // 1..6, solo en el servidor
       newToken: () => randomUUID(),
       random: () => randomInt(0, 2 ** 32) / 2 ** 32, // [0, 1) para el azar acotado de Chispa
+      ...moveSelectorFromEnv(),
+      signal: request.signal,
+      // Los fallos del propio selector ya los registra su `onFailure`; aquí, solo los rechazos de la validación.
+      onMoveFallback: (reason) => {
+        if (reason !== "fallo del selector") logMoveError("estrategia local", Object.assign(new Error(reason), { name: reason }));
+      },
     });
 
     switch (result.kind) {

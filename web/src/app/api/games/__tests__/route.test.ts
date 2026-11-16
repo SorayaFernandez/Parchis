@@ -16,12 +16,36 @@ const { GameRepositoryError } = await import("@/lib/game/repository");
 const { SupabaseEnvError } = await import("@/lib/supabase/env");
 
 const ID = "0b6c3f6e-2f0a-4c3b-9d7e-1a2b3c4d5e6f";
-const post = (body?: string) => POST(new Request("http://localhost/api/games", { method: "POST", body }));
+const post = (body?: string) => POST(new Request("http://localhost/api/games", { method: "POST", body, headers: { "Content-Type": "application/json" } }));
 
 describe("POST /api/games", () => {
   beforeEach(() => {
     create.mockReset();
     vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("CSRF: acepta la propia aplicación; 403 con un origen externo o cross-site y 415 sin JSON, sin crear nada", async () => {
+    create.mockImplementation(async (state) => ({ id: ID, version: 1, state }));
+    const send = (headers: Record<string, string>, body = "{}") =>
+      POST(new Request("http://localhost/api/games", { method: "POST", body, headers }));
+    const own = await send({ "Content-Type": "application/json", Origin: "http://localhost", "Sec-Fetch-Site": "same-origin" });
+    expect(own.status).toBe(201);
+    expect(create).toHaveBeenCalledTimes(1);
+    create.mockClear();
+    const cases: [Record<string, string>, number, string][] = [
+      [{ "Content-Type": "application/json", Origin: "https://evil.example" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "application/x-www-form-urlencoded", Origin: "https://evil.example" }, 403, "forbidden_origin"],
+      [{ "Content-Type": "text/plain", Origin: "http://localhost" }, 415, "unsupported_media_type"],
+      [{}, 415, "unsupported_media_type"], // un cuerpo de texto sin tipo llega como text/plain
+    ];
+    for (const [headers, status, code] of cases) {
+      const response = await send(headers);
+      expect(response.status, JSON.stringify(headers)).toBe(status);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).error.code).toBe(code);
+    }
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("crea la partida con los cuatro personajes y devuelve 201 { id, version }", async () => {

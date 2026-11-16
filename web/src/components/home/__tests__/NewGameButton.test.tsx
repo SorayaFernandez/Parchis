@@ -35,16 +35,72 @@ describe("NewGameButtonView", () => {
 });
 
 describe("portada", () => {
-  it("muestra «Nueva partida» y mantiene el acceso al tablero de demostración", () => {
-    const html = renderToStaticMarkup(<Home />);
+  it("muestra «Nueva partida» y mantiene el acceso al tablero de demostración", async () => {
+    const html = renderToStaticMarkup(await Home());
     expect(html).toMatch(/<button[^>]*>Nueva partida<\/button>/);
     expect(html).toContain('href="/tablero"');
-    expect(html).toContain("Ver el tablero (demo)");
-    // Sin registro, login ni participación humana.
-    expect(html).not.toMatch(/iniciar sesión|registr|login|<input/i);
+    expect(html).toContain("Ver una partida de demostración");
+    // Sin registro, login ni participación humana (el «Sin registro» informa de que no hace falta).
+    expect(html).not.toMatch(/iniciar sesión|registrarse|login|<input/i);
+  });
+
+  it("presenta un juego terminado: sin «En construcción», con los cuatro personajes y solo enlaces que funcionan", async () => {
+    const html = renderToStaticMarkup(await Home());
+    expect(html).not.toMatch(/en construcción|próximamente|beta/i);
+    for (const name of ["Brava", "Don Ernesto", "Abuela Pilar", "Chispa"]) expect(html).toContain(name);
+    for (const tagline of ["Agresiva y competitiva", "Estratega y calculador", "Prudente y entrañable", "Imprevisible y divertido"]) expect(html).toContain(tagline);
+    expect(html).toContain("Ellos juegan. Tú miras.");
+    // Las dos llamadas a la acción, arriba y al final: la partida real (botón) y la demostración (/tablero).
+    expect(html.match(/<button[^>]*>Nueva partida<\/button>/g)).toHaveLength(2);
+    const hrefs = [...html.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(hrefs)).toEqual(new Set(["/tablero"]));
+    // El tablero real con fichas de una partida a mitad de juego.
+    expect(html).toContain('aria-label="Tablero de Parchís"');
+    expect(html.match(/<title>Ficha /g)).toHaveLength(16);
   });
 
   it("NewGameButton se puede renderizar en el servidor (estado inicial)", () => {
     expect(renderToStaticMarkup(<NewGameButton />)).toContain("Nueva partida");
+  });
+});
+
+describe("portada: comentario de ejemplo de Abuela Pilar", () => {
+  it("muestra «Ay, Chispa, me has comido la ficha.» y no la frase antigua", async () => {
+    const html = renderToStaticMarkup(await Home());
+    expect(html).toContain("Ay, Chispa, me has comido la ficha.");
+    expect(html).not.toContain("No hay mal que por bien no venga");
+  });
+});
+
+describe("portada: las dos burbujas del chat", () => {
+  it("son Abuela Pilar y Brava, en ese orden, con sus frases; Chispa ya no aparece", async () => {
+    const html = renderToStaticMarkup(await Home());
+    // Cada burbuja: <p …><span …>Nombre</span>Texto</p> (el nombre en su color).
+    const bubbles = [...html.matchAll(/<p class="rounded-2xl[^"]*"[^>]*><span class="block text-xs font-semibold"[^>]*>([^<]+)<\/span>([^<]+)<\/p>/g)].map((m) => [m[1], m[2]]);
+    expect(bubbles).toEqual([
+      ["Abuela Pilar", "Ay, Chispa, me has comido la ficha."],
+      ["Brava", "¡Una dentro! Las demás van detrás."],
+    ]);
+    expect(html).not.toContain("Ya queda menos");
+    expect(html).not.toContain("No hay mal que por bien no venga");
+    expect(html).not.toContain("¡Otra en la meta! Esto marcha.");
+  });
+});
+
+describe("portada: textos", () => {
+  it("quedan exactamente como se pidió", async () => {
+    const html = renderToStaticMarkup(await Home());
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    // «Parchís» en la marca, el título y el pie; ya no «Parchís IA» ni el enlace «Demostración» de la cabecera.
+    expect(text).not.toContain("Parchís IA");
+    expect(html.match(/>Parchís</g)?.length).toBeGreaterThanOrEqual(3);
+    expect(text).not.toMatch(/\bDemostración\b/);
+    expect(text).toContain("hablan por el chat");
+    expect(text).not.toContain("se pican en el chat");
+    expect(text).toContain("Tiran, deciden cada jugada y se comen fichas, siguiendo las reglas del parchís.");
+    expect(text).not.toContain("con las reglas del parchís");
+    expect(text).not.toContain("No son simples avatares");
+    // La demostración sigue accesible desde las llamadas a la acción.
+    expect(text).toContain("Ver una partida de demostración");
   });
 });

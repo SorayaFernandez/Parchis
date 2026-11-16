@@ -5,13 +5,15 @@
 // - Cualquier problema LANZA un `ChatLlmError`: el servicio usa entonces el escritor local, una vez.
 // - Corte temporal (en memoria del proceso) ante errores de configuración o cuota (401/402/403/404),
 //   429 (con `Retry-After`) y 5xx: mientras dura, falla al instante sin llamar.
-// Nunca registra la clave, el prompt ni la respuesta.
+// Nunca registra la clave, el prompt ni la respuesta del modelo. De una respuesta HTTP de error solo
+// guarda un resumen saneado (`describeHttpError`): content-type, x-vercel-id y error.type/code/message.
 
 import { CHARACTER_NAMES } from "@/lib/game/characters";
 import { CHAT_LIMITS, CHAT_LLM } from "../config";
 import { validateChatText, type ChatWriteRequest, type ChatWriter, type WrittenText } from "../writer";
 import type { ChatLlmConfig } from "./env";
 import { buildChatPrompt } from "./prompt";
+import { ALIASES, QUALITY_REASONS, allowedNames, checkQuality, foreignAlias } from "./quality";
 
 export type ChatLlmErrorKind =
   /** Corte temporal activo: no se ha llamado. */
@@ -32,6 +34,8 @@ export class ChatLlmError extends Error {
     /** Solo para el registro: nunca contiene la clave, el prompt ni la respuesta. */
     message: string,
     readonly status?: number,
+    /** Solo en `http`: resumen saneado de la respuesta de error (ver `describeHttpError`). */
+    readonly detail?: string,
   ) {
     super(message);
   }
@@ -45,6 +49,30 @@ export interface LlmBreaker {
 
 export const createLlmBreaker = (): LlmBreaker => ({ blockedUntil: 0 });
 
+/** Resultado del permiso del limitador global para el chat (ver `src/lib/llm/`). */
+export type ChatAcquireOutcome =
+  | "allowed"
+  /** 4 llamadas en 60 s entre chat y movimientos. */
+  | "global"
+  /** 2 llamadas del chat en 60 s. */
+  | "consumer"
+  /** Bloqueo global tras un 429. */
+  | "blocked"
+  /** Upstash no responde, falla o responde algo inesperado. */
+  | "unavailable";
+
+/**
+ * Motivos (textos fijos) de un `cooldown` del chat: el corte temporal local de este proceso o cada
+ * denegación del limitador global. `logChatError` los muestra; cualquier otro texto, no.
+ */
+export const COOLDOWN_REASONS = {
+  local: "corte temporal local",
+  global: "límite global",
+  consumer: "límite del chat",
+  blocked: "bloqueo global",
+  unavailable: "limitador no disponible",
+} as const;
+
 export interface GatewayWriterDeps {
   config: Extract<ChatLlmConfig, { enabled: true }>;
   fetch: typeof fetch;
@@ -52,6 +80,21 @@ export interface GatewayWriterDeps {
   now?: () => number;
   /** Aviso de fallo (solo tipo y código HTTP), para el registro. */
   onFailure?: (error: ChatLlmError) => void;
+  /**
+   * Permiso del limitador global de AI Gateway (compartido con el selector de movimientos; ver
+   * `src/lib/llm/`), justo antes de enviar la petición. Si no lo concede (límite, bloqueo tras un 429 o
+   * Redis no disponible), no se llama al modelo y el servicio usa la frase local. `schedule.ts` no crea el
+   * escritor LLM sin limitador; sin esta dependencia (solo en pruebas), se llama como antes.
+   */
+  acquire?: () => Promise<ChatAcquireOutcome>;
+  /** Tras un 429, con la duración del corte: activa el bloqueo global compartido. No reintenta. */
+  onRateLimited?: (durationMs: number) => void | Promise<void>;
+  /**
+   * Trazabilidad: solo cuando la petición llega a enviarse. `llm` si el texto del modelo pasa todas las
+   * validaciones; `local` (con el motivo fijo del rechazo o del fallo) si el servicio usará la frase local.
+   * Nunca recibe el texto del modelo ni el prompt, y no cambia lo que devuelve el escritor.
+   */
+  onTrace?: (trace: { source: "llm" | "local"; durationMs: number; reason?: string }) => void;
 }
 
 /** `Retry-After` en segundos (entero) → ms, acotado; `null` si falta o no es válido. */
@@ -68,48 +111,320 @@ function cooldownFor(status: number, retryAfter: string | null): number {
   return 0; // 400 u otros: error de esta petición, sin corte
 }
 
-const ALL_NAMES = Object.values(CHARACTER_NAMES);
+/** Bytes del cuerpo de una respuesta de error que se leen como máximo. */
+const ERROR_BODY_MAX_BYTES = 2048;
+
+/** Lee como mucho `maxBytes` del cuerpo y cancela el resto. */
+async function readLimited(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+  const bytes = new Uint8Array(Math.min(size, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const part = chunk.subarray(0, bytes.length - offset);
+    bytes.set(part, offset);
+    offset += part.length;
+    if (offset >= bytes.length) break;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 /**
- * Limpia y comprueba el texto del modelo: primera línea, sin comillas envolventes ni un prefijo
- * "Nombre:"; como mucho `CHAT_LLM.maxChars`; solo puede nombrar a quien habla y a su rival; y pasa la
- * misma validación que el escritor local (repeticiones, marcado). Devuelve el texto o lanza.
+ * Oculta secretos en un texto que viene de fuera antes de registrarlo: la propia clave (si la
+ * conocemos), `Bearer <algo>` y cualquier cadena con aspecto de token (24+ caracteres alfanuméricos,
+ * `_` o `-`, con algún dígito o con mayúsculas y minúsculas). Además lo deja en una línea y lo recorta.
+ */
+export function redactSecrets(value: string, maxLength: number, apiKey?: string): string {
+  let text = value;
+  if (apiKey) text = text.split(apiKey).join("[oculto]");
+  text = text
+    .replace(/Bearer\s+\S+/gi, "Bearer [oculto]")
+    // Con un dígito o con mayúsculas y minúsculas: así no se ocultan códigos como `model_not_found_for_team`.
+    .replace(/[A-Za-z0-9_-]{24,}/g, (m) => (/\d/.test(m) || (/[a-z]/.test(m) && /[A-Z]/.test(m)) ? "[oculto]" : m))
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
+/**
+ * Resumen saneado de una respuesta HTTP de error, para el registro: `content-type` (solo el tipo),
+ * `x-vercel-id` (solo si tiene su formato) y, si el cuerpo es JSON con `error`, sus campos `type`,
+ * `code` y `message`, enmascarados y recortados. Nunca el cuerpo completo (p. ej., una página HTML).
+ * Nunca lanza.
+ */
+export async function describeHttpError(response: Response, apiKey?: string): Promise<string> {
+  const parts: string[] = [];
+  const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  parts.push(`content-type=${/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(contentType) && contentType.length <= 100 ? contentType : "?"}`);
+  const vercelId = (response.headers.get("x-vercel-id") ?? "").trim();
+  if (vercelId !== "") parts.push(`x-vercel-id=${/^[A-Za-z0-9:_-]{1,128}$/.test(vercelId) && vercelId.includes("::") ? vercelId : "[no válido]"}`);
+
+  let raw: string;
+  try {
+    raw = await readLimited(response, ERROR_BODY_MAX_BYTES);
+  } catch {
+    parts.push("cuerpo=ilegible");
+    return parts.join(" ");
+  }
+  if (raw.trim() === "") {
+    parts.push("cuerpo=vacío");
+    return parts.join(" ");
+  }
+  let error: unknown;
+  try {
+    error = (JSON.parse(raw) as { error?: unknown } | null)?.error;
+  } catch {
+    parts.push("cuerpo=no-json");
+    return parts.join(" ");
+  }
+  if (typeof error === "string") {
+    parts.push(`error.message=${redactSecrets(error, 200, apiKey)}`);
+    return parts.join(" ");
+  }
+  if (typeof error !== "object" || error === null) {
+    parts.push("cuerpo=json-sin-error");
+    return parts.join(" ");
+  }
+  const fields = error as Record<string, unknown>;
+  for (const [name, max] of [["type", 60], ["code", 60], ["message", 200]] as const) {
+    const value = fields[name];
+    if (typeof value === "string" || typeof value === "number") parts.push(`error.${name}=${redactSecrets(String(value), max, apiKey)}`);
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Motivos (textos fijos) con los que `cleanLlmText` rechaza una respuesta. Son los únicos mensajes de
+ * `invalid_response` que se registran: nunca contienen texto del modelo.
+ */
+export const INVALID_RESPONSE_REASONS = [
+  "respuesta sin texto",
+  "habla como otro personaje",
+  "texto vacío",
+  "texto demasiado largo",
+  "formato no permitido",
+  "nombra a un personaje ajeno a la intervención",
+  "texto repetido o no válido",
+  "respuesta no válida",
+  "comillas descompensadas",
+  "respuesta truncada",
+  ...QUALITY_REASONS,
+] as const;
+
+const SAFE_WORD = /^[a-z_]{1,32}$/;
+const SAFE_MODEL = /^[a-z0-9._/-]{1,80}$/;
+const REASONING_FIELDS = ["reasoning", "reasoning_content", "reasoning_details"] as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const safeCount = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 1e9 ? String(value) : "?");
+
+/** Tipo y tamaño de un valor, sin su contenido: `string(12)`, `array(3)`, `null`, `object`, `ausente`… */
+function shape(value: unknown): string {
+  if (value === undefined) return "ausente";
+  if (value === null) return "null";
+  if (typeof value === "string") return `string(${value.length})`;
+  if (Array.isArray(value)) return `array(${value.length})`;
+  return typeof value === "object" ? "object" : typeof value;
+}
+
+/**
+ * Resumen SOLO estructural de una respuesta de Chat Completions, para diagnosticar un rechazo:
+ * número de `choices`, `finish_reason`, tipo y longitud de `content` (con el número de líneas, si
+ * empieza por `<think>` y, si es un array, los tipos de sus partes), presencia y longitud de los
+ * campos de razonamiento, `usage` (solo números) y `model` (solo con formato de id).
+ * Nunca incluye texto generado, razonamiento, prompt ni claves. Nunca lanza.
+ */
+export function describeCompletion(payload: unknown): string {
+  try {
+    const parts: string[] = [];
+    const root = isRecord(payload) ? payload : {};
+    const choices = root.choices;
+    parts.push(`choices=${Array.isArray(choices) ? choices.length : shape(choices)}`);
+    const choice = Array.isArray(choices) && isRecord(choices[0]) ? choices[0] : {};
+    const finish = choice.finish_reason;
+    parts.push(`finish_reason=${finish === undefined || finish === null ? shape(finish) : typeof finish === "string" && SAFE_WORD.test(finish) ? finish : "?"}`);
+
+    const message = isRecord(choice.message) ? choice.message : {};
+    const content = message.content;
+    if (Array.isArray(content)) {
+      const types = [...new Set(content.map((part) => (isRecord(part) && typeof part.type === "string" && SAFE_WORD.test(part.type) ? part.type : "?")))];
+      parts.push(`content=array(${content.length}:${types.slice(0, 5).join(",") || "-"})`);
+    } else {
+      parts.push(`content=${shape(content)}`);
+    }
+    if (typeof content === "string") {
+      parts.push(`lineas=${content.split(/\r?\n/).length}`);
+      parts.push(`think=${/^\s*<think>/i.test(content) ? "sí" : "no"}`);
+    }
+
+    const reasoning = REASONING_FIELDS.filter((name) => message[name] !== undefined).map((name) => `${name}:${shape(message[name])}`);
+    parts.push(`razonamiento=${reasoning.length > 0 ? reasoning.join(",") : "ausente"}`);
+
+    const usage = isRecord(root.usage) ? root.usage : null;
+    if (usage) {
+      const details = isRecord(usage.completion_tokens_details) ? usage.completion_tokens_details : {};
+      const reasoningTokens = details.reasoning_tokens === undefined ? "" : ` reasoning_tokens=${safeCount(details.reasoning_tokens)}`;
+      parts.push(`usage=completion_tokens=${safeCount(usage.completion_tokens)}${reasoningTokens}`);
+    } else {
+      parts.push("usage=ausente");
+    }
+    const model = root.model;
+    parts.push(`model=${model === undefined ? "ausente" : typeof model === "string" && SAFE_MODEL.test(model) ? model : "?"}`);
+    return parts.join(" ");
+  } catch {
+    return "resumen=ilegible";
+  }
+}
+
+const ALL_NAMES = Object.values(CHARACTER_NAMES);
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Nombre como palabra completa (límites Unicode: ni letra ni dígito a los lados), sin distinguir
+ * mayúsculas y con cualquier espacio entre las palabras de un nombre compuesto. Así "bravata" o
+ * "chispazo" no cuentan como "Brava" o "Chispa", pero "¡Chispa!" o "don  ernesto" sí.
+ */
+const NAME_PATTERNS = ALL_NAMES.map((name) => ({
+  name,
+  pattern: new RegExp(`(?<![\\p{L}\\p{N}])${name.split(/\s+/).map(escapeRegExp).join("\\s+")}(?![\\p{L}\\p{N}])`, "iu"),
+}));
+
+/** Forma de las letras de una coincidencia (para el diagnóstico; nunca el texto). */
+function letterCase(match: string): string {
+  if (match === match.toLowerCase()) return "minúsculas";
+  if (match === match.toUpperCase()) return "mayúsculas";
+  const words = match.split(/\s+/);
+  return words.every((w) => w[0] === w[0].toUpperCase() && w.slice(1) === w.slice(1).toLowerCase()) ? "capitalizada" : "mixta";
+}
+
+/**
+ * Etiqueta inicial con el nombre completo o un alias de un personaje («Pilar:», «Abuela Pilar —»,
+ * «(Pilar)»): el modelo a veces firma la frase. Solo nombres del catálogo, nunca cualquier palabra seguida
+ * de dos puntos («Ojo: esa ficha…» no es una etiqueta). Devuelve el nombre del catálogo y el resto.
+ */
+const LABELS = ALL_NAMES.flatMap((name) =>
+  [name, ...(ALIASES[name] ?? [])].map((form) => {
+    const words = form.split(/\s+/).map(escapeRegExp).join("\\s+");
+    return { name, pattern: new RegExp(`^(?:\\(\\s*${words}\\s*\\)\\s*[:：\\-–—]?|${words}\\s*[:：\\-–—])\\s*`, "iu") };
+  }),
+);
+
+function splitLabel(text: string): { name: string; rest: string } | null {
+  for (const { name, pattern } of LABELS) {
+    const match = pattern.exec(text);
+    if (match) return { name, rest: text.slice(match[0].length).trim() };
+  }
+  return null;
+}
+
+/** Familias de comillas: apertura → cierres admitidos. */
+const QUOTE_PAIRS: Readonly<Record<string, string>> = { '"': '"”', "“": "”\"", "«": "»", "'": "'’", "‘": "’'" };
+
+/** Quita las comillas que envuelven todo el texto, solo si están emparejadas (nunca un extremo suelto). */
+function stripWrappingQuotes(text: string): string {
+  let t = text;
+  while (t.length >= 2 && QUOTE_PAIRS[t[0]]?.includes(t[t.length - 1])) t = t.slice(1, -1).trim();
+  return t;
+}
+
+const count = (text: string, chars: string) => [...text].filter((c) => chars.includes(c)).length;
+
+/** Comillas equilibradas en todo el texto: ninguna queda abierta o cerrada de más. */
+function quotesBalanced(text: string): boolean {
+  return (
+    count(text, '"') % 2 === 0 &&
+    count(text, "“") === count(text, "”") &&
+    count(text, "«") === count(text, "»") &&
+    count(text, "'") % 2 === 0 &&
+    count(text, "‘") === count(text, "’")
+  );
+}
+
+/**
+ * Limpia y comprueba el texto del modelo: primera línea (o la siguiente, si la primera es solo la
+ * etiqueta de quien habla), sin la etiqueta con su nombre o alias ni comillas envolventes emparejadas;
+ * comillas equilibradas; como mucho `CHAT_LLM.maxChars`; solo puede nombrar a quien habla y a su rival; y
+ * pasa la misma validación que el escritor local (repeticiones, marcado) y las de calidad. Las
+ * comprobaciones se hacen siempre sobre el texto ya limpio. Devuelve el texto o lanza.
  */
 export function cleanLlmText(raw: unknown, request: ChatWriteRequest): string {
   if (typeof raw !== "string") throw new ChatLlmError("invalid_response", "respuesta sin texto");
-  let text = raw.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? "";
-  // Prefijo "Nombre:" o "Nombre -" de cualquier personaje (el modelo a veces firma la frase).
-  for (const name of ALL_NAMES) {
-    const prefix = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:：\\-—]\\s*`, "i");
-    if (prefix.test(text)) {
-      if (name !== CHARACTER_NAMES[request.utterance.speaker]) throw new ChatLlmError("invalid_response", "habla como otro personaje");
-      text = text.replace(prefix, "");
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  let text = lines[0] ?? "";
+  // Dos pasadas: etiqueta y comillas, en cualquier orden («Pilar: "…"» o «"Pilar: …"»).
+  for (let pass = 0; pass < 2; pass++) {
+    const label = splitLabel(text);
+    if (label) {
+      if (label.name !== CHARACTER_NAMES[request.utterance.speaker]) throw new ChatLlmError("invalid_response", "habla como otro personaje");
+      text = label.rest;
+      // Etiqueta sola en la primera línea: la frase es la línea siguiente (formato inequívoco).
+      if (text === "" && pass === 0 && lines.length > 1) text = lines[1];
     }
+    text = stripWrappingQuotes(text);
   }
-  text = text.replace(/^["'«“”‘’]+|["'»“”‘’]+$/g, "").trim();
   if (text === "") throw new ChatLlmError("invalid_response", "texto vacío");
+  if (!quotesBalanced(text)) throw new ChatLlmError("invalid_response", "comillas descompensadas");
   if (text.length > CHAT_LLM.maxChars) throw new ChatLlmError("invalid_response", "texto demasiado largo");
   if (/https?:|www\.|[*#`@]/i.test(text)) throw new ChatLlmError("invalid_response", "formato no permitido");
-  const allowed = new Set([CHARACTER_NAMES[request.utterance.speaker], request.utterance.rival ? CHARACTER_NAMES[request.utterance.rival] : ""]);
-  const lower = text.toLowerCase();
-  if (ALL_NAMES.some((name) => !allowed.has(name) && lower.includes(name.toLowerCase()))) {
-    throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención");
+  const allowed = allowedNames(request);
+  for (const { name, pattern } of NAME_PATTERNS) {
+    if (allowed.has(name)) continue;
+    const match = pattern.exec(text);
+    if (match) {
+      // Diagnóstico: el nombre del catálogo y la forma de la coincidencia, nunca el texto del modelo.
+      const detail = `nombre=${name} coincidencia=palabra forma=${letterCase(match[0])}`;
+      throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención", undefined, detail);
+    }
+  }
+  // Alias de personajes ajenos («Ernesto», «Pilar», «la abuela»…).
+  const alias = foreignAlias(text, allowed);
+  if (alias) {
+    throw new ChatLlmError("invalid_response", "nombra a un personaje ajeno a la intervención", undefined, `nombre=${alias.name} coincidencia=alias:${alias.alias}`);
   }
   const valid = validateChatText(text, request.recent);
   if (valid === null) throw new ChatLlmError("invalid_response", "texto repetido o no válido");
+  // Calidad (después de todas las comprobaciones anteriores, que no cambian): idioma, nombres cruzados,
+  // usted de Don Ernesto, coletillas repetidas, ajeno al parchís y afirmaciones sin respaldo (ver
+  // quality.ts). El diagnóstico lleva el término del catálogo, nunca el texto del modelo.
+  const issue = checkQuality(valid, request);
+  if (issue) throw new ChatLlmError("invalid_response", issue.reason, undefined, `termino=${issue.term}`);
   return valid;
 }
 
 export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
   const now = deps.now ?? Date.now;
-  const fail = (error: ChatLlmError): never => {
-    deps.onFailure?.(error);
-    throw error;
+  /** La trazabilidad nunca cambia el resultado del escritor. */
+  const trace = (t: Parameters<NonNullable<GatewayWriterDeps["onTrace"]>>[0]) => {
+    try {
+      deps.onTrace?.(t);
+    } catch {
+      // Sin efecto en el chat.
+    }
   };
 
   return {
     async write(request: ChatWriteRequest): Promise<WrittenText | null> {
-      if (now() < deps.breaker.blockedUntil) fail(new ChatLlmError("cooldown", "corte temporal activo"));
+      /** Instante en que se envía la petición (solo entonces hay algo que trazar). */
+      let started: number | null = null;
+      const fail = (error: ChatLlmError): never => {
+        if (started !== null) trace({ source: "local", durationMs: now() - started, reason: error.message });
+        deps.onFailure?.(error);
+        throw error;
+      };
+      if (now() < deps.breaker.blockedUntil) fail(new ChatLlmError("cooldown", COOLDOWN_REASONS.local));
 
       // Respeta la cancelación del servicio y, además, su propio `timeoutMs`.
       const timeoutMs = Math.max(1, Math.min(request.timeoutMs ?? CHAT_LIMITS.writerTimeoutMs, CHAT_LIMITS.writerTimeoutMs));
@@ -122,11 +437,23 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
         max_tokens: CHAT_LLM.maxTokens,
         temperature: CHAT_LLM.temperature,
         stream: false,
+        // Sin razonamiento (Nemotron): si no, gasta los `max_tokens` razonando y devuelve `content` vacío
+        // (visto en Preview: finish_reason=length, reasoning_tokens=60). Parámetro de AI Gateway en la raíz
+        // del cuerpo; `chat_template_kwargs.enable_thinking` no tuvo efecto a través de AI Gateway.
+        reasoning_effort: "none",
         // Sin `models`: AI Gateway no cambia a otro modelo. Con proveedor fijado, tampoco de proveedor.
         ...(deps.config.provider ? { providerOptions: { gateway: { only: [deps.config.provider] } } } : {}),
       };
 
+      // Límite global, justo antes de enviar. Una petición ya cancelada no gasta hueco.
+      if (deps.acquire) {
+        if (signal.aborted) fail(new ChatLlmError("aborted", "cancelada o fuera de tiempo"));
+        const outcome = await deps.acquire().catch((): ChatAcquireOutcome => "unavailable");
+        if (outcome !== "allowed") fail(new ChatLlmError("cooldown", COOLDOWN_REASONS[outcome] ?? COOLDOWN_REASONS.unavailable));
+      }
+
       let response: Response;
+      started = now();
       try {
         response = await deps.fetch(CHAT_LLM.endpoint, {
           method: "POST",
@@ -143,8 +470,11 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
       if (!response.ok) {
         const cooldown = cooldownFor(response.status, response.headers.get("Retry-After"));
         if (cooldown > 0) deps.breaker.blockedUntil = Math.max(deps.breaker.blockedUntil, now() + cooldown);
-        void response.body?.cancel().catch(() => {});
-        fail(new ChatLlmError("http", `AI Gateway respondió ${response.status}`, response.status));
+        // Un 429 bloquea a todos (chat y movimientos, todas las instancias) durante su Retry-After.
+        if (response.status === 429) await Promise.resolve(deps.onRateLimited?.(cooldown)).catch(() => {});
+        // Corte temporal ya aplicado. Se lee un resumen saneado del error (limitado) para el registro.
+        const detail = await describeHttpError(response, deps.config.apiKey).catch(() => "cuerpo=ilegible");
+        fail(new ChatLlmError("http", `AI Gateway respondió ${response.status}`, response.status, detail));
       }
 
       let payload: unknown;
@@ -154,11 +484,22 @@ export function createGatewayWriter(deps: GatewayWriterDeps): ChatWriter {
         if (signal.aborted) fail(new ChatLlmError("aborted", "cancelada o fuera de tiempo"));
         return fail(new ChatLlmError("network", "respuesta ilegible"));
       }
-      const content = (payload as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
+      const choice = (payload as { choices?: { finish_reason?: unknown; message?: { content?: unknown } }[] })?.choices?.[0];
+      const content = choice?.message?.content;
       try {
-        return { text: cleanLlmText(content, request), source: "llm" };
+        // Cortada por `max_tokens`: la frase puede estar a medias. Se rechaza (frase local) sin ampliar
+        // `max_tokens`. Sin texto, se sigue informando como «respuesta sin texto».
+        if (choice?.finish_reason === "length" && typeof content === "string" && content.trim() !== "") {
+          throw new ChatLlmError("invalid_response", "respuesta truncada");
+        }
+        const text = cleanLlmText(content, request);
+        trace({ source: "llm", durationMs: now() - started });
+        return { text, source: "llm" };
       } catch (error) {
-        return fail(error instanceof ChatLlmError ? error : new ChatLlmError("invalid_response", "respuesta no válida"));
+        // Mismo error, con un resumen solo estructural de la respuesta (nunca su texto) para el registro.
+        const base = error instanceof ChatLlmError ? error : new ChatLlmError("invalid_response", "respuesta no válida");
+        const detail = [base.detail, describeCompletion(payload)].filter(Boolean).join(" ");
+        return fail(new ChatLlmError(base.kind, base.message, base.status, detail));
       }
     },
   };

@@ -43,6 +43,11 @@ export const CHAT_LIMITS = {
    * cada personaje agota las frases de un tipo antes de repetir ninguna.
    */
   usedLinesPerCharacter: 40,
+  /**
+   * Coletillas registradas por personaje y partida (`DirectorState.usedCatchphrases`): índices de
+   * `character.catchphrases`, que tiene 3 por personaje. Es una cota de seguridad del esquema.
+   */
+  usedCatchphrasesPerCharacter: 10,
   /** Similitud (0-1, trigramas) a partir de la cual dos textos se consideran repetidos. */
   maxSimilarity: 0.6,
   /** Longitud máxima de un mensaje publicado. */
@@ -98,6 +103,8 @@ export const TRIGGER_CHANCE = {
   finishPlace: 0.9,
   goal: 0.65,
   ambient: 0.55,
+  /** Quejarse de una barrera rival que corta el paso de verdad (poco: no debe volverse repetitivo). */
+  blockade: 0.1,
 } as const;
 
 /** Probabilidad base de una réplica (se multiplica por las ganas de hablar de quien replica). */
@@ -121,9 +128,28 @@ export const CHAT_LLM = {
   temperature: 0.8,
   /** Caracteres como máximo de una respuesta del LLM (se rechaza si es más larga, no se corta). */
   maxChars: 140,
+  /**
+   * Longitud que se PIDE en el prompt (menor que `maxChars`): el modelo cuenta caracteres de forma
+   * aproximada y, pidiendo justo el límite, se pasaba por poco (141–144). No se valida con este valor.
+   */
+  promptMaxChars: 120,
+  /** Palabras como máximo que se piden en el prompt (≈ 100–115 caracteres en español). */
+  promptMaxWords: 18,
   /** Textos recientes de la partida que se envían para no repetirlos (cada uno recortado). */
   recentTexts: 3,
-  recentTextMaxChars: 100,
+  recentTextMaxChars: 80,
+  /** Textos propios recientes de quien habla que se envían para que no repita sus coletillas. */
+  ownRecentTexts: 2,
+  /**
+   * Tamaño máximo del prompt (sistema + usuario, en caracteres) en el peor caso realista: réplica,
+   * historial completo, textos propios recientes y todas las reglas. Antes la prueba usaba 1500 con un
+   * caso corto; con las reglas de calidad (idioma, nombres, usted, coletillas, vocabulario y
+   * afirmaciones) se llegó a 2698. Con el prompt simplificado (un carácter por personaje y pocas
+   * reglas), el peor caso medido es de 1752 (Don Ernesto, por su regla de usted); con todos los hechos
+   * de captura de una intervención a la vez (rachas activas, interrumpidas o reiniciadas y parejas), 2112; con
+   * las reglas de estilo y Abuela Pilar como rival, 2476, unos 700 tokens de entrada. El límite configurado de 2800 no cambia (modelo gratuito y `max_tokens: 60`).
+   */
+  maxPromptChars: 2800,
   /** Corte temporal ante errores de configuración, autenticación, cuota o modelo (401, 402, 403, 404). */
   configErrorCooldownMs: 10 * 60_000,
   /** Corte ante 429 sin `Retry-After` válido. */

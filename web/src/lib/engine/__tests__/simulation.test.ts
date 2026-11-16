@@ -2,7 +2,7 @@
 // comprueba que siempre terminan y que el estado es coherente en todo momento.
 
 import { describe, expect, it } from "vitest";
-import { getRealBoardPosition, isOnMainTrack, isSafeCell } from "../board";
+import { countPiecesOnCell, getRealBoardPosition, isOnMainTrack, isSafeCell } from "../board";
 import { FINAL_POSITION, HOME_ENTRY_STEPS } from "../constants";
 import { applyAction, createGame, getAvailableMoves } from "../engine";
 import type { GameState } from "../types";
@@ -70,4 +70,39 @@ describe("simulación de partidas completas", () => {
       }
     });
   }
+
+  it("al salir de casa se captura si y solo si la salida ya tenía dos fichas, y nunca quedan más de dos", () => {
+    let exits = 0;
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 20; seed++) {
+      const random = mulberry32(seed * 7 + 3);
+      let state = createGame(["a", "b", "c", "d"]);
+      let actions = 0;
+      while (state.status === "playing" && ++actions < 20_000) {
+        const moves = getAvailableMoves(state);
+        const rolling = state.dice === null && state.pendingBonus === null;
+        const pieceIndex = moves[Math.floor(random() * moves.length)];
+        const action = rolling
+          ? { type: "roll" as const, playerId: state.turn, value: 1 + Math.floor(random() * 6) }
+          : { type: "move" as const, playerId: state.turn, pieceIndex };
+        const player = state.players.find((p) => p.id === state.turn)!;
+        const leaving = !rolling && player.pieces[pieceIndex].state === "base";
+        const exitCell = getRealBoardPosition(player.color, 0);
+        const before = leaving ? countPiecesOnCell(state, exitCell) : 0;
+        const result = applyAction(state, action);
+        if (!result.ok) throw new Error(`Acción rechazada: ${result.error}`);
+        if (leaving) {
+          exits++;
+          seen.add(String(before));
+          const captured = result.events.some((e) => e.type === "piece_captured");
+          if (captured !== before >= 2) throw new Error(`salida con ${before} fichas: captura=${captured}`);
+          if (countPiecesOnCell(result.state, exitCell) > 2) throw new Error("más de dos fichas en la salida");
+        }
+        state = result.state;
+      }
+    }
+    expect(exits).toBeGreaterThan(100);
+    // Se han dado salidas con la casilla vacía, con una ficha y con dos.
+    expect([...seen].sort()).toEqual(["0", "1", "2"]);
+  });
 });

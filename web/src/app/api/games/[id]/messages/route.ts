@@ -26,10 +26,13 @@ export async function GET(request: Request, ctx: RouteContext<"/api/games/[id]/m
 
   try {
     const store = getChatStore();
-    const [messages, pending] = await Promise.all([
-      after === null ? store.latest(id, CHAT_LIMITS.initialMessages) : store.after(id, after.data, CHAT_LIMITS.pageSize),
-      store.pending(id),
-    ]);
+    // En este orden, no en paralelo (como `loadChatMessages`): `chat_commit` inserta los mensajes y vacía
+    // la cola en la misma transacción. Si al mirar la cola ya no hay pendientes, la lectura posterior ve
+    // sus mensajes. En paralelo, un lote confirmado entre las dos lecturas daría "sin el último mensaje y
+    // sin pendientes", y con la partida terminada el navegador dejaría de consultar.
+    const pending = await store.pending(id);
+    const messages =
+      after === null ? await store.latest(id, CHAT_LIMITS.initialMessages) : await store.after(id, after.data, CHAT_LIMITS.pageSize);
     // Recuperación: si quedan versiones pendientes (p. ej., un procesador anterior se interrumpió
     // y ya no llegan avances porque la partida terminó), se procesan tras responder.
     if (pending) scheduleDrain(id);

@@ -7,6 +7,7 @@ import { CHARACTER_IDS } from "@/lib/game/characters";
 import { getGamesRepository } from "@/lib/game/repository";
 import { NO_STORE, errorResponse, handleRouteError } from "@/lib/http/responses";
 import { guardCreate } from "@/lib/security/guards";
+import { checkSameOriginJsonPost } from "@/lib/security/sameOrigin";
 
 /** Cuerpo vacío o un objeto vacío. Cualquier otra cosa se rechaza (400). */
 async function hasValidBody(request: Request): Promise<boolean> {
@@ -20,6 +21,10 @@ async function hasValidBody(request: Request): Promise<boolean> {
 }
 
 export async function POST(request: Request) {
+  // Solo desde la propia aplicación y con cuerpo JSON (403/415); antes de los límites y sin tocar la BD.
+  const rejected = checkSameOriginJsonPost(request);
+  if (rejected) return rejected;
+
   // Límite por IP antes de cualquier trabajo (429 con Retry-After; 503 si el proveedor no responde).
   const limited = await guardCreate(request);
   if (limited) return limited;
