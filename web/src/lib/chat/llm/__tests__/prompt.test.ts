@@ -66,7 +66,7 @@ describe("buildChatPrompt", () => {
     const long = "x".repeat(300);
     const recent = Array.from({ length: 10 }, (_, i) => ({ speaker: "ai-pink", text: `Texto reciente ${i}` }));
     const [, user] = buildChatPrompt(request(utterance("ai-blue", "capture_lament", { rival: "ai-pink" }), { recent: [...recent, { speaker: "ai-pink", text: long }], replyToText: long }));
-    expect(user.content).toContain("Respondes a lo que acaba de decir Brava: «"); // el rival es quien dijo el mensaje
+    expect(user.content).toContain("Contesta a Brava sin repetir su frase: «"); // el rival es quien dijo el mensaje
     expect(user.content).not.toContain("x".repeat(CHAT_LLM.recentTextMaxChars + 1));
     expect(user.content).toContain("Texto reciente 9");
     expect(user.content).not.toContain("Texto reciente 7"); // solo los últimos 3
@@ -349,7 +349,7 @@ describe("frases citadas: contexto, no modelo de estilo", () => {
     for (const bad of ["sin frenar", "golpe", "da sus frutos", "Dadme ese seis", "por la quinta"]) expect(user.content, bad).not.toContain(bad);
     expect(user.content).toContain("Ya has dicho hace poco (no lo repitas): «¡Te comí, Chispa!»");
     expect(user.content).toContain("«Me comiste, Brava. Ya te pillaré.»");
-    expect(user.content).toContain("Respondes a lo que acaba de decir Chispa: «Me comiste, Brava. Ya te pillaré.»");
+    expect(user.content).toContain("Contesta a Chispa sin repetir su frase: «Me comiste, Brava. Ya te pillaré.»");
   });
 
   it("sin expresiones descartadas, se citan como antes (los 2 propios y los 3 últimos de los demás)", () => {
@@ -399,7 +399,7 @@ describe("captura: hablar solo de esa captura", () => {
       replyToText: "Te he comido.",
     })[1].content;
     expect(lament).toContain("Tú pierdes la ficha y Brava la captura. Habla solo de eso, desde tu lado («me comiste», «me has comido una ficha»)");
-    expect(lament).toContain("Respondes a lo que acaba de decir Brava: «Te he comido.»");
+    expect(lament).toContain("Contesta a Brava sin repetir su frase: «Te he comido.»");
   });
 });
 

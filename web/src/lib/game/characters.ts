@@ -42,6 +42,7 @@ export interface StrategyProfile {
  * - ambient_lead: primero en solitario, el único que afirma ir ganando ({rival} = último en solitario)
  * - ambient_ahead: sin liderar, frase neutral de progreso que no afirma posición ({rival} = último en solitario)
  * - ambient_behind: alguien va por delante, «voy perdiendo» ({rival} = primero en solitario)
+ * - blockade_complaint: una barrera de {rival} le corta el paso de verdad en esta tirada («¡Abre la barrera!»)
  */
 export const CHAT_LINE_KINDS = [
   "victory_win",
@@ -57,6 +58,7 @@ export const CHAT_LINE_KINDS = [
   "ambient_lead",
   "ambient_ahead",
   "ambient_behind",
+  "blockade_complaint",
 ] as const;
 export type ChatLineKind = (typeof CHAT_LINE_KINDS)[number];
 
@@ -74,7 +76,11 @@ export const LINE_KINDS_WITH_RIVAL: ReadonlySet<ChatLineKind> = new Set([
   "ambient_lead",
   "ambient_ahead",
   "ambient_behind",
+  "blockade_complaint",
 ]);
+
+/** Tipos que tienen frases propias de réplica (`replies`): las capturas, que es donde más se contesta. */
+export const REPLY_LINE_KINDS: ReadonlySet<ChatLineKind> = new Set(["capture_boast", "capture_lament"]);
 
 export interface ChatProfile {
   /** Registro y tono (referencia para la generación de texto; en 8.2b irá al prompt). */
@@ -86,8 +92,20 @@ export interface ChatProfile {
   voice: string;
   /** Ganas de hablar, de 0 a 1: multiplica la probabilidad de intervenir y de replicar. */
   talkativeness: number;
+  /**
+   * Parte orientativa de las intervenciones espontáneas (mensajes principales) que le toca en una partida.
+   * El director la usa para repartir la palabra sin cuotas rígidas (ver `balanceFactor` en director.ts).
+   * Las cuatro suman 1.
+   */
+  share: number;
   /** Frases locales por tipo de intervención (también son la reserva si falla un LLM en 8.2b). */
   lines: Readonly<Record<ChatLineKind, readonly string[]>>;
+  /**
+   * Frases para contestar a otro personaje (réplicas), por tipo (`REPLY_LINE_KINDS`). Contestan al mensaje
+   * anterior en lugar de repetirlo («Sí, te comí la ficha», «¡Esto no se queda así!»). Si no hay ninguna
+   * válida, la réplica usa las frases normales de su tipo.
+   */
+  replies: Readonly<Partial<Record<ChatLineKind, readonly string[]>>>;
 }
 
 export interface Character {
@@ -163,6 +181,7 @@ export const CHARACTERS: readonly Character[] = [
       register: "Frases cortas y directas, con exclamaciones. Reta, presume y protesta; nunca insulta.",
       voice: "Competitiva, directa y desafiante: pica a sus rivales, presume cuando le sale bien una jugada y protesta cuando le sale mal, sin pasarse ni insultar.",
       talkativeness: 1,
+      share: 0.27,
       lines: {
         victory_win: [
           "¡Primera! ¿Alguien lo dudaba?",
@@ -197,7 +216,7 @@ export const CHARACTERS: readonly Character[] = [
         streak_boast: [
           "¡Otra más, {rival}!",
           "¡{Count} capturas {ritmo}! Hoy no fallo.",
-          "¡Ya van {count} {ritmo}!",
+          "¡Ya me he comido {count} fichas!",
           "Hoy me salen todas, {rival}.",
           "{Count} {ritmo}. ¡Y voy a por más!",
         ],
@@ -249,6 +268,26 @@ export const CHARACTERS: readonly Character[] = [
           "{rival}, no te confíes. Voy a por ti.",
           "Esto se remonta. Seguro.",
         ],
+        blockade_complaint: [
+          "¡Abre la barrera, {rival}!",
+          "{rival}, quita esa barrera, que no paso.",
+          "¡Venga, {rival}, abre ya!",
+          "Esa barrera me corta el paso, {rival}.",
+        ],
+      },
+      replies: {
+        capture_boast: [
+          "¡Pues claro! Y voy a por más.",
+          "¡Haberte apartado, {rival}!",
+          "Así se juega, {rival}.",
+          "¡Ya lo creo! Te comí la ficha.",
+        ],
+        capture_lament: [
+          "¿Ah, sí? Pues ahora voy a por ti.",
+          "Disfrútalo, que te dura poco, {rival}.",
+          "¡Esto no se queda así!",
+          "Ya te pillaré, {rival}. Tú espera.",
+        ],
       },
     },
   },
@@ -274,7 +313,8 @@ export const CHARACTERS: readonly Character[] = [
     chat: {
       register: "Formal sin ser rígido: trata de usted, piensa en probabilidades y elogia con algo de condescendencia.",
       voice: "Estratega sereno, calculador y educado: siempre trata de usted y habla con precisión, con algo de cálculo y probabilidad, pero con naturalidad y sin tecnicismos.",
-      talkativeness: 0.8,
+      talkativeness: 1,
+      share: 0.27,
       lines: {
         victory_win: [
           "Primer puesto. Ha salido como pensaba.",
@@ -295,6 +335,7 @@ export const CHARACTERS: readonly Character[] = [
           "He comido su ficha, {rival}. Nada personal.",
           "{rival}, le recomiendo no dejar fichas sueltas.",
           "Me como su ficha, {rival}. Lo tenía calculado.",
+          "Le he comido su ficha, {rival}.",
         ],
         capture_lament: [
           "Interesante, {rival}. Un riesgo que no había considerado.",
@@ -358,6 +399,26 @@ export const CHARACTERS: readonly Character[] = [
           "{rival}, no confunda ventaja con victoria.",
           "Todavía hay margen. Con calma se remonta.",
         ],
+        blockade_complaint: [
+          "{rival}, abra usted la barrera, por favor.",
+          "Su barrera me cierra el paso, {rival}.",
+          "Cuando guste, {rival}, abra la barrera.",
+          "{rival}, con esa barrera no hay forma de pasar.",
+        ],
+      },
+      replies: {
+        capture_boast: [
+          "En efecto, {rival}. Le comí la ficha.",
+          "Era la jugada correcta, lo siento.",
+          "Cosas del juego, {rival}.",
+          "No se lo tome a mal, {rival}.",
+        ],
+        capture_lament: [
+          "Muy bien jugado, {rival}. Lo tendré en cuenta.",
+          "Tiene usted razón, {rival}: me descuidé.",
+          "Lo reconozco, {rival}: esta vez ha acertado usted.",
+          "Ya habrá ocasión de devolvérsela, {rival}.",
+        ],
       },
     },
   },
@@ -388,6 +449,7 @@ export const CHARACTERS: readonly Character[] = [
       register: "Cariñosa y tranquila: diminutivos, «cariño», «hijos» y algún refrán de vez en cuando. Nunca se enfada de verdad.",
       voice: "Prudente, cariñosa y paciente, algo tradicional: habla con cercanía y calma y solo usa algún refrán si viene a cuento, sin repetirlo. Solo dice «casita» si una ficha vuelve a casa.",
       talkativeness: 0.65,
+      share: 0.19,
       lines: {
         victory_win: [
           "Ay, qué alegría. He ganado, hijos.",
@@ -413,7 +475,7 @@ export const CHARACTERS: readonly Character[] = [
           "Ay, {rival}, qué prisas por comerme. Con la abuela no se hace eso.",
           "Bueno, {rival}, mi ficha a casita. No hay mal que por bien no venga.",
           "Ay, mi ficha. Paciencia, que la partida es larga, {rival}.",
-          "Me has comido, {rival}. Qué le vamos a hacer.",
+          "Me has comido, {rival}... pero qué le vamos a hacer.",
           "Vaya, {rival}, me has pillado. Ya me tocará a mí.",
         ],
         streak_boast: [
@@ -461,7 +523,7 @@ export const CHARACTERS: readonly Character[] = [
         ambient_ahead: [
           "Sin correr, pero sin parar, cariño.",
           "{rival}, cariño, no te quedes atrás.",
-          "Poquito a poco voy llegando.",
+          "Poquito a poco voy avanzando.",
           "Qué tranquila voy. Así da gusto.",
         ],
         ambient_behind: [
@@ -469,6 +531,26 @@ export const CHARACTERS: readonly Character[] = [
           "Voy perdiendo. Ya llegaré.",
           "Sin prisa, {rival}. Esto es muy largo todavía.",
           "Mucho correr, mucho correr… ya veremos al final, {rival}.",
+        ],
+        blockade_complaint: [
+          "Esa barrera, {rival}… ¿la abres o qué?",
+          "Por favor, {rival}, deja pasar a la abuela.",
+          "Déjame pasar, {rival}, abre la barrera.",
+          "Con esa barrera no hay quien pase, {rival}.",
+        ],
+      },
+      replies: {
+        capture_boast: [
+          "Ay, {rival}, a casita. Te tocaba.",
+          "Lo siento, {rival}, pero me tocaba.",
+          "Cosas del parchís, cariño.",
+          "Otra vez será, {rival}, ya verás.",
+        ],
+        capture_lament: [
+          "Bueno, otra vez a empezar.",
+          "Ya me las pagarás, {rival}.",
+          "Pues nada, ya me tocará a mí.",
+          "Paciencia, que ya te alcanzaré.",
         ],
       },
     },
@@ -495,6 +577,7 @@ export const CHARACTERS: readonly Character[] = [
       register: "Informal y alegre: reacciona con sorpresa y humor, con alguna superstición con el dado y frases sencillas.",
       voice: "Espontáneo, alegre e imprevisible: reacciona con sorpresa y dice lo que piensa con frases sencillas, sin exagerar.",
       talkativeness: 1,
+      share: 0.27,
       lines: {
         victory_win: [
           "¡He ganado! ¡Qué partidón!",
@@ -583,6 +666,26 @@ export const CHARACTERS: readonly Character[] = [
           "¡Que no decaiga! {rival}, te estoy vigilando.",
           "Todavía puedo alcanzaros.",
         ],
+        blockade_complaint: [
+          "¡Eh, {rival}, que no paso!",
+          "¡Esa barrera no me deja pasar!",
+          "¡Venga, {rival}, abre el paso!",
+          "¡Esa barrera sobra, {rival}!",
+        ],
+      },
+      replies: {
+        capture_boast: [
+          "¡Sí, te comí la ficha!",
+          "Te comí la ficha, jeje.",
+          "¡Ups! Tocaba, {rival}.",
+          "¡Jeje! A casa, {rival}.",
+        ],
+        capture_lament: [
+          "¡Anda ya! Ya te pillaré.",
+          "¡Jo! Pues ahora me toca a mí.",
+          "¡Uy! Esa no la vi venir.",
+          "¡Qué rabia! Ya verás la próxima.",
+        ],
       },
     },
   },
@@ -606,15 +709,22 @@ export function getStrategy(playerId: PlayerId): StrategyProfile {
 if (CHARACTERS.some((c, i) => c.color !== COLORS[i])) {
   throw new Error("CHARACTERS debe seguir el orden de COLORS del motor");
 }
+if (Math.abs(CHARACTERS.reduce((sum, c) => sum + c.chat.share, 0) - 1) > 1e-9) {
+  throw new Error("Las cuotas de chat (`chat.share`) deben sumar 1");
+}
 for (const { id, strategy, chat, catchphrases } of CHARACTERS) {
   if (!(chat.talkativeness > 0 && chat.talkativeness <= 1)) throw new Error(`Frecuencia de chat no válida en ${id}`);
+  if (!(chat.share > 0 && chat.share < 1)) throw new Error(`Cuota de chat no válida en ${id}`);
   const plain = (text: string) => text.toLowerCase().replace(/[¡!¿?….,]/g, "").trim();
   if (!chat.voice.trim() || catchphrases.some((c) => plain(chat.voice).includes(plain(c)))) {
     throw new Error(`El estilo de ${id} no puede estar vacío ni contener sus coletillas literales`);
   }
   if (CHAT_LINE_KINDS.some((kind) => chat.lines[kind].length === 0)) throw new Error(`Faltan frases de chat en ${id}`);
+  for (const kind of Object.keys(chat.replies) as ChatLineKind[]) {
+    if (!REPLY_LINE_KINDS.has(kind)) throw new Error(`Réplicas no permitidas en ${id}/${kind}`);
+  }
   for (const kind of CHAT_LINE_KINDS) {
-    for (const line of chat.lines[kind]) {
+    for (const line of [...chat.lines[kind], ...(chat.replies[kind] ?? [])]) {
       for (const [, marker] of line.matchAll(/\{(\w+)\}/g)) {
         const allowed =
           (marker === "rival" && LINE_KINDS_WITH_RIVAL.has(kind)) ||

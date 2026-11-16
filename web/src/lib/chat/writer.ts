@@ -174,18 +174,21 @@ export function createLocalWriter(random: Random): ChatWriter {
   return {
     async write(request) {
       const { utterance, recent, usedLines = [], usedCatchphrases = [] } = request;
-      const lines = getCharacter(utterance.speaker)?.chat.lines[utterance.kind] ?? [];
+      // Una réplica contesta con las frases de réplica de su tipo, si las hay («Sí, te comí la ficha»), en
+      // lugar de repetir lo que acaba de decir el otro con otras palabras. Si ninguna vale, las de siempre.
+      const chat = getCharacter(utterance.speaker)?.chat;
+      const replyLines = utterance.replyTo !== null ? (chat?.replies[utterance.kind] ?? []) : [];
+      const lines = chat?.lines[utterance.kind] ?? [];
       // Además de tener sus datos y no repetirse, la frase no puede afirmar una posición que la clasificación
       // real no respalda («Voy perdiendo» solo si quien habla va el último; ver `positionClaims.ts`).
-      const valid = lines
-        .map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) }))
-        .filter(
-          (o): o is { id: string; text: string } =>
-            o.text !== null &&
-            validateChatText(o.text, recent) === o.text &&
-            unbackedPositionClaim(o.text, request) === null &&
-            unbackedWinClaim(o.text, request) === null,
-        );
+      const usable = (o: { id: string; text: string | null }): o is { id: string; text: string } =>
+        o.text !== null &&
+        validateChatText(o.text, recent) === o.text &&
+        unbackedPositionClaim(o.text, request) === null &&
+        unbackedWinClaim(o.text, request) === null;
+      const replies = replyLines.map((line, index) => ({ id: `reply:${utterance.kind}:${index}`, text: renderLine(line, utterance) })).filter(usable);
+      const valid =
+        replies.length > 0 ? replies : lines.map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) })).filter(usable);
       if (valid.length === 0) return null;
       // Preferencia (no prohibición): frases sin coletillas que este personaje ya haya publicado. Si
       // todas las válidas las tienen, se usan igualmente: el escritor local nunca se queda sin frase

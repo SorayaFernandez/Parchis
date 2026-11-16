@@ -401,7 +401,8 @@ describe("partidas completas con ejecuciones concurrentes, interrupciones y fall
       }
       for (const r of rows) {
         // Cada texto es una frase del propio personaje con sus marcadores rellenados.
-        const own = Object.values(CHARACTERS.find((c) => c.id === r.character_id)!.chat.lines).flat();
+        const chat = CHARACTERS.find((c) => c.id === r.character_id)!.chat;
+        const own = [...Object.values(chat.lines).flat(), ...Object.values(chat.replies).flat()];
         expect(own.some((line) => matchesLine(line, r.text)), r.text).toBe(true);
       }
       checkCoherence(rows, eventsAt);

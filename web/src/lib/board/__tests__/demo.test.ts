@@ -53,7 +53,8 @@ describe("demo de /tablero: partida inicial", () => {
     for (const m of match.messages) expect(m.version).toBeLessThanOrEqual(match.version);
     // Cada texto sale de las frases de su personaje para ese tipo de intervención (no hay relleno).
     for (const m of match.messages) {
-      const lines = Object.values(getCharacter(m.characterId)!.chat.lines).flat();
+      const chat = getCharacter(m.characterId)!.chat;
+      const lines = [...Object.values(chat.lines).flat(), ...Object.values(chat.replies).flat()];
       const pattern = (line: string) => new RegExp(`^${line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\{(rival|count|Count|ritmo)\\\}/g, ".+")}$`, "u");
       expect(lines.some((line) => pattern(line).test(m.text)), `${m.characterId}: ${m.text}`).toBe(true);
     }
