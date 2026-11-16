@@ -179,6 +179,25 @@ describe("getRateLimiter", () => {
     expect(limiter.enabled).toBe(true);
   });
 
+  it("regresión: UPSTASH_REDIS_REST_* vacías (o con espacios) cuentan como ausentes y se usan las KV_REST_API_*", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const empty of ["", "   "]) {
+      vi.resetModules();
+      let fresh = await import("../rateLimit");
+      // Todas vacías: desactivado, como sin variables.
+      expect(fresh.getRateLimiter({ UPSTASH_REDIS_REST_URL: empty, UPSTASH_REDIS_REST_TOKEN: empty, KV_REST_API_URL: empty, KV_REST_API_TOKEN: empty }).enabled).toBe(false);
+      vi.resetModules();
+      fresh = await import("../rateLimit");
+      const limiter = fresh.getRateLimiter({
+        UPSTASH_REDIS_REST_URL: empty,
+        UPSTASH_REDIS_REST_TOKEN: empty,
+        KV_REST_API_URL: "https://ejemplo.upstash.io",
+        KV_REST_API_TOKEN: "token-ficticio-123",
+      });
+      expect(limiter.enabled, JSON.stringify(empty)).toBe(true);
+    }
+  });
+
   it.each([
     [{ VERCEL: "1", VERCEL_ENV: "production" }, "parchis:rl"],
     [{ VERCEL: "1", VERCEL_ENV: "preview" }, "parchis:rl:preview"],
