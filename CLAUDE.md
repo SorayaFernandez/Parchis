@@ -8,6 +8,7 @@ Nueva versión del Parchís online: cuatro personajes controlados por IA juegan 
   - `src/lib/engine/`: motor del Parchís en TypeScript puro (ver abajo).
   - `src/lib/board/` y `src/components/board/`: tablero visual (ver abajo).
   - `src/lib/hud/` y `src/components/hud/`: HUD de jugadores y panel de dados (ver abajo).
+  - `web/supabase/6.1-games.sql`: esquema de `public.games` (ver "Supabase"). Se aplica antes de `8.2a-chat.sql`.
   - `src/lib/chat/`, `src/components/hud/ChatPanel.tsx` y `web/supabase/8.2a-chat.sql`: chat entre personajes (ver "Chat entre personajes").
   - `src/app/globals.css`: tema de Tailwind CSS 4. **Tipografía:** `--font-sans: var(--font-sans)` se referencia a sí misma, así que no es válida y el navegador usa su fuente estándar (en Chrome, «Times New Roman»; en Linux se pinta con Liberation Serif). Es la apariencia que ha tenido siempre el proyecto y se mantiene a propósito: en el commit `8089f90` se conectó a Geist (`--font-sans: var(--font-geist-sans)`; `layout.tsx` carga Geist con `next/font`), pero se revirtió para recuperar el aspecto anterior. Los tamaños de texto (en `rem`) no cambiaron en ningún momento: solo cambian las métricas de la fuente.
 - `frontend/`, `backend/`, `nginx/`, `vault/`, `docker-compose.yml`, `Makefile`: **proyecto original** (ft_transcendence). Solo de referencia. **No modificar ni eliminar.**
@@ -215,6 +216,10 @@ Una partida real de los cuatro personajes, jugada en el navegador con el aspecto
 ## Supabase
 
 - Tabla `public.games` creada en Supabase (SQL aprobado: estado JSONB, `version`, reserva `lock_token`/`processing_until` de 20 s con el reloj de PostgreSQL, trigger `games_guard`, RLS de solo lectura pública, escritura solo `service_role`, Realtime).
+- **`web/supabase/6.1-games.sql` versiona su esquema real**, recuperado el 2026-11-16 de los catálogos de Supabase con consultas de solo lectura y comprobado en un PostgreSQL 17 desechable: el catálogo resultante coincide con el de Supabase (columnas, restricciones, índice, política, permisos, triggers, funciones y Realtime). En Supabase la tabla ya existe: el archivo sirve para versionarla y para crear entornos nuevos o de prueba. **Se aplica antes de `8.2a-chat.sql`**, que depende de `games` (claves foráneas del chat y `games_chat_enqueue`); no crea nada del chat. Es idempotente y no borra ni modifica partidas.
+  - Columnas: `id` (uuid, `gen_random_uuid()`, nativa de PostgreSQL, sin extensión), `state` (jsonb), `engine_version` (smallint), `status` y `winner` (**generadas** STORED desde `state`), `version`, `lock_token`, `processing_until`, `last_action`, `last_events` (`'[]'`), `created_at`, `updated_at` y `finished_at`. Ocho CHECK (estado objeto, `status` `playing`/`finished`, terminada ⇔ `finished_at`, reserva completa o ninguna…) e índice `(status, updated_at desc)`.
+  - `games_guard()` (BEFORE INSERT OR UPDATE, cuerpo literal de Supabase): una partida nueva empieza en la v1, en juego y sin reserva; la reserva (misma versión) fija `processing_until` a 20 s y falla con `55P03` si hay otra vigente o la partida terminó; la confirmación exige versión + 1, el mismo token, la reserva vigente y `last_action`, libera la reserva y fija `finished_at`; saltarse una versión o cambiar el estado sin subirla da `23514`; `id`, `created_at` y `engine_version` son inmutables.
+  - Seguridad: RLS activada (no forzada) con la política `games_public_read` (SELECT para `anon` y `authenticated`); permisos explícitos (`anon`/`authenticated` solo SELECT; `service_role` SELECT, INSERT y UPDATE, sin DELETE) que no dependen de los privilegios por defecto del entorno; `games_guard()` solo la ejecuta su propietario. Publicada en `supabase_realtime` (sin `status` ni `winner`, que PostgreSQL 17 no publica por ser generadas).
 - `src/lib/supabase/`:
   - `env.ts`: valida las variables con Zod (sin mostrar valores). Rechaza una URL con ruta (debe ser la URL base, sin `/rest/v1/`) y una clave secreta en variables `NEXT_PUBLIC_`.
   - `browser.ts`: `getBrowserSupabase()`, con la URL y la clave publicable; para leer y suscribirse a Realtime.
@@ -525,14 +530,15 @@ Los personajes comentan los acontecimientos **reales** de la partida. El especta
     - **Lee los mensajes de todas las partidas.** La política es `using (true)`, como la lectura pública de `games`: no exige filtrar por `game_id`, así que se pueden listar los de cualquier partida por la API REST o suscribirse por Realtime sin filtro.
     - Solo contienen texto de los personajes, versión, orden, disparador y fecha: ningún dato de usuarios (no los hay).
     - No puede escribir, modificar ni borrar mensajes, ni leer `game_chat` (reserva y estado del director) ni `game_chat_queue`, ni ejecutar `chat_claim`, `chat_commit` o `chat_release`.
-    - Realtime publica solo `game_messages`.
+    - De las tablas del chat, Realtime publica solo `game_messages` (también publica `games`, que viene de `6.1-games.sql`).
 - **`game_chat`:** `game_id` (PK, FK con cascada), `last_version` (cursor), `message_count`, `director_state`, `lock_token`, `locked_until`, `locked_through` (fin del lote reservado; restricción que exige los tres a la vez) y `updated_at`. Sin acceso para anon/authenticated. **No** está en Realtime.
 - **Funciones** (`security invoker`, `search_path = ''`, `#variable_conflict use_column`, `execute` solo para `service_role`):
   - `chat_claim(game, token, lease, batch)`: si hay pendientes y no hay reserva vigente (las caducadas, con `clock_timestamp()`, se recuperan), reserva el lote `(last_version, locked_through]`. Suma 1 a `attempts` **solo de la primera** versión y devuelve una fila por versión con el estado del chat y `latest`.
   - `chat_commit(game, token, through, state, messages, max)`: exige el token de la reserva vigente y `last_version < through ≤ locked_through` (confirmación parcial si se detuvo en una versión que falló). Error si un mensaje está fuera de ese tramo o se supera el máximo. Inserta sin duplicar, borra la cola hasta `through`, avanza el cursor y libera. Devuelve `(inserted, has_more)` o ninguna fila.
   - `chat_release(game, token)`: el lote sigue pendiente.
 - **Pruebas SQL:** `web/supabase/tests/` (`supabase-stub.sql`, `8.2a-chat.test.sql`, `8.2a-chat-commit-state.test.sql` y `run-chat-sql-tests.sh`; comando en "Comandos"). Usan un PostgreSQL 17 desechable en Docker y **no** tocan Supabase. Todas son automáticas (ya no quedan comprobaciones manuales, B7):
-  - **Aplicación:** el SQL dos veces (inicial e idempotencia).
+  - **Entorno:** `supabase-stub.sql` solo imita lo que Supabase ya trae (roles, publicación `supabase_realtime`, privilegios por defecto); `games` sale de `6.1-games.sql`, la misma definición que en Supabase, con su `games_guard` real. Las partidas de prueba empiezan en juego (`status: playing`), en la v1 y sin reserva, y cada avance reserva el turno y confirma la versión + 1 con el mismo token y `last_action`, como `advanceGame`.
+  - **Aplicación:** `6.1-games.sql` y `8.2a-chat.sql`, cada uno dos veces (inicial e idempotencia).
   - **43 comprobaciones SQL**, que abortan si fallan:
     - Encolado, victoria, rollback e idempotencia.
     - Fallos del INSERT sin revertir el avance y errores de la guarda no ocultados.
@@ -1110,7 +1116,7 @@ Comandos:
 - `npm test`: pruebas (`npm run test:watch` en modo observación)
 - `npm run lint`: ESLint
 - `npx tsc --noEmit`: comprobación de tipos
-- `bash supabase/tests/run-chat-sql-tests.sh`: pruebas del SQL del chat (43 SQL, 3 `WARNING`, 17 de `chat_commit` sin mensajes y 6 de concurrencia) en un PostgreSQL desechable (Docker; no toca Supabase)
+- `bash supabase/tests/run-chat-sql-tests.sh`: pruebas del SQL del chat sobre el esquema real de `games` (`6.1-games.sql`; 43 SQL, 3 `WARNING`, 17 de `chat_commit` sin mensajes y 6 de concurrencia) en un PostgreSQL desechable (Docker; no toca Supabase)
 - `npm run build`: compilación de producción
 
 ## Restricciones
