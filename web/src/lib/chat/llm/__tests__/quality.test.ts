@@ -3042,3 +3042,55 @@ describe("tres prohibiciones más: «Segunda vez en nada», «lleva dos perdidas
     expect(`${system.content}\n${user.content}`).not.toMatch(/en nada|perdidas|sigo sin/i);
   });
 });
+
+describe("«Me lo he quedado» y sus variantes, prohibidas", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = { reason: "expresión poco natural", detail: "termino=me lo he quedado" };
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+  const ahead = (speaker: string, rival: string) => say(speaker, rival, { kind: "ambient_ahead", trigger: "ambient", important: false });
+
+  it("se rechaza en cualquier persona, número y tiempo, y no se cita", () => {
+    const cases: [string, ReturnType<typeof say>][] = [
+      ["¡Me lo he quedado!", capturer(BRAVA, CHISPA)],
+      ["Me lo quedo, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Me lo quedé, Chispa.", capturer(CHISPA, BRAVA)],
+      ["Me los he quedado todos.", capturer(BRAVA, CHISPA)],
+      ["Te lo has quedado, Brava.", victimOf(CHISPA, BRAVA)],
+      ["Se lo ha quedado Brava.", victimOf(PILAR, BRAVA)],
+      ["Nos lo hemos quedado.", capturer(BRAVA, CHISPA)],
+      ["Me lo voy a quedar, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Se lo quedó usted, Brava.", victimOf(ERNESTO, BRAVA)],
+      ["Voy a quedármelo, Chispa.", capturer(BRAVA, CHISPA)],
+      ["Quedándoselo así, Brava.", victimOf(CHISPA, BRAVA)],
+    ];
+    for (const [text, request] of cases) {
+      expect(reject(text, request), text).toEqual(term);
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("no bloquea los usos de «quedarse» sin ese significado", () => {
+    for (const [text, request] of [
+      ["Tres seises, Chispa. Te quedas sin turno.", say(BRAVA, CHISPA, { kind: "third_six_tease", trigger: "third_six", important: false })],
+      ["Me he quedado con una ficha en casa.", say(CHISPA, BRAVA, { kind: "ambient_behind", trigger: "ambient", important: false })],
+      ["Me quedo aquí un rato, Chispa.", ahead(BRAVA, CHISPA)],
+      ["Lo que queda de partida es mío, Chispa.", ahead(BRAVA, CHISPA)],
+      ["Me quedo con lo bueno, Brava.", ahead(PILAR, BRAVA)],
+      ["Me comiste, Brava. Ya te pillaré.", victimOf(CHISPA, BRAVA)],
+    ] as const) expect(reject(text, request), text).toBeNull();
+    for (const text of ["Te lo dije, Brava.", "Lo he quedado claro.", "Se lo comió.", "Queda mucho, Chispa."]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("el catálogo, las réplicas, la demostración y el prompt no la contienen ni la citan", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...Object.values(c.chat.replies).flat(), ...c.catchphrases, c.chat.voice]) {
+        expect(line, `${c.name}: ${line}`).not.toMatch(/(?:me|te|se|nos|os) los? (?:\p{L}+ )?qued|qued(?:ár|ar|ándo|ando)(?:me|te|se|nos|os)los?/iu);
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+    const [system, user] = buildChatPrompt({ ...capturer(BRAVA, CHISPA), recent: [{ speaker: BRAVA, text: "¡Me lo he quedado!" }] });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/lo he quedado/i);
+  });
+});

@@ -1037,6 +1037,14 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     term: "me la he quedado",
     re: /(?<![\p{L}])(?:(?:me|nos)\s+(?:la|las)\s+(?:(?:he|hemos|habia)\s+)?qued(?:o|e|ado|amos|ao)|quedarmela?s?|quedarnosla?s?|me\s+quedo\s+con\s+(?:tu|su|vuestra|esa|la)\s+ficha)(?![\p{L}])/u,
   },
+  // «Me lo he quedado»: quedarse con algo usando «lo/los», en cualquier persona y tiempo («me lo quedo», «me los
+  // quedé», «te lo has quedado», «se lo ha quedado», «nos lo vamos a quedar», «quedármelo», «quedándoselo»). No
+  // cuentan los usos de «quedarse» sin ese pronombre («me quedo sin turno», «me he quedado con una ficha en casa»,
+  // «lo que queda de partida»).
+  {
+    term: "me lo he quedado",
+    re: /(?<![\p{L}])(?:(?:me|te|se|nos|os)\s+los?\s+(?:(?:he|has|ha|hemos|habeis|han|habia|habias|habiamos|habian|voy\s+a|vas\s+a|va\s+a|vamos\s+a|vais\s+a|van\s+a)\s+)?qued\p{L}*|qued(?:ar|ando)(?:me|te|se|nos|os)los?)(?![\p{L}])/u,
+  },
   { term: "contratiempo", re: /(?<![\p{L}])contratiempos?(?![\p{L}])/u },
   { term: "en cabeza", re: /(?<![\p{L}])en\s+cabeza(?![\p{L}])/u },
   // Giros artificiales retirados del catálogo: «Sigo aquí, y con ganas.» y «¡Dentro! Y sin pedir permiso.».
