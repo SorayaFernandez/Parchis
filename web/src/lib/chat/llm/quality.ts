@@ -11,7 +11,7 @@ import type { ChatTrigger } from "../schemas";
 import type { CompleteCaptureFacts, StreakFacts, StreakState } from "../director";
 import type { ChatWriteRequest } from "../writer";
 import { detectCatchphrases, normalizeText } from "../catchphrases";
-import { unbackedPositionClaim } from "../positionClaims";
+import { unbackedPositionClaim, unbackedWinClaim } from "../positionClaims";
 
 export interface QualityIssue {
   reason: QualityReason;
@@ -274,6 +274,9 @@ function checkGameTalk(text: string, request: ChatWriteRequest): QualityIssue | 
   // «Voy ganando», «voy perdiendo» y equivalentes, también del rival: solo con la clasificación real.
   const position = unbackedPositionClaim(text, request);
   if (position) return { reason: "afirmación no respaldada", term: position };
+  // «No me extraña que Brava gane» y equivalentes: solo si ese rival ya ha ganado de verdad.
+  const win = unbackedWinClaim(text, request);
+  if (win) return { reason: "afirmación no respaldada", term: win };
   const result = RESULT_CLAIM.exec(t);
   if (result && request.utterance.trigger !== "victory") return { reason: "afirmación no respaldada", term: result[0].replace(/\s+/g, " ") };
   return null;
@@ -1164,6 +1167,15 @@ const UNNATURAL: readonly { term: string; re: RegExp }[] = [
     re: /(?<![\p{L}])(?:no\s+(?:volvera|va\s+a\s+volver|vuelve)\s+a\s+(?:ocurrir|pasar|suceder)|no\s+se\s+(?:repetira|va\s+a\s+repetir)|no\s+(?:ocurrira|pasara|sucedera)\s+mas)(?![\p{L}])/u,
   },
   { term: "esperar mi turno", re: /(?<![\p{L}])esper\p{L}*\s+(?:a\s+)?(?:mi|el)\s+turno(?![\p{L}])/u },
+  // «Me la he comido» (y «…y ya va siendo hora»): la captura contada con «me la(s)» en primera persona, que es
+  // ambigua («comérsela» también es cargar con algo). Siguen valiendo «Te comí», «Te la he comido» (el «te»
+  // señala a la víctima), «Le comí», «Me comiste», «¡Me la has comido!» y «Me como su ficha».
+  {
+    term: "me la he comido",
+    re: /(?<![\p{L}])(?:(?:me|nos)\s+(?:la|las)\s+(?:(?:he|hemos|habia|habiamos)\s+comido|comi|comimos|como|comemos|comere|comeremos|comeria|acabo\s+de\s+comer|acabamos\s+de\s+comer|voy\s+a\s+comer|vamos\s+a\s+comer)|comermelas?|comernoslas?)(?![\p{L}])/u,
+  },
+  // «Ya va siendo hora» y sus variantes («va/iba siendo hora», «ya era hora», «ya es hora»).
+  { term: "ya va siendo hora", re: /(?<![\p{L}])(?:(?:ya\s+)?(?:va|iba)\s+siendo\s+hora|ya\s+(?:era|es)\s+hora)(?![\p{L}])/u },
   {
     term: "mantengo la ventaja",
     re: /(?<![\p{L}])(?:mantengo|mantenemos|conservo|conservamos|sigo\s+manteniendo|sigo\s+conservando)\s+(?:la|mi|esta|nuestra)\s+ventaja(?![\p{L}])/u,
@@ -1287,14 +1299,18 @@ function captureRole(request: ChatWriteRequest): "by" | "victim" | null {
   return null;
 }
 
-/** Quien habla PIERDE la ficha: «me comiste», «me has comido», «me ha comido usted», «X se come mi ficha». */
+/** Quien habla PIERDE la ficha (también «me la has comido»): «me comiste», «me has comido», «me ha comido usted», «X se come mi ficha». */
 const SPEAKER_LOST: readonly RegExp[] = [
-  /(?<![\p{L}])me\s+(?:(?:has|ha|habeis|han)\s+)?(?:comid[oa]|comiste|comio|comisteis|comieron|comes|come|comeis|comen|pillad[oa]|pillaste|pillo|pillas|pilla|cazad[oa]|cazaste|cazo|cazas|caza|capturad[oa]|capturaste|capturo|capturas|captura|mandad[oa]|mandaste|mando)(?![\p{L}])/u,
+  /(?<![\p{L}])me\s+(?:(?:la|las)\s+)?(?:(?:has|ha|habeis|han)\s+)?(?:comid[oa]|comiste|comio|comisteis|comieron|comes|come|comeis|comen|pillad[oa]|pillaste|pillo|pillas|pilla|cazad[oa]|cazaste|cazo|cazas|caza|capturad[oa]|capturaste|capturo|capturas|captura|mandad[oa]|mandaste|mando)(?![\p{L}])/u,
   /(?<![\p{L}])(?:(?:se\s+)?(?:(?:has|ha|han)\s+)?(?:comid[oa]|comiste|comio|come|comes)|se\s+(?:ha\s+)?(?:llevado|lleva))\s+(?:a\s+)?mi\s+ficha(?![\p{L}])/u,
 ];
-/** Quien habla CAPTURA: «te comí», «le he comido», «he comido tu/su ficha», «me como tu ficha». */
+/**
+ * Quien habla CAPTURA: «te comí», «le he comido», «te la he comido», «se la he comido» (de usted), «he comido
+ * tu/su ficha», «me como tu ficha».
+ */
 const SPEAKER_CAPTURED: readonly RegExp[] = [
-  /(?<![\p{L}])(?:te|le|os|les)\s+(?:(?:he|hemos)\s+)?(?:comi|comido|como|pille|pillado|cace|cazado|capture|capturado|mande|mandado)(?![\p{L}])/u,
+  /(?<![\p{L}])se\s+(?:la|las)\s+(?:(?:he|hemos)\s+comido|comi|comimos)(?![\p{L}])/u,
+  /(?<![\p{L}])(?:te|le|os|les)\s+(?:(?:la|las)\s+)?(?:(?:he|hemos)\s+)?(?:comi|comido|como|pille|pillado|cace|cazado|capture|capturado|mande|mandado)(?![\p{L}])/u,
   /(?<![\p{L}])(?:(?:me\s+)?(?:he|hemos)\s+comido|(?:me\s+)?comi|me\s+como)\s+(?:a\s+)?(?:tu|su|vuestra)\s+ficha(?![\p{L}])/u,
 ];
 /** Disculpas («lo siento», «perdona», «disculpe»…). Por sí solas no contradicen a nadie: ver `CAPTURE_EXCUSE`. */

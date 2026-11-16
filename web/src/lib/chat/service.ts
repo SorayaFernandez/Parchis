@@ -190,7 +190,8 @@ async function processItem(
   const gameStatus = state.success ? state.data.status : undefined;
   const leader = state.success ? gameLeader(state.data as GameState) : undefined;
   const last = state.success ? gameLast(state.data as GameState) : undefined;
-  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective, gameStatus, leader, last);
+  const winner = state.success ? ((state.data as GameState).ranking[0] ?? null) : undefined;
+  const written = await writeUtterances(item.version, utterances, next, deps, lease, item.isVictory && defective, gameStatus, leader, last, winner);
   next = recordPublished(
     next,
     item.version,
@@ -213,6 +214,7 @@ async function writeUtterances(
   gameStatus: GameState["status"] | undefined,
   leader: PlayerId | null | undefined,
   last: PlayerId | null | undefined,
+  winner: PlayerId | null | undefined,
 ): Promise<{ message: QueuedMessage; lineId?: string }[]> {
   const recent: RecentText[] = [...director.recent];
   const messages: QueuedMessage[] = [];
@@ -230,6 +232,7 @@ async function writeUtterances(
       ...(gameStatus ? { gameStatus } : {}),
       ...(leader !== undefined ? { leader } : {}),
       ...(last !== undefined ? { last } : {}),
+      ...(winner !== undefined ? { winner } : {}),
     };
     let written = minimal ? await deps.fallbackWriter.write(request) : await writeWithFallback(request, deps, lease);
     let text = written ? validateChatText(written.text, recent) : null;

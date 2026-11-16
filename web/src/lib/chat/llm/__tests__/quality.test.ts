@@ -2657,3 +2657,91 @@ describe("posición real: «voy ganando» / «voy perdiendo» solo con la clasif
     }
   });
 });
+
+describe("«Me la he comido», «Ya va siendo hora» y afirmar que un rival gana (mensajes reales de Preview)", () => {
+  const [BRAVA, ERNESTO, PILAR, CHISPA] = ["ai-pink", "ai-purple", "ai-green", "ai-blue"];
+  const term = (t: string) => ({ reason: "expresión poco natural", detail: `termino=${t}` });
+  const capturer = (speaker: string, victim: string) => say(speaker, victim, { kind: "capture_boast", captures: factsOf([cap(10, speaker, victim)], speaker) });
+  const victimOf = (speaker: string, by: string) => say(speaker, by, { kind: "capture_lament", captures: factsOf([cap(10, by, speaker)], speaker) });
+
+  it("el mensaje real de Brava se rechaza por el flujo completo", () => {
+    expect(reject("¡Abuela, me la he comido y ya va siendo hora!", capturer(BRAVA, PILAR))).toEqual(term("me la he comido"));
+  });
+
+  it("«Me la he comido» y sus variantes en primera persona: rechazadas y sin citarse", () => {
+    for (const text of ["¡Me la he comido!", "Me la comí, Chispa.", "Me la como.", "Me las he comido.", "Nos la hemos comido.", "Me la acabo de comer.", "Me la voy a comer.", "Voy a comérmela.", "Me la comeré."]) {
+      expect(reject(text, capturer(BRAVA, CHISPA)), text).toEqual(term("me la he comido"));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+  });
+
+  it("«Ya va siendo hora» y sus variantes: rechazadas y sin citarse", () => {
+    for (const text of ["Ya va siendo hora.", "Va siendo hora, Chispa.", "Ya iba siendo hora.", "¡Ya era hora!", "Ya es hora."]) {
+      expect(reject(text, capturer(BRAVA, CHISPA)), text).toEqual(term("ya va siendo hora"));
+      expect(hasDiscardedExpression(text), text).toBe(true);
+    }
+    for (const text of ["Por ahora, voy bien.", "Ahora me toca a mí.", "Ya es la hora de la merienda."]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("siguen valiendo las capturas aprobadas, también «Te la he comido» y «¡Me la has comido!», en su lado", () => {
+    expect(reject("Te comí, Chispa.", capturer(BRAVA, CHISPA))).toBeNull();
+    expect(reject("¡Te la he comido, Chispa!", capturer(BRAVA, CHISPA))).toBeNull();
+    expect(reject("Me comiste, Brava.", victimOf(CHISPA, BRAVA))).toBeNull();
+    expect(reject("¡Me la has comido, Brava!", victimOf(CHISPA, BRAVA))).toBeNull();
+    expect(reject("Le comí, Brava.", capturer(ERNESTO, BRAVA))).toBeNull();
+    expect(reject("Se la he comido, Brava.", capturer(ERNESTO, BRAVA))).toBeNull();
+    expect(reject("Me comió usted, Brava.", victimOf(ERNESTO, BRAVA))).toBeNull();
+    expect(reject("Me como su ficha, Brava.", capturer(ERNESTO, BRAVA))).toBeNull();
+    for (const text of ["Te comí, Chispa.", "¡Te la he comido, Chispa!"]) expect(hasDiscardedExpression(text), text).toBe(false);
+  });
+
+  it("…pero contadas al revés se rechazan: «Te la he comido» de quien pierde la ficha y «Me la has comido» de quien la come", () => {
+    expect(reject("¡Te la he comido, Chispa!", victimOf(BRAVA, CHISPA))?.reason).toBe("contradice quién captura");
+    expect(reject("Se la he comido, Brava.", victimOf(ERNESTO, BRAVA))?.reason).toBe("contradice quién captura");
+    expect(reject("¡Me la has comido, Chispa!", capturer(BRAVA, CHISPA))?.reason).toBe("contradice quién captura");
+  });
+
+  it("«No me extraña que Brava gane» sin ganador: rechazada, con sus variantes", () => {
+    const NOT_BACKED = "afirmación no respaldada";
+    expect(reject("No me extraña que Brava gane.", victimOf(PILAR, BRAVA))).toEqual({ reason: NOT_BACKED, detail: expect.stringMatching(/^termino=extraña que brava gane/) });
+    for (const text of ["No me extraña que ganes, Brava.", "Normal que ganes, Brava.", "Brava va a ganar.", "Vas a ganar, Brava.", "Eres la ganadora, Brava.", "Brava gana la partida.", "No me extraña que gane, Brava."]) {
+      expect(reject(text, victimOf(PILAR, BRAVA))?.reason, text).toBe(NOT_BACKED);
+    }
+  });
+
+  it("con un ganador real: solo si el rival es quien ha ganado", () => {
+    const after = (winner: string) => ({ ...victimOf(PILAR, BRAVA), winner });
+    expect(reject("No me extraña que Brava gane.", after(BRAVA))).toBeNull();
+    expect(reject("No me extraña que Brava gane.", after(CHISPA))?.reason).toBe("afirmación no respaldada");
+    // En la réplica a una victoria el rival es el ganador, aunque falte el dato (victoria en modo mínimo).
+    const reply = say(PILAR, BRAVA, { kind: "victory_reply", trigger: "victory" });
+    expect(reject("No me extraña que ganes, Brava.", reply)).toBeNull();
+    // En la propia victoria no hay rival del que decir que gana.
+    expect(checkQuality("¡No me extraña que ganes!", say(BRAVA, null, { kind: "victory_win", trigger: "victory" }))?.reason).toBe("afirmación no respaldada");
+  });
+
+  it("no son afirmaciones de victoria: deseos, hipótesis, «que gane el mejor» y otros sentidos de «ganar»", () => {
+    for (const text of ["Ojalá gane Brava.", "Si ganas, Brava, te invito.", "A ver si gana Brava.", "Que gane el mejor.", "Brava gana terreno.", "Brava gana una ficha más.", "Me da la gana, Brava."]) {
+      expect(checkQuality(text, victimOf(PILAR, BRAVA))?.reason, text).not.toBe("afirmación no respaldada");
+    }
+  });
+
+  it("el catálogo, las coletillas y la demostración no contienen ninguna", async () => {
+    for (const c of CHARACTERS) {
+      for (const line of [...Object.values(c.chat.lines).flat(), ...c.catchphrases, c.chat.voice]) {
+        expect(line, `${c.name}: ${line}`).not.toMatch(/me las? (he comido|comí|como)|comérmela|(va|iba) siendo hora|ya (era|es) hora|extraña que/i);
+      }
+    }
+    const { createDemoMatch } = await import("@/lib/board/demo");
+    for (const m of (await createDemoMatch()).messages) {
+      expect(hasDiscardedExpression(m.text), m.text).toBe(false);
+      expect(m.text, m.text).not.toMatch(/me las? (he comido|comí)|siendo hora|extraña que/i);
+    }
+  });
+
+  it("el prompt no las cita desde los textos recientes", () => {
+    const recent = [{ speaker: BRAVA, text: "¡Abuela, me la he comido y ya va siendo hora!" }, { speaker: CHISPA, text: "¡Ya era hora!" }];
+    const [system, user] = buildChatPrompt({ ...victimOf(PILAR, BRAVA), recent });
+    expect(`${system.content}\n${user.content}`).not.toMatch(/me la he comido|siendo hora|ya era hora/i);
+  });
+});

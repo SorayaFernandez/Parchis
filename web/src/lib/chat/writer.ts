@@ -8,7 +8,7 @@ import { CHAT_LIMITS } from "./config";
 import type { Random, Utterance } from "./director";
 import type { ChatSource } from "./schemas";
 import { detectCatchphrases } from "./catchphrases";
-import { unbackedPositionClaim } from "./positionClaims";
+import { unbackedPositionClaim, unbackedWinClaim } from "./positionClaims";
 
 export interface RecentText {
   speaker: PlayerId;
@@ -55,6 +55,12 @@ export interface ChatWriteRequest {
    * él puede afirmarse «voy perdiendo» (ver `positionClaims.ts`).
    */
   last?: PlayerId | null;
+  /**
+   * Quién ha ganado la partida según los datos reales (`state.ranking[0]`), o `null` si todavía no ha ganado
+   * nadie. Sin él (estado no válido) no se sabe. Solo con él puede decirse que un rival gana fuera de la
+   * réplica a su victoria (ver `unbackedWinClaim` en `positionClaims.ts`).
+   */
+  winner?: PlayerId | null;
 }
 
 export interface WrittenText {
@@ -175,7 +181,10 @@ export function createLocalWriter(random: Random): ChatWriter {
         .map((line, index) => ({ id: `${utterance.kind}:${index}`, text: renderLine(line, utterance) }))
         .filter(
           (o): o is { id: string; text: string } =>
-            o.text !== null && validateChatText(o.text, recent) === o.text && unbackedPositionClaim(o.text, request) === null,
+            o.text !== null &&
+            validateChatText(o.text, recent) === o.text &&
+            unbackedPositionClaim(o.text, request) === null &&
+            unbackedWinClaim(o.text, request) === null,
         );
       if (valid.length === 0) return null;
       // Preferencia (no prohibición): frases sin coletillas que este personaje ya haya publicado. Si
