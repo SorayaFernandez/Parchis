@@ -66,7 +66,7 @@ describe("página /partida/[id]: partida en curso", () => {
     const before = JSON.stringify(state);
     const html = render(game(state));
     const players = html.slice(html.indexOf('aria-label="Jugadores"'));
-    const names = [...players.matchAll(/<p class="truncate font-semibold">([^<]+)/g)].map((m) => m[1]);
+    const names = [...players.matchAll(/<p class="truncate font-semibold[^"]*">([^<]+)/g)].map((m) => m[1]);
     expect(names).toEqual(["Chispa", "Don Ernesto", "Abuela Pilar", "Brava"]);
     // Solo presentación: el estado (orden interno y turno) no cambia.
     expect(JSON.stringify(state)).toBe(before);

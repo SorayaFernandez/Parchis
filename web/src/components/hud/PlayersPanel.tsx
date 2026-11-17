@@ -44,8 +44,10 @@ function PlayerCard({ player, name, compact }: { player: PlayerSummary; name: st
       </span>
 
       <div className={cn("flex min-w-0 flex-1 flex-col gap-1.5", compact && "xl:gap-1")}>
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="truncate font-semibold">
+        {/* En dos columnas (compact, columna de ≥ 24rem) la tarjeta es estrecha: si el nombre y el estado no caben
+            en una línea, el estado baja a la siguiente en lugar de cortar el nombre. */}
+        <div className={cn("flex items-baseline justify-between gap-2", compact && "xl:@min-[24rem]:flex-wrap xl:@min-[24rem]:gap-y-0.5")}>
+          <p className={cn("truncate font-semibold", compact && "xl:@min-[24rem]:max-w-full xl:@min-[24rem]:shrink-0")}>
             {name}
             <span className="sr-only"> ({COLOR_LABEL[player.color]})</span>
           </p>
@@ -90,7 +92,8 @@ interface PlayersPanelProps {
 export function PlayersPanel({ players, names, compact = false, className }: PlayersPanelProps) {
   return (
     <section aria-label="Jugadores" className={cn(compact && "xl:shrink-0", className)}>
-      <ul className={cn("grid gap-2 sm:grid-cols-2 lg:grid-cols-1", compact && "xl:gap-1.5")}>
+      {/* compact: dos columnas desde xl si su contenedor (la columna derecha de la partida) mide ≥ 24rem. */}
+      <ul className={cn("grid gap-2 sm:grid-cols-2 lg:grid-cols-1", compact && "xl:gap-1.5 xl:@min-[24rem]:grid-cols-2")}>
         {players.map((player) => (
           <PlayerCard key={player.id} player={player} name={names[player.id] ?? player.id} compact={compact} />
         ))}
