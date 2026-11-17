@@ -119,7 +119,9 @@ export function BoardDemo({ initial }: { initial: DemoMatch }) {
       controls={
         // Entre 1280 y 1535 px la columna del tablero es estrecha: un poco menos de hueco y de relleno
         // horizontal para que los seis controles quepan en una fila (mismos textos y tamaño de letra).
-        <div className="flex max-w-full flex-wrap justify-center gap-2 xl:max-2xl:gap-1.5 xl:max-2xl:[&>button]:px-1.5">
+        // Si la zona del tablero (contenedor desde xl) mide menos de 32.5rem, como en ventanas bajas
+        // (1280 × 600), se reducen un poco más (hueco y relleno de 4 px): la fila cabe sin saltar de línea.
+        <div className="flex max-w-full flex-wrap justify-center gap-2 xl:max-2xl:gap-1.5 xl:max-2xl:[&>button]:px-1.5 xl:@max-[32.5rem]:gap-1 xl:@max-[32.5rem]:[&>button]:px-1">
           <Button size="sm" onClick={() => setAuto((a) => !a)} disabled={finished} aria-pressed={auto && !finished}>
             {auto && !finished ? "Pausar" : "Reproducir"}
           </Button>
