@@ -4,6 +4,11 @@
 //   una versión no se avanza dos veces (versión + reserva); aquí se evita además pedirlo en vano.
 // - Recibe versiones de Realtime (otros espectadores), de la respuesta de advance y de GET (resync).
 // - Se detiene: al terminar la partida, con la pestaña oculta (pausa) y al desmontar (stop).
+// - Varios espectadores de la misma partida: el servidor solo deja avanzar a uno por versión (409 al
+//   resto). Para no chocar en cada versión, quien recibe la versión de otro espectador (Realtime o GET)
+//   espera un poco más antes de pedir la siguiente (`followerDelayMs`); quien la ha avanzado con su
+//   propio 200 sigue a su ritmo. Y ante `turn_in_progress` (otro tiene el turno reservado) no se insiste:
+//   se espera la versión por Realtime (`turnGraceMs`) y, si no llega, se recupera con GET.
 
 import type { TurnLogEntry } from "@/components/hud/TurnLog";
 import { describeEvent } from "@/lib/hud/events";
@@ -44,6 +49,18 @@ export interface LiveOptions {
   waitMs?: number;
   /** Tras un 409 version_conflict con Realtime conectado: margen para que llegue la versión antes de hacer GET. */
   realtimeGraceMs?: number;
+  /**
+   * Tras un 409 turn_in_progress con Realtime conectado: plazo máximo para que llegue por Realtime la versión
+   * que está resolviendo otro espectador antes de recurrir al GET (sin repetir el POST mientras).
+   * 0 recupera el comportamiento anterior (esperar `waitMs` y repetir el POST); solo para pruebas.
+   */
+  turnGraceMs?: number;
+  /**
+   * Retraso adicional (sobre `pauseMs`) antes de pedir un avance cuando la última versión la avanzó otro
+   * espectador (llegó por Realtime o GET, no por un 200 propio). Si quien avanzaba desaparece, este espectador
+   * avanza tras ese retraso y, con su propio 200, pasa a llevar el ritmo. 0: sin retraso (solo para pruebas).
+   */
+  followerDelayMs?: number;
 }
 
 export type Connection =
@@ -98,9 +115,13 @@ export class LiveGameController {
   /** Versión que se espera recibir por Realtime tras un 409 (mientras, no se piden avances). */
   private awaitingVersion: number | null = null;
   private graceTimer: unknown = null;
+  /** Última versión que este espectador avanzó con un 200 propio (decide su ritmo: ver `followerDelayMs`). */
+  private advancedVersion: number | null = null;
   private readonly pauseMs: number;
   private readonly waitMs: number;
   private readonly realtimeGraceMs: number;
+  private readonly turnGraceMs: number;
+  private readonly followerDelayMs: number;
 
   constructor(
     initial: GameResponse,
@@ -110,6 +131,8 @@ export class LiveGameController {
     this.pauseMs = options.pauseMs ?? 450;
     this.waitMs = options.waitMs ?? 1000;
     this.realtimeGraceMs = options.realtimeGraceMs ?? 400;
+    this.turnGraceMs = options.turnGraceMs ?? 5000;
+    this.followerDelayMs = options.followerDelayMs ?? 1200;
     this.model = initLive(initial);
     this.view = {
       display: initial,
@@ -199,7 +222,9 @@ export class LiveGameController {
   }
 
   private accept(game: GameResponse) {
+    const before = this.model.latest.version;
     this.model = receive(this.model, game);
+    if (this.model.latest.version > before) this.restartPacing();
     if (this.awaitingVersion !== null && this.model.latest.version >= this.awaitingVersion) this.clearAwaiting();
     this.setView({ latest: this.model.latest });
     this.advanceDisplay();
@@ -250,7 +275,9 @@ export class LiveGameController {
 
   private schedule() {
     if (this.timer !== null || !this.canAdvance()) return;
-    const delay = this.nextDelay ?? this.pauseMs;
+    // Quien avanzó la última versión sigue a su ritmo; quien la recibió de otro espectador cede la vez.
+    const pace = this.advancedVersion === this.model.latest.version ? this.pauseMs : this.pauseMs + this.followerDelayMs;
+    const delay = this.nextDelay ?? pace;
     this.nextDelay = null;
     this.timer = this.deps.setTimeout(() => {
       this.timer = null;
@@ -258,11 +285,23 @@ export class LiveGameController {
     }, delay);
   }
 
+  /**
+   * Ha llegado una versión nueva: el avance programado (si lo hay) se calculó para la anterior y ya no vale.
+   * Se cancela para que la próxima programación cuente desde esta versión (al terminar su animación). Una
+   * espera por fallos (red, 429 con Retry-After…) se conserva: la cancela `connectionRecovered`.
+   */
+  private restartPacing() {
+    if (this.timer === null || this.failures > 0) return;
+    this.deps.clearTimeout(this.timer);
+    this.timer = null;
+  }
+
   private async requestAdvance() {
     const current = this.model.latest;
     const controller = new AbortController();
     this.inFlight = controller;
     let outcome;
+    let turnInProgress = false;
     try {
       const response = await this.deps.fetch(`/api/games/${current.id}/advance`, {
         method: "POST",
@@ -271,12 +310,9 @@ export class LiveGameController {
         cache: "no-store",
         signal: controller.signal,
       });
-      outcome = interpretAdvance(
-        response.status,
-        await response.json().catch(() => null),
-        current,
-        response.headers.get("Retry-After"),
-      );
+      const body: unknown = await response.json().catch(() => null);
+      outcome = interpretAdvance(response.status, body, current, response.headers.get("Retry-After"));
+      turnInProgress = response.status === 409 && (body as { error?: { code?: unknown } } | null)?.error?.code === "turn_in_progress";
     } catch {
       if (controller.signal.aborted) return; // stop(): no tocar nada
       outcome = { kind: "retry" as const, message: "Sin conexión con el servidor." };
@@ -288,6 +324,8 @@ export class LiveGameController {
     switch (outcome.kind) {
       case "update":
         this.failures = 0;
+        // Antes de aceptar: si Realtime ya la había entregado, sigue siendo una versión avanzada por este espectador.
+        this.advancedVersion = outcome.game.version;
         this.accept(outcome.game);
         break;
       case "resync": {
@@ -297,14 +335,7 @@ export class LiveGameController {
         if (target !== undefined && this.realtimeUp) {
           // Otro espectador acaba de avanzar: su versión suele llegar por Realtime en unos cientos
           // de ms. Se espera ese margen antes de recurrir al GET (evita un GET por versión).
-          this.awaitingVersion = target;
-          this.graceTimer = this.deps.setTimeout(() => {
-            this.graceTimer = null;
-            if (this.awaitingVersion !== null && this.model.latest.version < this.awaitingVersion) {
-              this.awaitingVersion = null;
-              void this.resync();
-            }
-          }, this.realtimeGraceMs);
+          this.awaitVersion(target, this.realtimeGraceMs);
         } else {
           await this.resync();
         }
@@ -312,7 +343,13 @@ export class LiveGameController {
       }
       case "wait":
         this.failures = 0;
-        this.nextDelay = this.waitMs;
+        if (turnInProgress && this.realtimeUp && this.turnGraceMs > 0) {
+          // Otro espectador tiene el turno reservado: su versión llegará por Realtime al confirmarla.
+          // Mientras, no se repite el POST; si no llega en el plazo, GET (y, si sigue igual, nuevo intento).
+          this.awaitVersion(current.version + 1, this.turnGraceMs);
+        } else {
+          this.nextDelay = this.waitMs;
+        }
         break;
       case "retry":
         this.failures++;
@@ -352,6 +389,22 @@ export class LiveGameController {
       if (!this.stopped) this.nextDelay = retryDelay(++this.failures);
     }
     this.schedule();
+  }
+
+  /**
+   * Deja de pedir avances hasta recibir `version` (por Realtime u otra vía). Si no llega en `ms`, GET.
+   * Una sola espera a la vez: sustituye a la anterior, y `stop()` la cancela.
+   */
+  private awaitVersion(version: number, ms: number) {
+    this.clearAwaiting();
+    this.awaitingVersion = version;
+    this.graceTimer = this.deps.setTimeout(() => {
+      this.graceTimer = null;
+      if (this.stopped || this.awaitingVersion === null) return;
+      this.awaitingVersion = null;
+      if (this.model.latest.version < version) void this.resync();
+      else this.schedule();
+    }, ms);
   }
 
   private clearAwaiting() {
