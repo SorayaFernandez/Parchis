@@ -49,13 +49,13 @@ function PlayerCard({ player, name, compact }: { player: PlayerSummary; name: st
         <div
           className={cn(
             "flex items-baseline justify-between gap-2",
-            compact && "xl:[@media(max-height:49.99rem)]:@min-[24rem]:flex-wrap xl:[@media(max-height:49.99rem)]:@min-[24rem]:gap-y-0.5",
+            compact && "xl:[@media(max-height:49.99rem)_and_((max-width:95.99rem)_or_(min-width:100rem))]:@min-[24rem]:flex-wrap xl:[@media(max-height:49.99rem)_and_((max-width:95.99rem)_or_(min-width:100rem))]:@min-[24rem]:gap-y-0.5",
           )}
         >
           <p
             className={cn(
               "truncate font-semibold",
-              compact && "xl:[@media(max-height:49.99rem)]:@min-[24rem]:max-w-full xl:[@media(max-height:49.99rem)]:@min-[24rem]:shrink-0",
+              compact && "xl:[@media(max-height:49.99rem)_and_((max-width:95.99rem)_or_(min-width:100rem))]:@min-[24rem]:max-w-full xl:[@media(max-height:49.99rem)_and_((max-width:95.99rem)_or_(min-width:100rem))]:@min-[24rem]:shrink-0",
             )}
           >
             {name}
@@ -63,7 +63,7 @@ function PlayerCard({ player, name, compact }: { player: PlayerSummary; name: st
           </p>
           <span
             className={cn(
-              "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
+              "shrink-0 rounded-full px-2 py-0.5 text-[0.6875rem] font-medium",
               isTurn ? "text-slate-950" : player.status === "finished" ? "bg-amber-400/15 text-amber-300" : "bg-white/10 text-slate-300",
             )}
             style={isTurn ? { backgroundColor: color } : undefined}
@@ -79,7 +79,7 @@ function PlayerCard({ player, name, compact }: { player: PlayerSummary; name: st
           style={{ "--player": color } as CSSProperties}
         />
 
-        <p className="flex flex-wrap gap-x-2 text-[11px] text-slate-400 tabular-nums">
+        <p className="flex flex-wrap gap-x-2 text-[0.6875rem] text-slate-400 tabular-nums">
           <span title="Fichas en casa">Casa {base}</span>
           <span title="Fichas en el recorrido">Recorrido {track}</span>
           <span title="Fichas en el pasillo final">Pasillo {final}</span>
@@ -102,12 +102,12 @@ interface PlayersPanelProps {
 export function PlayersPanel({ players, names, compact = false, className }: PlayersPanelProps) {
   return (
     <section aria-label="Jugadores" className={cn(compact && "xl:shrink-0", className)}>
-      {/* compact: dos columnas solo en ventanas bajas (desde xl, < 800 px de alto) y si su contenedor (la columna
-          derecha de la partida) mide ≥ 24rem; con más alto, una columna, como siempre. */}
+      {/* compact: dos columnas solo en ventanas bajas (desde xl, < 800 px de alto, salvo de 1536 a 1599 px de
+          ancho) y si su contenedor (la columna derecha de la partida) mide ≥ 24rem; si no, una columna. */}
       <ul
         className={cn(
           "grid gap-2 sm:grid-cols-2 lg:grid-cols-1",
-          compact && "xl:gap-1.5 xl:[@media(max-height:49.99rem)]:@min-[24rem]:grid-cols-2",
+          compact && "xl:gap-1.5 xl:[@media(max-height:49.99rem)_and_((max-width:95.99rem)_or_(min-width:100rem))]:@min-[24rem]:grid-cols-2",
         )}
       >
         {players.map((player) => (
