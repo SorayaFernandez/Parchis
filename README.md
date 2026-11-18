@@ -191,7 +191,7 @@ Los servicios externos (Supabase, AI Gateway y Upstash) se sustituyen por dobles
 
 ### Lo que exige el código
 
-- La aplicación está en `web/`, así que en Vercel el **Root Directory** debe ser `web`. No necesita `vercel.json`.
+- La aplicación está en `web/`, así que en Vercel el **Root Directory** debe ser `web`. `web/vercel.json` solo fija la región de las funciones en `fra1` (Frankfurt), junto a Supabase y Upstash.
 - En Vercel, los modelos de lenguaje solo se activan en los entornos **Preview** y **Production** (`VERCEL_ENV`), con sus variables y Upstash, en Development no. Los límites son los mismos en los dos entornos.
 - Las claves del límite global en Upstash no dependen del entorno, porque el límite del modelo gratuito es de todo el equipo. Preview y Production deben usar **la misma base de Upstash**: con bases distintas, cada uno contaría sus propias llamadas y entre los dos podrían superar ese límite.
 - Las variables `NEXT_PUBLIC_` se incorporan al compilar, y Vercel solo aplica los cambios de variables a despliegues nuevos: tras cambiarlas, hay que volver a desplegar.
